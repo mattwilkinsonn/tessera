@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+/tess
+
+# devenv / direnv
+.devenv/
+.direnv/
+devenv.local.nix
+.envrc.local
+
+# Logs
+*.log
+
+# macOS
+.DS_Store

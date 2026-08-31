@@ -1,0 +1,5 @@
+# devenv inputs. Rolling nixpkgs is devenv's recommended channel for dev
+# shells — newer than a release channel, curated for devenv.
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
