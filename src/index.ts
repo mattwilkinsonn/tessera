@@ -61,7 +61,7 @@ export type Command =
 	| { kind: "flex-event" }
 	| { kind: "rules" }
 	| { kind: "display-setup" }
-	| { kind: "init" }
+	| { kind: "init"; self: string }
 	| { kind: "focus-slot"; n: number }
 	| { kind: "snap"; mode: SnapMode }
 	| { kind: "stack-cycle"; dir: CycleDir }
@@ -140,8 +140,25 @@ export function parseArgs(argv: string[]): ParseResult {
 			return { ok: true, command: { kind: "rules" } };
 		case "display-setup":
 			return { ok: true, command: { kind: "display-setup" } };
-		case "init":
-			return { ok: true, command: { kind: "init" } };
+		case "init": {
+			// `init` registers the tess binary's own path with each yabai signal,
+			// so the caller MUST pass it explicitly via `--self <path>`. There is no
+			// runtime self-detection: a compiled Bun binary's process.argv[1] is the
+			// internal /$bunfs/root/tess entrypoint, unusable as a real path. yabairc
+			// already invokes tess by an absolute, PATH-independent path — it passes
+			// that same path through here.
+			if (arg !== "--self") {
+				return { ok: false, msg: "init requires --self <path>" };
+			}
+			// A path is required; reject a `-`-prefixed value too — that is a
+			// dropped-argument mistake (`--self --apply`), not a real path, and
+			// registering it would resurrect the broken-action failure this guards.
+			const self = argv[2];
+			if (self == null || self === "" || self.startsWith("-")) {
+				return { ok: false, msg: "init --self needs a path" };
+			}
+			return { ok: true, command: { kind: "init", self } };
+		}
 		case "reset-splits":
 			return { ok: true, command: { kind: "reset-splits" } };
 		case "columns":
@@ -254,19 +271,10 @@ export function parseArgs(argv: string[]): ParseResult {
 }
 
 const USAGE =
-	"usage: tess <apply|laptop|display-event|flex-event|rules|display-setup|init|" +
-	"focus-slot N|snap MODE|stack-cycle DIR|resize DIR|move-display NAME|" +
-	"cycle-display DIR|reset-splits|columns|focus DIR|swap DIR|warp DIR|" +
-	"insert DIR|toggle-float|balance|space LAYOUT>";
-
-/**
- * The absolute path this binary was invoked as — the `command` string `tess init`
- * registers with yabai for each signal (``). `process.argv[1]` is
- * the script/compiled-binary path bun ran.
- */
-function selfPath(): string {
-	return process.argv[1] ?? "tess";
-}
+	"usage: tess <apply|laptop|display-event|flex-event|rules|display-setup|" +
+	"init --self PATH|focus-slot N|snap MODE|stack-cycle DIR|resize DIR|" +
+	"move-display NAME|cycle-display DIR|reset-splits|columns|focus DIR|" +
+	"swap DIR|warp DIR|insert DIR|toggle-float|balance|space LAYOUT>";
 
 /**
  * Injectable effect surfaces for the commands that touch locks / stamps /
@@ -276,8 +284,6 @@ function selfPath(): string {
  * same DI seam the command functions expose.
  */
 export interface RunOpts {
-	/** `tess` binary path `init` registers with each yabai signal (default: argv[1]). */
-	wmPath?: string;
 	applyLock?: string;
 	laptopLock?: string;
 	guardPath?: string;
@@ -344,7 +350,7 @@ export async function run(
 			await init(
 				driver,
 				profile,
-				opts.wmPath ?? selfPath(),
+				command.self,
 				opts.applyLock,
 				opts.guardPath,
 				opts.nudge,

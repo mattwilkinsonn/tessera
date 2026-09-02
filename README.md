@@ -33,7 +33,7 @@ tess apply            converge the active space onto its configured layout
 tess laptop           converge the laptop-only fallback layout
 tess display-event    rebuild after a display is added or removed
 tess flex-event       reflow when a flex space changes
-tess init             register the yabai signals and run the startup cascade
+tess init --self P    register the yabai signals (P = tess's own path) and run startup
 tess focus DIR        focus the neighboring window
 tess focus-slot N     focus a named slot (e.g. a numpad binding)
 tess snap MODE        snap the focused window to a layout mode

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeDriver } from "./driver/fake.ts";
+import type { WmDriver, WmEvent } from "./driver/types.ts";
 import { type Command, parseArgs, run } from "./index.ts";
 
 // ─── parseArgs — the pure arg grammar ────────────────────────────────────────
@@ -15,7 +16,6 @@ describe("parseArgs — no-arg subcommands", () => {
 		"flex-event",
 		"rules",
 		"display-setup",
-		"init",
 		"reset-splits",
 		"columns",
 		"toggle-float",
@@ -129,6 +129,39 @@ describe("parseArgs — enum-arg subcommands", () => {
 			command: { kind: "space", layout: "bsp" },
 		});
 		expect(parseArgs(["space", "float"]).ok).toBe(false);
+	});
+});
+
+describe("parseArgs — init --self", () => {
+	test("init --self <path> carries the path", () => {
+		expect(parseArgs(["init", "--self", "/etc/profiles/x/bin/tess"])).toEqual({
+			ok: true,
+			command: { kind: "init", self: "/etc/profiles/x/bin/tess" },
+		});
+	});
+
+	test("init without --self → not ok, names the flag", () => {
+		const r = parseArgs(["init"]);
+		expect(r.ok).toBe(false);
+		expect(r.ok === false && r.msg).toContain("--self");
+	});
+
+	test("init --self with no path → not ok", () => {
+		const r = parseArgs(["init", "--self"]);
+		expect(r.ok).toBe(false);
+		expect(r.ok === false && r.msg).toContain("--self");
+	});
+
+	test("init --self with an empty path → not ok", () => {
+		const r = parseArgs(["init", "--self", ""]);
+		expect(r.ok).toBe(false);
+		expect(r.ok === false && r.msg).toContain("--self");
+	});
+
+	test("init --self with a flag-like value → not ok (dropped-arg guard)", () => {
+		const r = parseArgs(["init", "--self", "--apply"]);
+		expect(r.ok).toBe(false);
+		expect(r.ok === false && r.msg).toContain("--self");
 	});
 });
 
@@ -262,7 +295,7 @@ describe("run — exhaustiveness", () => {
 			"flex-event": { kind: "flex-event" },
 			rules: { kind: "rules" },
 			"display-setup": { kind: "display-setup" },
-			init: { kind: "init" },
+			init: { kind: "init", self: "/usr/local/bin/tess" },
 			"focus-slot": { kind: "focus-slot", n: 1 },
 			snap: { kind: "snap", mode: "3col" },
 			"stack-cycle": { kind: "stack-cycle", dir: "next" },
@@ -309,7 +342,6 @@ describe("run — exhaustiveness", () => {
 					spaces: [{ displayIdx: 1 }],
 				});
 				const code = await run(cmd, driver, {
-					wmPath: "/usr/local/bin/tess",
 					applyLock,
 					laptopLock,
 					guardPath: join(root, "guard"),
@@ -324,6 +356,64 @@ describe("run — exhaustiveness", () => {
 				});
 				expect(typeof code).toBe("number");
 			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// ─── run → init: the --self path reaches the registered signal action ────────
+// The crux of the /$bunfs bugfix: whatever path the caller passes as
+// `--self` is what init() registers with each yabai signal, so events
+// re-invoke tess by a real, usable path. parseArgs carrying the token into
+// command.self is covered above; this closes the OTHER half — that run's init
+// arm threads command.self through to the registered action (both are
+// `string`, so tsc alone cannot catch a regression that drops it).
+
+/** Records signal registrations so the router's init wiring is observable. */
+class EventRecorder implements NonNullable<WmDriver["events"]> {
+	readonly registered: Array<{ event: WmEvent; command: string[] }> = [];
+	async register(event: WmEvent, command: string[]): Promise<void> {
+		this.registered.push({ event, command });
+	}
+}
+
+describe("run — init registers the --self path", () => {
+	test("command.self is the binary path in every registered signal action", async () => {
+		const recorder = new EventRecorder();
+		const driver = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 5120, h: 1440 } }],
+			spaces: [{ displayIdx: 1 }],
+		}) as FakeDriver & { events: EventRecorder };
+		Object.defineProperty(driver, "events", { value: recorder });
+
+		const root = mkdtempSync(join(tmpdir(), "tess-init-self-"));
+		try {
+			const code = await run(
+				{ kind: "init", self: "/opt/tess/bin/tess" },
+				driver,
+				{
+					applyLock: join(root, "apply.lock"),
+					laptopLock: join(root, "laptop.lock"),
+					guardPath: join(root, "guard"),
+					flexPath: join(root, "flex"),
+					nudge: async () => {},
+				},
+			);
+			expect(typeof code).toBe("number");
+
+			const byEvent = new Map(
+				recorder.registered.map((r) => [r.event, r.command]),
+			);
+			// Display trio → `<self> display-event`; flex signals → `<self> flex-event`.
+			expect(byEvent.get("display_added")).toEqual([
+				"/opt/tess/bin/tess",
+				"display-event",
+			]);
+			expect(byEvent.get("window_created")).toEqual([
+				"/opt/tess/bin/tess",
+				"flex-event",
+			]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
