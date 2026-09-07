@@ -7,6 +7,12 @@
 	"bin": {
 		"tess": "src/index.ts"
 	},
+	"types": "src/config/types.ts",
+	"exports": {
+		".": {
+			"types": "./src/config/types.ts"
+		}
+	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",

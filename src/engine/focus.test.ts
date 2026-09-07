@@ -4,7 +4,7 @@
 // 8 akiflow, 9 vscode.
 
 import { describe, expect, test } from "bun:test";
-import { profile } from "../config/profile.ts";
+import { profile } from "../config/profile.fixture.ts";
 import type { SpaceId, WmDisplay, WmWindow } from "../driver/types.ts";
 import { resolveSlot } from "./focus.ts";
 import type { WorldSnapshot } from "./world.ts";
