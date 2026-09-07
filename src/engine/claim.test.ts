@@ -2,7 +2,7 @@
 // set (the ported `_CLAIMED` global), display preference, dedup, and reset.
 
 import { describe, expect, test } from "bun:test";
-import { profile } from "../config/profile.ts";
+import { profile } from "../config/profile.fixture.ts";
 import type { SpaceId, WmWindow } from "../driver/types.ts";
 import { ClaimSet } from "./claim.ts";
 

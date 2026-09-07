@@ -65,15 +65,32 @@ is swappable, the whole layout logic runs in tests without spawning yabai.
 
 ## Configuration
 
-You edit one file: `src/config/profile.ts`. It defines your displays (keyed by
-width in pixels, which is stable across reconnects where the macOS display index
-is not), your windows (matched by app and title regex), and the column layout
-for each space on each display. The shapes it must satisfy live in
-`src/config/types.ts`.
+The binary loads a `Profile` at startup, resolved in this order:
 
-`src/config/profile.example.ts` is a fully annotated starting point — a neutral
-two-monitor setup with placeholder apps. Copy it to `profile.ts` and edit it for
-your own machine.
+1. `$TESSERA_PROFILE` — an explicit path to a profile module (overrides
+   everything below).
+2. `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.ts` — the well-known user
+   profile path. Copy the bundled default there and edit it for your machine.
+3. The bundled default (`src/config/profile.ts`) — a neutral two-monitor
+   example with placeholder apps, used when neither of the above resolves.
+
+A profile module exports a `profile` object satisfying `Profile`. It defines
+your displays (keyed by width in pixels, which is stable across reconnects where
+the macOS display index is not), your windows (matched by app and title regex),
+and the column layout for each space on each display. The shapes it must satisfy
+live in `src/config/types.ts`, importable as `import type { Profile } from
+"tessera-wm"`.
+
+To run your own layout without editing the checkout:
+
+```sh
+mkdir -p ~/.config/tessera
+cp src/config/profile.ts ~/.config/tessera/profile.ts
+# edit ~/.config/tessera/profile.ts
+```
+
+A missing well-known file falls back to the bundled default; a present but
+broken profile surfaces its error rather than being silently ignored.
 
 ## Development
 

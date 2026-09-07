@@ -3,7 +3,7 @@
 // occurrence-labeling core of `laptop_flex_windows`.
 
 import { describe, expect, test } from "bun:test";
-import { profile } from "../config/profile.ts";
+import { profile } from "../config/profile.fixture.ts";
 import type { SpaceId, WmWindow } from "../driver/types.ts";
 import { laptopFlexWindows, reconcileFlexOrder } from "./flex.ts";
 

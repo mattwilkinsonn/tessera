@@ -14,6 +14,7 @@
 // re-loop on that; everything
 // else exits 0.
 
+import { homedir } from "node:os";
 import {
 	apply,
 	type CycleDir,
@@ -38,8 +39,8 @@ import {
 	stackCycle,
 	toggleFloat,
 } from "./commands.ts";
-import { profile } from "./config/profile.ts";
-import type { DisplayName } from "./config/types.ts";
+import { profile as defaultProfile } from "./config/profile.ts";
+import type { DisplayName, Profile } from "./config/types.ts";
 import type { DirSel, WmDriver } from "./driver/types.ts";
 import { YabaiDriver } from "./driver/yabai.ts";
 import { DISPLAY_STAMP, FLEX_STAMP } from "./effects/constants.ts";
@@ -319,6 +320,7 @@ type FlexWaiterInject = {
  * `opts` defaults every effect path to the real constants (production wiring).
  */
 export async function run(
+	profile: Profile,
 	command: Command,
 	driver: WmDriver,
 	opts: RunOpts = {},
@@ -430,11 +432,49 @@ export async function run(
 	}
 }
 
+/**
+ * Resolve the runtime profile: `$TESSERA_PROFILE` (explicit override) →
+ * `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.ts` (the well-known path) →
+ * the statically-imported bundled default. An explicit override, or a
+ * well-known file that exists but is unreadable/broken, surfaces its error; a
+ * MISSING well-known file falls through to the bundled default.
+ */
+export async function loadProfile(): Promise<Profile> {
+	// Resolve the profile in precedence order; the actual runtime-selected
+	// dynamic import lives in importProfile (see its comment).
+	const override = process.env.TESSERA_PROFILE;
+	if (override) {
+		return importProfile(override);
+	}
+	const configHome = process.env.XDG_CONFIG_HOME ?? `${homedir()}/.config`;
+	const wellKnown = `${configHome}/tessera/profile.ts`;
+	if (await Bun.file(wellKnown).exists()) {
+		return importProfile(wellKnown);
+	}
+	return defaultProfile;
+}
+
+// Import a profile module and require its `profile` export, so a module that is
+// valid TS but exports nothing named `profile` fails with a clear message
+// rather than passing `undefined` into run() to crash opaquely downstream.
+//
+// Dynamic import (ts-no-dynamic-import exception): the module specifier is
+// genuinely runtime-selected — a user's $TESSERA_PROFILE override or the
+// well-known config path — so a static import cannot name it at author time.
+async function importProfile(path: string): Promise<Profile> {
+	const mod = (await import(path)) as { profile?: Profile };
+	if (!mod.profile) {
+		throw new Error(`profile module ${path} must export a \`profile\``);
+	}
+	return mod.profile;
+}
+
 if (import.meta.main) {
 	const parsed = parseArgs(process.argv.slice(2));
 	if (!parsed.ok) {
 		process.stderr.write(`${parsed.msg ?? USAGE}\n`);
 		process.exit(2);
 	}
-	process.exit(await run(parsed.command, new YabaiDriver()));
+	const profile = await loadProfile();
+	process.exit(await run(profile, parsed.command, new YabaiDriver()));
 }

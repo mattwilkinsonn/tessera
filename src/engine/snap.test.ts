@@ -3,7 +3,7 @@
 // order, and every leaf's spaceId is the focused space.
 
 import { describe, expect, test } from "bun:test";
-import { profile } from "../config/profile.ts";
+import { profile } from "../config/profile.fixture.ts";
 import type { SpaceId, WmWindow } from "../driver/types.ts";
 import { snapPlan } from "./snap.ts";
 import type { WorldSnapshot } from "./world.ts";
