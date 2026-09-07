@@ -6,9 +6,15 @@ dist/
 *.tsbuildinfo
 /tess
 
-# devenv / direnv
+# Nix flake build output
+result
+result-*
+
+# devenv / direnv — devenv.lock is intentionally NOT committed (matches main;
+# the shell is a launcher, its lock is a local artifact that churns per-machine).
 .devenv/
 .direnv/
+devenv.lock
 devenv.local.nix
 .envrc.local
 
