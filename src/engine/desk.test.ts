@@ -5,7 +5,7 @@
 // only when a column claimed a window), in profile.desk order.
 
 import { describe, expect, test } from "bun:test";
-import { profile } from "../config/profile.ts";
+import { profile } from "../config/profile.fixture.ts";
 import type { SpaceId, WmDisplay, WmSpace, WmWindow } from "../driver/types.ts";
 import { deskPlan } from "./desk.ts";
 import type { WorldSnapshot } from "./world.ts";

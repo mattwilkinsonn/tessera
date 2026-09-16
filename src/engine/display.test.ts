@@ -2,7 +2,7 @@
 // topology-portability primitive the D2-corollary rests on.
 
 import { describe, expect, test } from "bun:test";
-import { profile } from "../config/profile.ts";
+import { profile } from "../config/profile.fixture.ts";
 import type { WmDisplay } from "../driver/types.ts";
 import { resolveDisplay } from "./display.ts";
 

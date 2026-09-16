@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { profile } from "./config/profile.fixture.ts";
 import { FakeDriver } from "./driver/fake.ts";
 import type { WmDriver, WmEvent } from "./driver/types.ts";
 import { type Command, parseArgs, run } from "./index.ts";
@@ -197,7 +198,7 @@ describe("run — simple dispatch (observable driver effects)", () => {
 				{ id: 43, app: "Arc", title: "x", spaceIndex: 1 },
 			],
 		});
-		const code = await run({ kind: "focus-slot", n: 1 }, driver);
+		const code = await run(profile, { kind: "focus-slot", n: 1 }, driver);
 		expect(code).toBe(0);
 		expect((await driver.queryFocusedWindow())?.id).toBe(42);
 	});
@@ -209,7 +210,7 @@ describe("run — simple dispatch (observable driver effects)", () => {
 		});
 		await driver.focusWindow(7);
 		expect((await driver.queryFocusedWindow())?.floating).toBe(false);
-		const code = await run({ kind: "toggle-float" }, driver);
+		const code = await run(profile, { kind: "toggle-float" }, driver);
 		expect(code).toBe(0);
 		expect((await driver.queryFocusedWindow())?.floating).toBe(true);
 	});
@@ -220,7 +221,7 @@ describe("run — simple dispatch (observable driver effects)", () => {
 			windows: [{ id: 9, app: "Arc", spaceIndex: 1 }],
 		});
 		await driver.focusWindow(9);
-		const code = await run({ kind: "space", layout: "stack" }, driver);
+		const code = await run(profile, { kind: "space", layout: "stack" }, driver);
 		expect(code).toBe(0);
 		expect((await driver.queryFocusedSpace())?.layout).toBe("stack");
 	});
@@ -231,7 +232,7 @@ describe("run — simple dispatch (observable driver effects)", () => {
 			windows: [{ id: 1, app: "Arc", spaceIndex: 1 }],
 		});
 		const before = await driver.querySpaces();
-		const code = await run({ kind: "focus", dir: "west" }, driver);
+		const code = await run(profile, { kind: "focus", dir: "west" }, driver);
 		expect(code).toBe(0);
 		expect(await driver.querySpaces()).toEqual(before);
 	});
@@ -257,7 +258,7 @@ describe("run — laptop contended-exit contract", () => {
 			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 1728, h: 1117 } }],
 			spaces: [{ displayIdx: 1 }],
 		});
-		const code = await run({ kind: "laptop" }, driver, {
+		const code = await run(profile, { kind: "laptop" }, driver, {
 			laptopLock,
 			guardPath: join(root, "guard"),
 		});
@@ -273,7 +274,7 @@ describe("run — laptop contended-exit contract", () => {
 			],
 			spaces: [{ displayIdx: 1 }, { displayIdx: 2 }],
 		});
-		const code = await run({ kind: "laptop" }, driver, {
+		const code = await run(profile, { kind: "laptop" }, driver, {
 			laptopLock: join(root, "laptop.lock"),
 			guardPath: join(root, "guard"),
 			flexPath: join(root, "flex"),
@@ -341,7 +342,7 @@ describe("run — exhaustiveness", () => {
 					displays: [{ idx: 1, frame: { x: 0, y: 0, w: 5120, h: 1440 } }],
 					spaces: [{ displayIdx: 1 }],
 				});
-				const code = await run(cmd, driver, {
+				const code = await run(profile, cmd, driver, {
 					applyLock,
 					laptopLock,
 					guardPath: join(root, "guard"),
@@ -390,6 +391,7 @@ describe("run — init registers the --self path", () => {
 		const root = mkdtempSync(join(tmpdir(), "tess-init-self-"));
 		try {
 			const code = await run(
+				profile,
 				{ kind: "init", self: "/opt/tess/bin/tess" },
 				driver,
 				{

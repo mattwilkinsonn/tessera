@@ -16,7 +16,7 @@ import {
 	snap,
 	stackCycle,
 } from "./commands.ts";
-import { profile } from "./config/profile.ts";
+import { profile } from "./config/profile.fixture.ts";
 import { FakeDriver } from "./driver/fake.ts";
 import type { DirSel, StackSel, WmDriver, WmEvent } from "./driver/types.ts";
 import { readFlexOrder } from "./effects/state.ts";

@@ -5,7 +5,7 @@
 // (does each spec classify real windows as the bash engines did) is T2.
 
 import { describe, expect, test } from "bun:test";
-import { profile } from "./profile.ts";
+import { profile } from "./profile.fixture.ts";
 import type { Profile } from "./types.ts";
 
 // The engine consumes `profile` as the wide `Profile` contract (optional

@@ -4,7 +4,7 @@
 // behavior (T2)?
 
 import { describe, expect, test } from "bun:test";
-import { profile } from "../config/profile.ts";
+import { profile } from "../config/profile.fixture.ts";
 import type { Profile, WindowSpec } from "../config/types.ts";
 import { matchesSpec, slugForWindow } from "./matcher.ts";
 
