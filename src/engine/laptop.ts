@@ -188,7 +188,7 @@ function planPhaseAClaims(
 ): { ids: (number | null)[]; claimed: Set<number> } {
 	const cs = new ClaimSet(profile);
 	const claimed = new Set<number>();
-	const windows: WmWindow[] = [...world.windows];
+	const windows: WmWindow[] = [...world.windows].sort((a, b) => a.id - b.id);
 	const ids: (number | null)[] = [];
 	for (const name of profile.laptopPinned) {
 		const id = cs.claim(windows, name, laptopIdx);
@@ -234,9 +234,8 @@ export function laptopConvergeStep(
 	// Phase transitions consume no executor turn — loop until we emit an action
 	// or reach `{ done: true }`.
 	for (;;) {
-		// Dead scripting-addition abort or terminal:
-		// leave the grid intact.
-		if (s.createFailed || s.phase === "done") {
+		// Terminal: leave the grid intact.
+		if (s.phase === "done") {
 			return { done: true };
 		}
 
@@ -278,6 +277,11 @@ export function laptopConvergeStep(
 						desiredOrder: [...s.desiredOrder, label],
 						pendingCreateLabel: null,
 					};
+					const win = world.windows.find((w) => w.id === id);
+					if (win != null && win.spaceId === existing.id) {
+						s = next;
+						continue;
+					}
 					return {
 						action: { op: "moveWindow", windowId: id, toSpace: existing.id },
 						state: next,
@@ -287,7 +291,8 @@ export function laptopConvergeStep(
 				// it is STILL absent, the addSpace pointer is dead → CREATE_FAILED.
 				if (s.pendingCreateLabel === label) {
 					deadCreate = true;
-					break;
+					cursor++;
+					continue;
 				}
 				const next: ConvergeState = {
 					...s,
@@ -301,7 +306,14 @@ export function laptopConvergeStep(
 				};
 			}
 			if (deadCreate) {
-				s = { ...s, createFailed: true };
+				s = {
+					...s,
+					phase: "B",
+					cursor: 0,
+					claimedIds: claimed,
+					createFailed: true,
+					pendingCreateLabel: null,
+				};
 				continue;
 			}
 			s = {
@@ -355,6 +367,11 @@ export function laptopConvergeStep(
 						desiredOrder: [...s.desiredOrder, label],
 						pendingCreateLabel: null,
 					};
+					const win = world.windows.find((w) => w.id === id);
+					if (win != null && win.spaceId === existing.id) {
+						s = next;
+						continue;
+					}
 					return {
 						action: { op: "moveWindow", windowId: id, toSpace: existing.id },
 						state: next,
@@ -362,7 +379,8 @@ export function laptopConvergeStep(
 				}
 				if (s.pendingCreateLabel === label) {
 					deadCreate = true;
-					break;
+					cursor++;
+					continue;
 				}
 				const next: ConvergeState = {
 					...s,
@@ -376,7 +394,14 @@ export function laptopConvergeStep(
 				};
 			}
 			if (deadCreate) {
-				s = { ...s, createFailed: true, toPersist };
+				s = {
+					...s,
+					phase: "C",
+					cursor: 0,
+					toPersist,
+					createFailed: true,
+					pendingCreateLabel: null,
+				};
 				continue;
 			}
 			s = {
@@ -390,11 +415,14 @@ export function laptopConvergeStep(
 		}
 
 		// ── CREATE_FAILED gate ─────────────────
-		// (Handled inline above by setting `createFailed`, caught at loop top:
-		// phases C and D never run.)
+		// (Handled at Phase C entry: phases C and D never run if createFailed.)
 
 		// ── Phase C — reconcile (H5) ────────────
 		if (s.phase === "C") {
+			if (s.createFailed) {
+				s = { ...s, phase: "layout" };
+				continue;
+			}
 			// World-driven: find the first lap-* space no longer targeted and emit
 			// one rehomeAndDestroy; the executor re-homes its residual windows
 			// (unfiltered) then destroys it, and the re-query surfaces the next.

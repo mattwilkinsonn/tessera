@@ -502,8 +502,17 @@ export class YabaiDriver implements WmDriver {
 		const before = await this.#json<RawYabaiSpace[]>(yabaiArgs.querySpaces());
 		const beforeIds = new Set(before.map((s) => s.id));
 		await this.#run(yabaiArgs.createSpace());
-		const after = await this.#json<RawYabaiSpace[]>(yabaiArgs.querySpaces());
-		const created = after.find((s) => !beforeIds.has(s.id));
+		let created: RawYabaiSpace | undefined;
+		for (let attempt = 0; attempt < 10; attempt++) {
+			if (attempt > 0) {
+				await Bun.sleep(50);
+			}
+			const after = await this.#json<RawYabaiSpace[]>(yabaiArgs.querySpaces());
+			created = after.find((s) => !beforeIds.has(s.id));
+			if (created != null) {
+				break;
+			}
+		}
 		return created == null ? null : (String(created.id) as SpaceId);
 	}
 
@@ -522,6 +531,7 @@ export class YabaiDriver implements WmDriver {
 			return;
 		}
 		await this.#run(yabaiArgs.labelSpace(idx, label));
+		await Bun.sleep(50);
 	}
 
 	async setSpaceLayout(
@@ -677,6 +687,7 @@ export class YabaiDriver implements WmDriver {
 			return;
 		}
 		await this.#run(yabaiArgs.moveWindowToSpace(winId, idx));
+		await Bun.sleep(100);
 	}
 
 	async moveWindowToDisplay(winId: number, sel: DisplaySel): Promise<boolean> {

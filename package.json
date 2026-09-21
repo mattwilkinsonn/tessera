@@ -1,6 +1,6 @@
 {
 	"name": "tessera-wm",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"type": "module",
 	"description": "Tessera — a portable TypeScript/Bun window-manager config: a backend-agnostic layout engine behind a swappable driver (yabai today; Hyprland/others later). CLI: tess.",
 	"license": "MIT",
