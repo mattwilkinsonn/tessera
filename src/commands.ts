@@ -453,8 +453,15 @@ export async function rules(driver: WmDriver, profile: Profile): Promise<void> {
 	}
 	// Alienware.
 	if (aw != null) {
-		await ops.add({ label: "auto:akiflow", app: "^Akiflow$", displayIdx: aw });
 		await ops.add({ label: "auto:linear", app: "^Linear$", displayIdx: aw });
+	}
+	// Laptop stack.
+	if (laptopStackSpaceIdx != null) {
+		await ops.add({
+			label: "auto:akiflow",
+			app: "^Akiflow$",
+			spaceIdx: laptopStackSpaceIdx,
+		});
 	}
 	// Always float.
 	await ops.add({ label: "auto:finder", app: "^Finder$", manage: false });

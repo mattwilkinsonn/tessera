@@ -40,6 +40,7 @@ async function applyOp(driver: WmDriver, op: PlanOp): Promise<void> {
 			const id = await driver.createSpace(op.displayIdx);
 			if (id != null) {
 				await driver.labelSpace(id, op.label);
+				await driver.setSpaceLayout(id, "bsp");
 			}
 			return;
 		}
