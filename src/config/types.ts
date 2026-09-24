@@ -46,6 +46,23 @@ export interface DeskSlot {
 	onDisplay?: DisplayName;
 }
 
+/**
+ * A named layout for ONE exact set of present displays. Selected when the
+ * connected displays are exactly `displays`; its `desk` then replaces
+ * `Profile.desk` wholesale for that run.
+ *
+ * Exact-set, not subset: a subset rule would let a two-display topology claim a
+ * three-display rig and silently drop the third display's layout.
+ */
+export interface Topology {
+	/** Human label for the arrangement ("aw-laptop"); diagnostics only. */
+	name: string;
+	/** The display slots that must be present, exactly — order is irrelevant. */
+	displays: ReadonlyArray<DisplayName>;
+	/** The desk layout set that replaces `Profile.desk` under this arrangement. */
+	desk: ReadonlyArray<DeskLayout>;
+}
+
 /** The full typed layout profile — the 1:1 shape of. */
 export interface Profile {
 	/** Logical display name → stable width in px (`DISPLAY_W`). */
@@ -54,6 +71,11 @@ export interface Profile {
 	windows: Record<WindowName, WindowSpec>;
 	/** Desk columns: G9_LEFT/MAIN/RIGHT, AW_LEFT/RIGHT, MBP_STACK. */
 	desk: ReadonlyArray<DeskLayout>;
+	/**
+	 * Per-arrangement desk overrides, first exact present-set match winning
+	 * (declaration order is the precedence). Absent → `desk` always applies.
+	 */
+	topologies?: ReadonlyArray<Topology>;
 	/** COL3_ROOT_RATIO / COL3_INNER_RATIO. */
 	ratios: { col3Root: number; col3Inner: number };
 	/** Numpad focus slots with `@display` preference (`DESK_SLOTS`). */

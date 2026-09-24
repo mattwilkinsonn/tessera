@@ -27,6 +27,7 @@ import { ClaimSet } from "./claim.ts";
 import { resolveDisplay } from "./display.ts";
 import type { PlanOp } from "./plan.ts";
 import { straySpaces, teardownLabels } from "./reap.ts";
+import { resolveDesk } from "./topology.ts";
 import type { WorldSnapshot } from "./world.ts";
 
 /**
@@ -88,7 +89,7 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 		readonly columns: number[][];
 	}
 	const builds: Build[] = [];
-	for (const layout of profile.desk) {
+	for (const layout of resolveDesk(profile, world.displays)) {
 		const idx = resolveDisplay(profile, layout.display, world.displays);
 		if (idx == null) {
 			// Absent display — not selected (topology-portable, D2-corollary).
