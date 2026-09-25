@@ -6,6 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { profile } from "../config/profile.fixture.ts";
+import type { Profile } from "../config/types.ts";
 import type { SpaceId, WmDisplay, WmSpace, WmWindow } from "../driver/types.ts";
 import { deskPlan } from "./desk.ts";
 import type { WorldSnapshot } from "./world.ts";
@@ -201,6 +202,92 @@ describe("deskPlan", () => {
 					kind: "stack",
 					columns: [[30, 31, 32, 33]],
 					ratios: undefined,
+				},
+			},
+		]);
+	});
+
+	test("a matching topology replaces the default desk layout", () => {
+		// AW + laptop present, G9 absent. The default desk would lay the AW out as
+		// its 2col `plan`; the topology overrides it to a 3col `solo`.
+		const topoProfile = {
+			...profile,
+			topologies: [
+				{
+					name: "aw-laptop",
+					displays: ["aw", "laptop"],
+					desk: [
+						{
+							display: "aw",
+							label: "solo",
+							kind: "3col",
+							columns: [["arc"], ["linear"], ["akiflow"]],
+						},
+					],
+				},
+			],
+		} satisfies Profile;
+
+		const displays = [display(2, AW, ["s2"]), display(3, LAPTOP, ["s3"])];
+		const spaces = [space("s2", "plan", 2), space("s3", "laptop", 3)];
+		const windows = [
+			win(21, "Arc", 2, "s2"),
+			win(20, "Linear", 2, "s2"),
+			win(23, "Akiflow", 2, "s2"),
+		];
+		const plan = deskPlan(topoProfile, world(displays, spaces, windows));
+
+		// Only the AW is laid out (the topology declares no laptop desk), and it
+		// carries the topology's label/kind, not the default `plan`/`2col`. A
+		// single build means no park, so nothing evacuates.
+		expect(plan).toEqual([
+			{ op: "relabelHome", homeSpace: "s2" as SpaceId, label: "solo" },
+			{
+				op: "realizeLayout",
+				space: "s2" as SpaceId,
+				target: {
+					kind: "3col",
+					columns: [[21], [20], [23]],
+					ratios: { root: 0.3, inner: 0.5714 },
+				},
+			},
+		]);
+	});
+
+	test("a non-matching topology leaves the default desk in force", () => {
+		// All three displays present; the aw-laptop topology must not claim it.
+		const topoProfile = {
+			...profile,
+			topologies: [
+				{
+					name: "aw-laptop",
+					displays: ["aw", "laptop"],
+					desk: [
+						{
+							display: "aw",
+							label: "solo",
+							kind: "3col",
+							columns: [["arc"]],
+						},
+					],
+				},
+			],
+		} satisfies Profile;
+
+		const displays = [display(1, G9, ["s1"])];
+		const spaces = [space("s1", "main", 1)];
+		const windows = [win(10, "Arc", 1, "s1")];
+		const plan = deskPlan(topoProfile, world(displays, spaces, windows));
+
+		expect(plan).toEqual([
+			{ op: "relabelHome", homeSpace: "s1" as SpaceId, label: "main" },
+			{
+				op: "realizeLayout",
+				space: "s1" as SpaceId,
+				target: {
+					kind: "3col",
+					columns: [[10]],
+					ratios: { root: 0.3, inner: 0.5714 },
 				},
 			},
 		]);
