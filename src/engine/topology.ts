@@ -22,7 +22,8 @@ import type { WmDisplay } from "../driver/types.ts";
  * The logical display slots currently present. `null` when the present set is
  * unknowable, so no exact-set topology may claim it: a connected display
  * matches NO profile slot, or two connected displays share one slot's width
- * (`resolveDisplay` lays out only the first, so the second would go unmanaged).
+ * (the set then under-counts the rig, so a topology would claim an arrangement
+ * it does not describe).
  */
 function presentDisplays(
 	profile: Profile,

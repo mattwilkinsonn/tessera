@@ -151,8 +151,8 @@ describe("resolveDesk", () => {
 	});
 
 	test("two displays of one width do not match any topology", () => {
-		// Both panels resolve to the aw slot, but only the first is laid out; a
-		// topology claiming {aw, laptop} would leave the second unmanaged.
+		// Both panels resolve to the aw slot, so {aw, laptop} under-counts the rig;
+		// like an unrecognized width, the arrangement falls back to `desk`.
 		const profile = {
 			...base,
 			topologies: [
