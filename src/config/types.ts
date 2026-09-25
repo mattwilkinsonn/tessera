@@ -37,6 +37,8 @@ export interface DeskLayout {
 	kind: "3col" | "2col" | "stack";
 	/** Ordered columns of window names; `col[0]` is the anchor, the rest stack. */
 	columns: ReadonlyArray<ReadonlyArray<WindowName>>;
+	/** 3col split for this layout; absent → `Profile.ratios`. */
+	ratios?: { col3Root: number; col3Inner: number };
 }
 
 /** A numpad focus slot: a window name, optionally pinned to a display (`name@display`). */

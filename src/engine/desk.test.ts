@@ -269,6 +269,37 @@ describe("deskPlan", () => {
 		]);
 	});
 
+	test("a layout's own ratios override the profile ratios for its 3col", () => {
+		const thirds = {
+			...profile,
+			desk: [
+				{
+					display: "g9",
+					label: "main",
+					kind: "3col",
+					columns: [["arc"]],
+					ratios: { col3Root: 1 / 3, col3Inner: 0.5 },
+				},
+			],
+		} satisfies Profile;
+
+		const displays = [display(1, G9, ["s1"])];
+		const plan = deskPlan(
+			thirds,
+			world(displays, [space("s1", "main", 1)], [win(10, "Arc", 1, "s1")]),
+		);
+
+		expect(plan).toContainEqual({
+			op: "realizeLayout",
+			space: "s1" as SpaceId,
+			target: {
+				kind: "3col",
+				columns: [[10]],
+				ratios: { root: 1 / 3, inner: 0.5 },
+			},
+		});
+	});
+
 	test("a non-matching topology leaves the default desk in force", () => {
 		// All three displays present; the aw-laptop topology must not claim it.
 		const topoProfile = {

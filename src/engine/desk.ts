@@ -87,6 +87,7 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 		readonly label: string;
 		readonly kind: SpaceLayoutTarget["kind"];
 		readonly columns: number[][];
+		readonly ratios: Profile["ratios"];
 	}
 	const builds: Build[] = [];
 	for (const layout of resolveDesk(profile, world.displays)) {
@@ -118,7 +119,13 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 			.map((col) => claims.claimMany(windows, [...col], idx))
 			.filter((col) => col.length > 0);
 
-		builds.push({ homeSpace, label: layout.label, kind: layout.kind, columns });
+		builds.push({
+			homeSpace,
+			label: layout.label,
+			kind: layout.kind,
+			columns,
+			ratios: layout.ratios ?? profile.ratios,
+		});
 	}
 
 	// ── Stable park ───────────────────────────
@@ -173,7 +180,7 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 				columns: b.columns,
 				ratios:
 					b.kind === "3col"
-						? { root: profile.ratios.col3Root, inner: profile.ratios.col3Inner }
+						? { root: b.ratios.col3Root, inner: b.ratios.col3Inner }
 						: undefined,
 			};
 			ops.push({ op: "realizeLayout", space: b.homeSpace, target });
