@@ -37,7 +37,7 @@ export interface DeskLayout {
 	kind: "3col" | "2col" | "stack";
 	/** Ordered columns of window names; `col[0]` is the anchor, the rest stack. */
 	columns: ReadonlyArray<ReadonlyArray<WindowName>>;
-	/** 3col split for this layout; absent → `Profile.ratios`. */
+	/** 3col split for this layout; absent → `Profile.ratios`. `tess snap` ignores it. */
 	ratios?: { col3Root: number; col3Inner: number };
 }
 
@@ -81,7 +81,7 @@ export interface Profile {
 	 * (declaration order is the precedence). Absent → `desk` always applies.
 	 */
 	topologies?: ReadonlyArray<Topology>;
-	/** COL3_ROOT_RATIO / COL3_INNER_RATIO. */
+	/** Default COL3_ROOT_RATIO / COL3_INNER_RATIO; a `DeskLayout` may override. */
 	ratios: { col3Root: number; col3Inner: number };
 	/** Numpad focus slots with `@display` preference (`DESK_SLOTS`). */
 	deskSlots: ReadonlyArray<DeskSlot>;

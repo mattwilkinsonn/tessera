@@ -97,6 +97,30 @@ describe("validateProfile", () => {
 		).toThrow('topology "aw-only": duplicate layout for aw');
 	});
 
+	test("layout ratios on a non-3col layout are rejected", () => {
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [{ ...layout("aw"), ratios: { col3Root: 0.4, col3Inner: 0.5 } }],
+			}),
+		).toThrow("desk aw: ratios only apply to a 3col layout");
+	});
+
+	test("a ratio outside (0, 1) is rejected", () => {
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [
+					{
+						...layout("aw"),
+						kind: "3col",
+						ratios: { col3Root: 1, col3Inner: 0.5 },
+					},
+				],
+			}),
+		).toThrow("desk aw: ratios must be between 0 and 1");
+	});
+
 	test("the bundled default profile is valid", () => {
 		expect(() => validateProfile(bundled)).not.toThrow();
 	});

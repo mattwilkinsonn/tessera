@@ -64,7 +64,7 @@ export type DisplaySel = number | "next" | "prev" | "first" | "last";
 export interface SpaceLayoutTarget {
 	kind: "3col" | "2col" | "stack";
 	columns: ReadonlyArray<ReadonlyArray<number>>;
-	/** COL3 ratios from the Profile (`{ root, inner }`). */
+	/** COL3 ratios (`{ root, inner }`): the layout override, else the Profile default. */
 	ratios?: { root: number; inner: number };
 }
 
