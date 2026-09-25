@@ -280,6 +280,7 @@ export function laptopConvergeStep(
 					const win = world.windows.find((w) => w.id === id);
 					if (win != null && win.spaceId === existing.id) {
 						s = next;
+						cursor++;
 						continue;
 					}
 					return {
@@ -370,6 +371,7 @@ export function laptopConvergeStep(
 					const win = world.windows.find((w) => w.id === id);
 					if (win != null && win.spaceId === existing.id) {
 						s = next;
+						cursor++;
 						continue;
 					}
 					return {
