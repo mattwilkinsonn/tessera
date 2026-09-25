@@ -25,6 +25,8 @@ export interface WindowSpec {
 	title?: RegExp;
 	/** The leading-`!` title inversion: match windows whose title does NOT match. */
 	titleInvert?: boolean;
+	/** argv that opens one new blank window when no matching window exists. */
+	spawn?: ReadonlyArray<string>;
 }
 
 /** A desk column set for one space on one display — apply-workspace's three shapes. */

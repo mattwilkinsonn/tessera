@@ -10,7 +10,7 @@
 
 import type { Profile, WindowName } from "../config/types.ts";
 import type { WmWindow } from "../driver/types.ts";
-import { matchesSpec } from "./matcher.ts";
+import { matchesSpec, slugForWindow } from "./matcher.ts";
 
 export class ClaimSet {
 	private readonly profile: Profile;
@@ -28,10 +28,12 @@ export class ClaimSet {
 	 * (`matchesSpec`), kept in the given array order (query order). Pass 1 (only
 	 * when `preferDisplay` is set): the first unclaimed candidate on that
 	 * display. Pass 2: the first unclaimed candidate.
+	 * Specs with `spawn` may claim an otherwise unclassified window from the
+	 * same app after normal title matches fail.
 	 * On a hit, record the id and return it; otherwise `null`.
 	 */
 	claim(
-		windows: WmWindow[],
+		windows: readonly WmWindow[],
 		name: WindowName,
 		preferDisplay?: number,
 	): number | null {
@@ -58,6 +60,33 @@ export class ClaimSet {
 				return w.id;
 			}
 		}
+		// Spawn fallback is considered only after both normal claim passes fail.
+		if (spec.spawn != null) {
+			const fallbackCands = windows.filter(
+				(w) =>
+					!w.minimized &&
+					!w.floating &&
+					matchesSpec({ app: spec.app }, w.app, w.title) &&
+					!Object.hasOwn(
+						this.profile.windows,
+						slugForWindow(this.profile, w.app, w.title),
+					),
+			);
+			if (preferDisplay != null) {
+				for (const w of fallbackCands) {
+					if (w.displayIdx === preferDisplay && !this.claimed.has(w.id)) {
+						this.claimed.add(w.id);
+						return w.id;
+					}
+				}
+			}
+			for (const w of fallbackCands) {
+				if (!this.claimed.has(w.id)) {
+					this.claimed.add(w.id);
+					return w.id;
+				}
+			}
+		}
 		return null;
 	}
 
@@ -67,8 +96,8 @@ export class ClaimSet {
 	 * window.
 	 */
 	claimMany(
-		windows: WmWindow[],
-		names: WindowName[],
+		windows: readonly WmWindow[],
+		names: readonly WindowName[],
 		preferDisplay?: number,
 	): number[] {
 		const out: number[] = [];

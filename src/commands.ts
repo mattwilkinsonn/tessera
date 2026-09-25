@@ -13,7 +13,7 @@
 // the same pattern the `effects/` modules use — so the router calls them plainly
 // while tests point them at temp dirs and never touch the live machine's state.
 
-import type { DisplayName, Profile } from "./config/types.ts";
+import type { DisplayName, Profile, WindowName } from "./config/types.ts";
 import type {
 	DisplaySel,
 	SpaceId,
@@ -35,7 +35,10 @@ import { deskPlan } from "./engine/desk.ts";
 import { resolveDisplay } from "./engine/display.ts";
 import { resolveSlot } from "./engine/focus.ts";
 import { initialConvergeState, laptopConvergeStep } from "./engine/laptop.ts";
+import { matchesSpec } from "./engine/matcher.ts";
 import { type SnapMode, snapPlan } from "./engine/snap.ts";
+import { spawnsNeeded } from "./engine/spawn.ts";
+import { resolveDesk } from "./engine/topology.ts";
 import type { WorldSnapshot } from "./engine/world.ts";
 import { runConverge, runPlan } from "./exec.ts";
 
@@ -61,6 +64,67 @@ async function worldSnapshot(driver: WmDriver): Promise<WorldSnapshot> {
 	return { windows, spaces, displays };
 }
 
+type Sleep = (ms: number) => Promise<void>;
+
+interface SpawnTarget {
+	app: RegExp;
+	count: number;
+}
+
+async function spawnMissingWindows(
+	driver: WmDriver,
+	profile: Profile,
+	names: readonly WindowName[],
+	windows: WorldSnapshot["windows"],
+	sleep: Sleep,
+): Promise<void> {
+	const needed = spawnsNeeded(profile, names, windows);
+	if (needed.length === 0) {
+		return;
+	}
+	const targets = new Map<string, SpawnTarget>();
+	const baselines = new Map<string, number>();
+	for (const name of needed) {
+		const spec = profile.windows[name];
+		if (spec?.spawn == null) {
+			continue;
+		}
+		const key = `${spec.app.source}/${spec.app.flags}`;
+		const target = targets.get(key);
+		if (target == null) {
+			targets.set(key, { app: spec.app, count: 1 });
+			baselines.set(
+				key,
+				windows.filter((window) =>
+					matchesSpec({ app: spec.app }, window.app, window.title),
+				).length,
+			);
+		} else {
+			target.count += 1;
+		}
+		await driver.spawnWindow(spec.spawn);
+	}
+	if (targets.size === 0) {
+		return;
+	}
+	for (let attempt = 0; attempt <= 20; attempt++) {
+		const current = await driver.queryWindows();
+		if (
+			[...targets].every(
+				([key, { app, count }]) =>
+					current.filter((window) =>
+						matchesSpec({ app }, window.app, window.title),
+					).length >=
+					(baselines.get(key) ?? 0) + count,
+			)
+		) {
+			return;
+		}
+		if (attempt < 20) {
+			await sleep(100);
+		}
+	}
+}
 /**
  * 1-based mission-control index of a space in the display-ordered flatten — the
  * value yabai's `.spaces[]` array holds and `rule --add space=` accepts.
@@ -310,6 +374,7 @@ export async function apply(
 	lockDir: string = APPLY_LOCK,
 	guardPath: string = SIGNAL_GUARD,
 	nudge: (event: string) => Promise<void> = nudgeSketchybar,
+	sleep: Sleep = Bun.sleep,
 ): Promise<void> {
 	const lock = acquireLockOrSkip(lockDir);
 	if (lock == null) {
@@ -317,7 +382,12 @@ export async function apply(
 	}
 	try {
 		suppressSignals(guardPath);
-		const world = await worldSnapshot(driver);
+		let world = await worldSnapshot(driver);
+		const names = resolveDesk(profile, world.displays).flatMap((layout) =>
+			layout.columns.flat(),
+		);
+		await spawnMissingWindows(driver, profile, names, world.windows, sleep);
+		world = await worldSnapshot(driver);
 		// Re-stamp the guard before each plan op: a full desk converge carries
 		// per-anchor settle sleeps that can outrun GUARD_TTL_SECS, and a lapsed
 		// guard would let an auto handler fire on top of this run. The bash
@@ -354,6 +424,8 @@ export async function laptop(
 	lockDir: string = LAPTOP_LOCK,
 	guardPath: string = SIGNAL_GUARD,
 	nudge: (event: string) => Promise<void> = nudgeSketchybar,
+	sleep: Sleep = Bun.sleep,
+	spawnMissing = true,
 ): Promise<LaptopResult> {
 	const lock = acquireLock(lockDir);
 	if (lock == null) {
@@ -374,6 +446,15 @@ export async function laptop(
 		const homeSpace = lapDisplay?.spaceIds[0];
 		if (homeSpace == null) {
 			return "skipped";
+		}
+		if (spawnMissing) {
+			await spawnMissingWindows(
+				driver,
+				profile,
+				profile.laptopPinned,
+				await driver.queryWindows(),
+				sleep,
+			);
 		}
 		const persisted = readFlexOrder(flexPath);
 		const finalState = await runConverge(
@@ -530,7 +611,8 @@ export async function runDisplayCascade(
  * The live flex-space converge callback: reconverge the
  * laptop grid. Identical to `laptop` — factored as its own export so the debounce
  * slice can wire `tess flex-event = runWaiter(this)` without importing `laptop`
- * under a second name.
+ * under a second name. It never spawns: a window event is often the user
+ * closing one, and reopening it would fight them.
  */
 export async function runFlexConverge(
 	driver: WmDriver,
@@ -544,6 +626,8 @@ export async function runFlexConverge(
 		LAPTOP_LOCK,
 		SIGNAL_GUARD,
 		nudge,
+		Bun.sleep,
+		false,
 	);
 }
 

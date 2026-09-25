@@ -14,6 +14,7 @@ import {
 	type RawYabaiDisplay,
 	type RawYabaiSpace,
 	type RawYabaiWindow,
+	YabaiDriver,
 	yabaiArgs,
 } from "./yabai.ts";
 
@@ -322,6 +323,15 @@ describe("yabaiArgs argv goldens", () => {
 			"event=display_added",
 			"action=tess apply --desk",
 		]);
+	});
+});
+
+describe("YabaiDriver.spawnWindow", () => {
+	test("runs argv directly and rejects with argv on non-zero exit", async () => {
+		const driver = new YabaiDriver();
+		await expect(driver.spawnWindow(["/usr/bin/false"])).rejects.toThrow(
+			"spawnWindow failed (exit 1): /usr/bin/false",
+		);
 	});
 });
 

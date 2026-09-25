@@ -95,6 +95,62 @@ describe("ClaimSet.claim (win_id_claim)", () => {
 	});
 });
 
+describe("ClaimSet spawn fallback", () => {
+	test("claims a blank app window but not a window matching another spec", () => {
+		const spawnProfile = {
+			...profile,
+			windows: {
+				...profile.windows,
+				"ghostty-wave": {
+					...profile.windows["ghostty-wave"],
+					spawn: ["open", "-na", "Ghostty"],
+				},
+			},
+		};
+		const cs = new ClaimSet(spawnProfile);
+		expect(
+			cs.claim([win(1, "Ghostty", { title: "mbp" })], "ghostty-wave"),
+		).toBeNull();
+		expect(
+			cs.claim(
+				[win(1, "Ghostty", { title: "mbp" }), win(2, "Ghostty", { title: "" })],
+				"ghostty-wave",
+			),
+		).toBe(2);
+	});
+
+	test("prefers a blank window on preferDisplay", () => {
+		const spawnProfile = {
+			...profile,
+			windows: {
+				...profile.windows,
+				"ghostty-wave": {
+					...profile.windows["ghostty-wave"],
+					spawn: ["open", "-na", "Ghostty"],
+				},
+			},
+		};
+		const cs = new ClaimSet(spawnProfile);
+		expect(
+			cs.claim(
+				[
+					win(1, "Ghostty", { displayIdx: 1 }),
+					win(2, "Ghostty", { displayIdx: 3 }),
+				],
+				"ghostty-wave",
+				3,
+			),
+		).toBe(2);
+	});
+
+	test("does not fallback when the spec has no spawn command", () => {
+		const cs = new ClaimSet(profile);
+		expect(
+			cs.claim([win(1, "Ghostty", { title: "" })], "ghostty-wave"),
+		).toBeNull();
+	});
+});
+
 describe("ClaimSet.claimMany (win_ids_claim)", () => {
 	test("returns distinct ids in name order, skipping names with no free window", () => {
 		const cs = new ClaimSet(profile);

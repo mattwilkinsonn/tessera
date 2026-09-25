@@ -83,6 +83,8 @@ export interface FakeSeed {
 	displays?: ReadonlyArray<FakeSeedDisplay>;
 	spaces?: ReadonlyArray<FakeSeedSpace>;
 	windows?: ReadonlyArray<FakeSeedWindow>;
+	/** App name assigned to windows opened through `spawnWindow`. */
+	spawnApp?: string;
 	/** Base settle unit; 0 (default) so tests never sleep. */
 	settleMs?: number;
 }
@@ -101,10 +103,14 @@ export class FakeDriver implements WmDriver {
 	#displays: Array<{ idx: number; frame: Frame }> = [];
 	#nextSpaceId = 1;
 	#focusedWindowId: number | null = null;
+	#spawnApp: string;
 	readonly settleMs: number;
+	/** Test observation of argv passed to each fake spawn. */
+	readonly spawnCalls: string[][] = [];
 
 	constructor(seed: FakeSeed = {}) {
 		this.settleMs = seed.settleMs ?? 0;
+		this.#spawnApp = seed.spawnApp ?? "Ghostty";
 		this.#displays = (seed.displays ?? [{ idx: 1, frame: LAPTOP_FRAME }]).map(
 			(d) => ({ idx: d.idx, frame: d.frame ?? LAPTOP_FRAME }),
 		);
@@ -186,6 +192,37 @@ export class FakeDriver implements WmDriver {
 			windowIds,
 			layout: s.layout,
 		};
+	}
+	async spawnWindow(argv: ReadonlyArray<string>): Promise<void> {
+		this.spawnCalls.push([...argv]);
+		const focused =
+			this.#focusedWindowId == null
+				? undefined
+				: this.#winById(this.#focusedWindowId);
+		const space =
+			(focused == null
+				? undefined
+				: this.#spaces.find(
+						(candidate) => candidate.stableId === focused.spaceStableId,
+					)) ?? this.#spaces[0];
+		if (space == null) {
+			return;
+		}
+		const id =
+			this.#windows.reduce((max, window) => Math.max(max, window.id), 0) + 1;
+		this.#windows.push({
+			id,
+			app: this.#spawnApp,
+			title: "",
+			displayIdx: space.displayIdx,
+			spaceStableId: space.stableId,
+			minimized: false,
+			floating: false,
+			sticky: false,
+			visible: true,
+			splitType: "none",
+			frame: { ...DEFAULT_WIN_FRAME },
+		});
 	}
 
 	// ── Queries ──

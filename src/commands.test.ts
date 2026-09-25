@@ -310,6 +310,41 @@ describe("apply", () => {
 		// would leave this empty AND spawn the real bar).
 		expect(nudged).toEqual(["yabai_spaces_changed"]);
 	});
+	test("spawns a missing Ghostty once, places it, and reuses it on the next apply", async () => {
+		const spawnProfile = {
+			...profile,
+			windows: {
+				...profile.windows,
+				"ghostty-wave": {
+					...profile.windows["ghostty-wave"],
+					spawn: ["open", "-na", "Ghostty"],
+				},
+			},
+		};
+		const driver = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 5120, h: 2160 } }],
+			spaces: [{ displayIdx: 1 }],
+			windows: [
+				{ id: 1, app: "Arc", title: "one", spaceIndex: 1 },
+				{ id: 2, app: "Obsidian", spaceIndex: 1 },
+				{ id: 3, app: "Code", spaceIndex: 1 },
+			],
+		});
+		const p = tempPaths();
+		const settle = async (): Promise<void> => {};
+		await apply(driver, spawnProfile, p.lock, p.guard, noNudge, settle);
+		const spawned = (await driver.queryWindows()).find(
+			(window) => window.app === "Ghostty",
+		);
+		expect(driver.spawnCalls).toEqual([["open", "-na", "Ghostty"]]);
+		expect(
+			(await driver.querySpaces()).find((space) => space.label === "main")
+				?.windowIds,
+		).toContain(spawned?.id);
+
+		await apply(driver, spawnProfile, p.lock, p.guard, noNudge, settle);
+		expect(driver.spawnCalls).toHaveLength(1);
+	});
 
 	test("no-op under lock contention (a live holder owns the lock)", async () => {
 		const driver = deskWorld();
@@ -403,6 +438,52 @@ describe("laptop", () => {
 		expect(spaces.find((s) => s.label === "laptop")?.layout).toBe("stack");
 		// Flex order was written.
 		expect(Array.isArray(readFlexOrder(p.flex))).toBe(true);
+	});
+
+	test("spawns a missing pinned Ghostty, but a window-event converge does not", async () => {
+		const spawnProfile = {
+			...profile,
+			windows: {
+				...profile.windows,
+				"ghostty-mbp": {
+					...profile.windows["ghostty-mbp"],
+					spawn: ["open", "-na", "Ghostty"],
+				},
+			},
+		};
+		const seed = {
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 1728, h: 1117 } }],
+			spaces: [{ displayIdx: 1, label: "laptop" }],
+			windows: [{ id: 1, app: "Arc", title: "a", spaceIndex: 1 }],
+		};
+		const settle = async (): Promise<void> => {};
+
+		const explicit = new FakeDriver(seed);
+		const p = tempPaths();
+		await laptop(
+			explicit,
+			spawnProfile,
+			p.flex,
+			p.lock,
+			p.guard,
+			noNudge,
+			settle,
+		);
+		expect(explicit.spawnCalls).toEqual([["open", "-na", "Ghostty"]]);
+
+		const onEvent = new FakeDriver(seed);
+		const q = tempPaths();
+		await laptop(
+			onEvent,
+			spawnProfile,
+			q.flex,
+			q.lock,
+			q.guard,
+			noNudge,
+			settle,
+			false,
+		);
+		expect(onEvent.spawnCalls).toEqual([]);
 	});
 
 	test("returns contended when a live holder owns the converge lock", async () => {
