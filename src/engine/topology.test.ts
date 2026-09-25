@@ -150,16 +150,19 @@ describe("resolveDesk", () => {
 		expect(desk).toBe(profile.desk);
 	});
 
-	test("duplicate widths collapse to one logical display", () => {
-		// Two panels reporting the same width resolve to the same logical slot;
-		// the present SET is still {aw, laptop}.
-		const collapsed = [
-			{ display: "aw", label: "solo", kind: "3col", columns: [["arc"]] },
-		] as const;
+	test("two displays of one width do not match any topology", () => {
+		// Both panels resolve to the aw slot, but only the first is laid out; a
+		// topology claiming {aw, laptop} would leave the second unmanaged.
 		const profile = {
 			...base,
 			topologies: [
-				{ name: "aw-laptop", displays: ["aw", "laptop"], desk: collapsed },
+				{
+					name: "aw-laptop",
+					displays: ["aw", "laptop"],
+					desk: [
+						{ display: "aw", label: "solo", kind: "3col", columns: [["arc"]] },
+					],
+				},
 			],
 		} satisfies Profile;
 
@@ -168,6 +171,6 @@ describe("resolveDesk", () => {
 			display(4, AW),
 			display(3, LAPTOP),
 		]);
-		expect(desk).toBe(collapsed);
+		expect(desk).toBe(profile.desk);
 	});
 });
