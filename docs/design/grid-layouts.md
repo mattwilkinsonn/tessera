@@ -161,9 +161,12 @@ within-column concept. A layout that needs rows inside a column is the tree
 model in Alternatives, not this record.
 
 The recipe is extracted as data — `bspSteps(spaceIdx, target)` returns the
-ordered `yabai -m` argv list with its settle units — so the whole sequence is
-golden-tested with no live yabai, matching the file's construction-vs-
-execution split (`yabaiArgs.*` builders + one thin runner).
+ordered `yabai -m` argv list with its settle durations (ms) — so the whole
+sequence is golden-tested with no live yabai, matching the file's
+construction-vs-execution split (`yabaiArgs.*` builders + one thin runner).
+The chain formula itself (`chainRatios`) lives in `src/config/chain.ts`, a
+neutral module with no imports, so validation and the driver share one copy
+of the invariant instead of two that can drift.
 
 ### Validation
 
@@ -186,7 +189,8 @@ execution split (`yabaiArgs.*` builders + one thin runner).
   (`r0 = 0.9`) but with the middle track dropped gives `r0 = 0.947`. `n` is
   a handful of tracks, so the subsequence walk is cheap. This follows the
   existing precedent of the 0–1 check, which already encodes a yabai bound
-  in the config layer.
+  in the config layer. Rejecting at load rather than warning matches today's
+  0–1 error; revisit only if a real layout hits it.
 
 Messages keep the existing `${where} ${label}: …` form. Track count vs.
 display default mismatch is *not* an error — the default just does not apply.
@@ -210,7 +214,10 @@ missing track's weight dropped (`[3, 4, 3]` minus the empty track), not the
 
 Clean cutover, no `3col`/`2col` sugar and no `SplitRatios` alias. Matt's
 profile (the private `tessera-profile` package that `satisfies Profile`) pins
-tessera by commit; its PR bumps the pin and rewrites the profile in one change:
+tessera by commit in two places — the package's `tessera-wm` devDependency
+ref (the typecheck) and the nix flake input `tessera` (the deployed binary).
+Its PR moves both pins to the same merged commit and rewrites the profile in
+one change:
 
 ```ts
 desk: [
@@ -229,7 +236,10 @@ The AW thirds layout is `kind: "columns"` with three tracks and no `weights`
 `topologies` entries whose AW layout puts the AW windows in the side tracks —
 membership only, nothing new in the model. The binary and
 `~/.config/tessera/profile.ts` deploy from the same host config, so they
-switch together.
+switch together — provided both pins move in the same PR. Bumping only the
+package ref ships a new-shape profile to the old binary, whose validator
+accepts it (`ratios` undefined is no violation) and whose `apply` then throws
+at `layout.columns.flat()`.
 
 ## Alternatives considered
 
@@ -241,8 +251,7 @@ switch together.
   slots) must walk a tree, and the driver recipe needs a recursive insert
   order with per-subtree evacuation. The flat shape is the tree's depth-1
   case; if a nested layout is ever needed, a `children` variant of a track can
-  be added without changing `kind`/`tracks`/`weights`. The tree is
-  recorded here so the choice is deliberate.
+  be added without changing `kind`/`tracks`/`weights`.
 - **Keep `"3col"`/`"2col"` as sugar** (`kind: "3col"` ≡ `columns` + 3 tracks).
   Rejected: the sugar would need its own validation (track count must match
   the name) and a normalize step before every consumer, for two strings the
@@ -252,9 +261,7 @@ switch together.
   remainder fraction by hand, the `0.5714` today), and it is meaningless to a
   non-bsp backend. Weights are what a user thinks in.
 - **Weights keyed only by count, not by axis** (`weights: { 3: [3,4,3] }`).
-  Rejected: a 3-column and a 3-row default on the same display are different
-  numbers (an ultrawide's column shares are not its row shares), and the
-  axis key costs one word.
+  Rejected; see Open Question 1.
 
 ## Plan
 
@@ -267,9 +274,11 @@ alone. T4a is a follow-up PR in tessera; T4b is the orion profile PR.
 
 - **Runtime/tooling:** Bun; TypeScript strict; Biome; `bun:test`. Zero npm
   dependencies. Single `bun build --compile` binary.
-- **Layering is law** (`architecture.md`): `config/` and `engine/` import
-  nothing from `driver/`; `engine/` is pure. The bsp chain is driver-only;
-  the engine emits weights.
+- **Layering is law** (`architecture.md`): `config/` and `engine/` have no
+  runtime import from `driver/` (type-only imports of the seam types in
+  `driver/types.ts` are allowed); `engine/` is pure. The chain formula lives
+  in `config/chain.ts`; only the argv/insert recipe is driver-only. The
+  engine emits weights.
 - **RIG-3984 order is preserved:** layout → display → profile, then equal
   weights. Snap uses the focused display's defaults.
 - **Clean cutover:** `"3col"`, `"2col"`, `SplitRatios`, `Profile.ratios`,
@@ -278,22 +287,24 @@ alone. T4a is a follow-up PR in tessera; T4b is the orion profile PR.
 - **Naming:** `tracks` (membership), `weights` (sizes), `kind: "columns" |
   "rows" | "stack"`. No "grid", "cells", or "ratios" in new code.
 - **Weights are relative** everywhere; only the yabai driver turns them into
-  absolute ratios. Validation enforces the 0.1–0.9 chain bound (yabai's clamp)
-  on every non-empty subsequence in the config layer, as the current 0–1
-  check does; the driver clamps and writes one stderr line as a backstop.
+  absolute ratios. Validation enforces the yabai clamp bound as described in
+  Approach § Validation; the driver clamps and writes one stderr line as a
+  backstop.
 - **Existing tests that pin the old shape are rewritten to the new contract,
-  not deleted** (`desk.test.ts`, `snap.test.ts`, `validate.test.ts`,
-  `profile.test.ts`, `loader.test.ts`, `fake.test.ts`, `exec.test.ts`,
-  `commands.test.ts`).
+  not deleted** (`desk.test.ts`, `snap.test.ts`, `topology.test.ts`,
+  `validate.test.ts`, `profile.test.ts`, `loader.test.ts`, `fake.test.ts`,
+  `exec.test.ts`, `commands.test.ts`).
 - **VCS:** jj + jj-vine; this record freezes on merge.
 
 ### T1 — Config types + validation + bundled profile
 
 Replace the fixed kinds and ratio keys with tracks/weights in
-`src/config/types.ts`, rewrite `src/config/validate.ts`, and port the bundled
-`profile.ts` and `profile.fixture.ts`. Delete `SplitRatios`, `Profile.ratios`,
-`SPLIT_KEY`, `ratioViolations`. Update the `kind: "3col" | "2col" | "stack"`
-text in `docs/design/architecture.md`.
+`src/config/types.ts`, add `src/config/chain.ts`, rewrite
+`src/config/validate.ts`, and port the bundled `profile.ts` and
+`profile.fixture.ts`. Delete `SplitRatios`, `Profile.ratios`, `SPLIT_KEY`,
+`ratioViolations`. In `docs/design/architecture.md`, update every `ratios` /
+`columns` / `3col` / `2col` mention that describes the config shape (the
+`kind` union and the Profile block's `ratios: { col3Root; col3Inner }`).
 
 Interfaces:
 
@@ -315,18 +326,20 @@ export interface DeskLayout {
 // Profile: `displays: Record<DisplayName, { width: number; weights?: WeightDefaults }>`,
 // `weights?: WeightDefaults`; `ratios` removed; other fields unchanged.
 
-// src/config/validate.ts
-export function validateProfile(profile: Profile): void; // throws on the first violation set, same as today
-/** The bsp chain ratios for a weight vector: r[i] = w[i] / sum(w[i..]). Pure; shared with the driver's test. */
+// src/config/chain.ts — no imports; both validate.ts and driver/yabai.ts import it
+/** The bsp chain ratios for a weight vector: r[i] = w[i] / sum(w[i..]). Pure. */
 export function chainRatios(weights: Weights): number[];
+
+// src/config/validate.ts
+export function validateProfile(profile: Profile): void; // collects all violations and throws once, as today
 ```
 
 Violations (each its own test): empty track; stack with ≠1 track or with
 weights; one-track `columns`/`rows` with weights; weights length ≠ tracks
 length; non-positive/non-finite weight; a default keyed `n` whose vector
-length ≠ `n`; a chain ratio outside `[0.1, 0.9]` for the full vector and for
-a subsequence (`[9, 0.5, 0.5]` fails on `[9, 0.5]`). Keep "the bundled
-default profile is valid".
+length ≠ `n`; a chain ratio outside the bound for the full vector and for a
+subsequence (`[9, 0.5, 0.5]` fails on `[9, 0.5]`; see Approach § Validation).
+Keep "the bundled default profile is valid".
 
 Test cycle: `bun test src/config/`.
 
@@ -338,8 +351,10 @@ target; `snapPlan` emits `columns` targets at the mode's nominal count and
 drops empty tracks the same way. `SpaceLayoutTarget` in `src/driver/types.ts`
 changes here (it is the engine→driver seam) and `FakeDriver.realizeSpaceLayout`
 reads `tracks`. `apply`'s spawn list in `src/commands.ts`
-(`layout.columns.flat()`) becomes `layout.tracks.flat()`. Update the
-`SpaceLayoutTarget.ratios` text in `docs/design/architecture.md` and the doc
+(`layout.columns.flat()`) becomes `layout.tracks.flat()`. In
+`docs/design/architecture.md`, update every `ratios` / `columns` mention that
+describes the target shape (`SpaceLayoutTarget.ratios` and the
+`{ label, kind, columns, ratios }` prose in Layer 2 and Plan T4), and the doc
 comments in `src/engine/plan.ts` and `src/driver/types.ts`.
 
 Interfaces:
@@ -391,26 +406,34 @@ Interfaces:
 
 ```ts
 // src/driver/yabai.ts
-/** One driver step: a yabai argv (no leading path) and the settle to wait after it, in ms. */
-export interface BspStep { args: string[]; settleMs: number }
-/** The ordered recipe for a columns/rows target on live space `spaceIdx`. Pure apart from `warn`. */
+/** One driver step: a yabai argv (no leading path), the settle to wait after it in ms, and the window to unfloat after it (today's #unfloatOne after each anchor/extra move). */
+export interface BspStep { args: string[]; settleMs: number; unfloat?: number }
+/** The ordered recipe for a columns/rows target on live space `spaceIdx`. Pure apart from `warn`. Imports `chainRatios` from config/chain.ts. */
 export function bspSteps(spaceIdx: number, target: SpaceLayoutTarget, warn?: (line: string) => void): BspStep[];
 /** `--ratio abs:` argument: clamps to [0.1, 0.9], calling `warn` once if it moved, then `toFixed(4)`. */
 export function ratioArg(r: number, warn?: (line: string) => void): string;
-// realizeSpaceLayout(id, target) runs `bspSteps` through #run/#unfloatOne with warn = one stderr line; stack path unchanged.
+// realizeSpaceLayout(id, target) runs each step through #run, then #unfloatOne(step.unfloat) when set, with warn = one stderr line; stack path unchanged.
 ```
 
-Golden tests assert the formatted argv strings: 3 columns `[3,4,3]` →
-`--insert east` on a0, a1; `--ratio abs:0.3000` on a0, `abs:0.5714` on a1;
-4 columns equal → `abs:0.2500`, `abs:0.3333`, `abs:0.5000`; 2 rows `[2,1]` →
-`--insert south`, `abs:0.6667`; 1 track → no insert, no ratio; extras →
-`--insert stack` + move per extra; backstop `[9, 0.5]` → `abs:0.9000` and
-exactly one `warn` call. Existing `yabaiArgs` tests untouched.
+Golden tests assert the formatted argv strings and each step's `unfloat`:
+3 columns `[3,4,3]` → `--insert east` on a0, a1; `--ratio abs:0.3000` on a0,
+`abs:0.5714` on a1; every anchor and extra move carries `unfloat` = the moved
+window; 4 columns equal → `abs:0.2500`, `abs:0.3333`, `abs:0.5000`; 2 rows
+`[2,1]` → `--insert south`, `abs:0.6667`; 1 track → no insert, no ratio;
+extras → `--insert stack` + move per extra; backstop `[9, 0.5]` →
+`abs:0.9000` and exactly one `warn` call. Existing `yabaiArgs` tests
+untouched.
 
 Test cycle: `bun test src/driver/yabai.test.ts`, then a live smoke on the
-MBP: `tess apply` with the ported bundled profile on one display, confirm
-`yabai -m query --windows` frames match the weights (`w` of each anchor /
-display width within 1px of `w[i]/sum`).
+MBP. The bundled profile's laptop layout is `stack`, so it builds no chain;
+point `$TESSERA_PROFILE` at a throwaway profile whose laptop layout is
+`columns` with 4 tracks `[3, 4, 3, 2]`, run `tess apply`, then switch it to
+`rows` with `[2, 1]` and apply again. Criterion, from `yabai -m query
+--windows`: each anchor's frame `w` (columns) or `h` (rows) is within 1px
+per nesting level of `usable extent × w[i] / sum(w)`, where the usable
+extent is the display width, or the display height minus the 32px
+`external_bar` for rows. This is also what confirms OQ4's `south` nesting
+and N ≥ 4 assumptions.
 
 ### T4 — FakeDriver geometry + the profile cutover (orion)
 
@@ -441,10 +464,12 @@ rows `[1,1]` → heights `h/2`; extras share the anchor frame; `snap 50-50` on
 a seeded display with `columns: { 2: [3, 2] }` → widths `600, 400`.
 
 **(b) Profile cutover** (the private `tessera-profile` package, downstream):
-bump the `tessera-wm` pin to the merged commit; rewrite `desk` to
-`kind: "columns"`/`tracks` and `ratios` → `weights: { columns: { 3: [3, 4, 3] } }`
-(the Migration block above); add the AW thirds layout and the G9-solo /
-AW-solo topologies. Its typecheck (`satisfies Profile`) is the gate.
+move both tessera pins to the same merged commit — the package.json
+`tessera-wm` devDependency ref and the nix flake input `tessera`
+(`nix flake update tessera`); rewrite `desk` to `kind: "columns"`/`tracks`
+and `ratios` → `weights: { columns: { 3: [3, 4, 3] } }` (the Migration block
+above); add the AW thirds layout and the G9-solo / AW-solo topologies. Its
+typecheck (`satisfies Profile`) is the gate.
 
 Test cycle: `bun test src/driver/fake.test.ts src/commands.test.ts`; then the
 profile package's typecheck.
@@ -454,16 +479,17 @@ profile package's typecheck.
 PR 1 (tessera, three commits — see Plan):
 
 - [ ] T1 — `TrackKind`/`Weights`/`WeightDefaults`; `DeskLayout.tracks` +
-  `weights`; `validateProfile` rewrite (subsequence chain check, one-track
-  weights rejected) + `chainRatios`; bundled profile and fixture ported;
-  old types deleted; `architecture.md` kind text
+  `weights`; `config/chain.ts` (`chainRatios`); `validateProfile` rewrite
+  (subsequence chain check, one-track weights rejected); bundled profile and
+  fixture ported; old types deleted; `architecture.md` config-shape text
 - [ ] T2 — `weightsFor`; `SpaceLayoutTarget { kind, tracks, weights }`;
   `deskPlan` drops empty tracks with their weights; `snapPlan` on `columns`
   at nominal count; `FakeDriver` reads `tracks`; `commands.ts` spawn list;
   doc comments + `architecture.md` target text; engine tests rewritten
-- [ ] T3 — `bspSteps` + `ratioArg` + `realizeSpaceLayout` chain recipe
-  (east/south insert, chain ratios, clamp backstop, `toFixed(4)`); argv golden
-  tests; live smoke
+- [ ] T3 — `bspSteps` (`unfloat` per step) + `ratioArg` +
+  `realizeSpaceLayout` chain recipe (east/south insert, chain ratios, clamp
+  backstop, `toFixed(4)`); argv golden tests; live smoke on a throwaway
+  4-column and 2-row profile
 
 PR 2 (tessera, follow-up):
 
@@ -471,7 +497,8 @@ PR 2 (tessera, follow-up):
 
 PR 3 (orion):
 
-- [ ] T4b — orion profile cutover + AW thirds + solo topologies; pin bump
+- [ ] T4b — orion profile cutover + AW thirds + solo topologies; both pins
+  (package.json `tessera-wm` ref + flake input `tessera`) to one commit
 
 ## Open Questions
 
@@ -481,9 +508,10 @@ Designed against the recommendation in each; only 1–3 are load-bearing.
    it is the `Profile`/display shape Matt edits).*
    (a) `weights: { columns: { 3: [3,4,3] }, rows: { 2: [1,1] } }` — one
    default per (axis, count). (b) `weights: { 3: [3,4,3] }` — a 3-track
-   default applies to both 3 columns and 3 rows. **Recommend (a):** the two
-   axes want different numbers on a wide display, and the extra key is one
-   word. The record is written against (a).
+   default applies to both 3 columns and 3 rows. **Recommend (a):** a
+   3-column and a 3-row default on the same display are different numbers
+   (an ultrawide's column shares are not its row shares). The record is
+   written against (a).
 2. **`stack` as a third `kind`, or a one-track `columns` layout?**
    *(load-bearing — it sets the `kind` union and the driver's branch).*
    (a) keep `kind: "stack"` — the whole space becomes `--layout stack`, which
@@ -503,12 +531,7 @@ Designed against the recommendation in each; only 1–3 are load-bearing.
    layout is ever wanted, add a `children` variant to a track entry;
    `kind`/`tracks`/`weights` stay. That extension is deferred, not designed
    here.
-4. **Clamp bound as a validation error vs. a warning** *(non-load-bearing)*.
-   A weight vector with a chain ratio outside `[0.1, 0.9]` in any
-   subsequence (e.g. `[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]`, first ratio 0.09)
-   is rejected at load; the driver clamps and logs only as a backstop.
-   Rejecting matches today's 0–1 error; revisit only if a real layout hits it.
-5. **Assumptions about yabai not confirmed live** *(non-load-bearing; T3's
+4. **Assumptions about yabai not confirmed live** *(non-load-bearing; T3's
    live smoke verifies them)*. Read from yabai's source, not exercised:
    `--insert east|south` makes the moved-in window the *second* child
    (`window_manager_set_window_insertion` sets `CHILD_SECOND` for east/south)
