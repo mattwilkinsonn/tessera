@@ -337,7 +337,8 @@ describe("laptopConvergeStep (, four phases)", () => {
 
 	test("re-converging a settled grid terminates and moves nothing", () => {
 		// Windows already on their lap-* spaces take the in-place path in phases
-		// A and B; it must advance the cursor rather than re-check the same entry.
+		// A and B; it must advance the cursor. A regression hangs this test rather
+		// than failing it: the spin is inside one synchronous planner call.
 		const world = new FakeWorld([
 			win(1, "Arc"),
 			win(2, "Arc"),
