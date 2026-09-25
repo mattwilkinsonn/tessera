@@ -333,6 +333,12 @@ describe("YabaiDriver.spawnWindow", () => {
 			"spawnWindow failed (exit 1): /usr/bin/false",
 		);
 	});
+	test("returns after the bounded wait for a lingering launcher", async () => {
+		const driver = new YabaiDriver();
+		const started = performance.now();
+		await driver.spawnWindow(["/bin/sleep", "30"]);
+		expect(performance.now() - started).toBeLessThan(10_000);
+	}, 10_000);
 });
 
 describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {

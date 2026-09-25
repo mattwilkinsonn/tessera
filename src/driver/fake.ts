@@ -85,6 +85,10 @@ export interface FakeSeed {
 	windows?: ReadonlyArray<FakeSeedWindow>;
 	/** App name assigned to windows opened through `spawnWindow`. */
 	spawnApp?: string;
+	/** Make spawnWindow reject for failure-path command tests. */
+	spawnFails?: boolean;
+	/** Record the spawn request but do not create a window. */
+	spawnNoWindow?: boolean;
 	/** Base settle unit; 0 (default) so tests never sleep. */
 	settleMs?: number;
 }
@@ -103,6 +107,8 @@ export class FakeDriver implements WmDriver {
 	#displays: Array<{ idx: number; frame: Frame }> = [];
 	#nextSpaceId = 1;
 	#focusedWindowId: number | null = null;
+	#spawnFails: boolean;
+	#spawnNoWindow: boolean;
 	#spawnApp: string;
 	readonly settleMs: number;
 	/** Test observation of argv passed to each fake spawn. */
@@ -111,6 +117,8 @@ export class FakeDriver implements WmDriver {
 	constructor(seed: FakeSeed = {}) {
 		this.settleMs = seed.settleMs ?? 0;
 		this.#spawnApp = seed.spawnApp ?? "Ghostty";
+		this.#spawnFails = seed.spawnFails ?? false;
+		this.#spawnNoWindow = seed.spawnNoWindow ?? false;
 		this.#displays = (seed.displays ?? [{ idx: 1, frame: LAPTOP_FRAME }]).map(
 			(d) => ({ idx: d.idx, frame: d.frame ?? LAPTOP_FRAME }),
 		);
@@ -195,6 +203,8 @@ export class FakeDriver implements WmDriver {
 	}
 	async spawnWindow(argv: ReadonlyArray<string>): Promise<void> {
 		this.spawnCalls.push([...argv]);
+		if (this.#spawnFails) throw new Error("fake spawn failure");
+		if (this.#spawnNoWindow) return;
 		const focused =
 			this.#focusedWindowId == null
 				? undefined

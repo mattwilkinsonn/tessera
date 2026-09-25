@@ -445,11 +445,16 @@ export class YabaiDriver implements WmDriver {
 	}
 
 	async spawnWindow(argv: ReadonlyArray<string>): Promise<void> {
-		const child = Bun.spawn([...argv], { stdout: "ignore", stderr: "ignore" });
-		const exitCode = await child.exited;
-		if (exitCode !== 0) {
+		const child = Bun.spawn([...argv], { stdout: "ignore", stderr: "pipe" });
+		const result = await Promise.race([
+			child.exited.then((exitCode) => ({ state: "exited" as const, exitCode })),
+			Bun.sleep(5000).then(() => ({ state: "timeout" as const })),
+		]);
+		if (result.state === "timeout") return;
+		if (result.exitCode !== 0) {
+			const stderr = (await new Response(child.stderr).text()).trim();
 			throw new Error(
-				`spawnWindow failed (exit ${exitCode}): ${argv.join(" ")}`,
+				`spawnWindow failed (exit ${result.exitCode}): ${argv.join(" ")}${stderr === "" ? "" : `: ${stderr}`}`,
 			);
 		}
 	}
