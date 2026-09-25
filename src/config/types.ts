@@ -31,7 +31,7 @@ export interface WindowSpec {
 	title?: RegExp;
 	/** The leading-`!` title inversion: match windows whose title does NOT match. */
 	titleInvert?: boolean;
-	/** argv that opens one new blank window when no matching window exists. */
+	/** Prompt-exit argv to open a window. The new window must match this app spec and no other spec's title. */
 	spawn?: ReadonlyArray<string>;
 }
 

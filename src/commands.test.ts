@@ -345,6 +345,75 @@ describe("apply", () => {
 		await apply(driver, spawnProfile, p.lock, p.guard, noNudge, settle);
 		expect(driver.spawnCalls).toHaveLength(1);
 	});
+	test("does not spawn names belonging only to an absent display", async () => {
+		const spawnProfile = {
+			...profile,
+			windows: {
+				...profile.windows,
+				"ghostty-wave": {
+					...profile.windows["ghostty-wave"],
+					spawn: ["open", "-a", "Ghostty"],
+				},
+			},
+		};
+		const driver = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 3440, h: 1440 } }],
+			spaces: [{ displayIdx: 1 }],
+		});
+		const p = tempPaths();
+		await apply(driver, spawnProfile, p.lock, p.guard, noNudge, async () => {});
+		expect(driver.spawnCalls).toEqual([]);
+	});
+	test("a spawn failure neither stops later spawns nor the layout", async () => {
+		const spawnProfile = {
+			...profile,
+			windows: {
+				...profile.windows,
+				linear: { ...profile.windows.linear, spawn: ["open", "-a", "Linear"] },
+				akiflow: {
+					...profile.windows.akiflow,
+					spawn: ["open", "-a", "Akiflow"],
+				},
+			},
+		};
+		const driver = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 3440, h: 1440 } }],
+			spaces: [{ displayIdx: 1 }, { displayIdx: 1 }],
+			windows: [{ id: 1, app: "Arc", spaceIndex: 2 }],
+			spawnFails: 1,
+		});
+		const p = tempPaths();
+		await apply(driver, spawnProfile, p.lock, p.guard, noNudge, async () => {});
+		expect(driver.spawnCalls).toEqual([
+			["open", "-a", "Linear"],
+			["open", "-a", "Akiflow"],
+		]);
+		expect(
+			(await driver.querySpaces()).find((space) => space.label === "plan")
+				?.windowIds,
+		).toContain(1);
+	});
+	test("spawn wait gives up after its bounded polls when no window appears", async () => {
+		const spawnProfile = {
+			...profile,
+			windows: {
+				...profile.windows,
+				arc: { ...profile.windows.arc, spawn: ["open", "-a", "Arc"] },
+			},
+		};
+		const driver = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 3440, h: 1440 } }],
+			spaces: [{ displayIdx: 1 }],
+			spawnNoWindow: true,
+		});
+		const p = tempPaths();
+		let sleeps = 0;
+		await apply(driver, spawnProfile, p.lock, p.guard, noNudge, async () => {
+			sleeps++;
+		});
+		expect(driver.spawnCalls.length).toBeGreaterThan(0);
+		expect(sleeps).toBe(49);
+	});
 
 	test("no-op under lock contention (a live holder owns the lock)", async () => {
 		const driver = deskWorld();

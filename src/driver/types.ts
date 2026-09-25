@@ -117,7 +117,7 @@ export interface WmDriver {
 	// ── Queries (every mutator invalidates; snapshot caching is the executor's
 	// job, mirroring _WINDOWS_JSON / win_refresh) ──
 	queryWindows(): Promise<WmWindow[]>;
-	/** Open one app window using the supplied executable and argv. */
+	/** Spawn one app window; launchers must exit promptly or the call returns after 5s. */
 	spawnWindow(argv: ReadonlyArray<string>): Promise<void>;
 	/**
 	 * A narrow re-query of ONE space (C3), not claim-filtered: a freshness/perf primitive

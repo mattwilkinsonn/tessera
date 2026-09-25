@@ -333,6 +333,20 @@ describe("YabaiDriver.spawnWindow", () => {
 			"spawnWindow failed (exit 1): /usr/bin/false",
 		);
 	});
+	test("reports the launcher's stderr without waiting on a child that keeps it open", async () => {
+		const driver = new YabaiDriver();
+		const started = performance.now();
+		await expect(
+			driver.spawnWindow(["/bin/sh", "-c", "echo boom >&2; sleep 3 & exit 1"]),
+		).rejects.toThrow(/exit 1\).*: boom$/);
+		expect(performance.now() - started).toBeLessThan(1_500);
+	});
+	test("returns after the timeout for a lingering launcher", async () => {
+		const driver = new YabaiDriver({ spawnTimeoutMs: 200 });
+		const started = performance.now();
+		await driver.spawnWindow(["/bin/sleep", "2"]);
+		expect(performance.now() - started).toBeLessThan(1_000);
+	});
 });
 
 describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {
