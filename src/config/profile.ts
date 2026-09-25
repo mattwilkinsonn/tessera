@@ -32,6 +32,10 @@ export const profile = {
 	// Logical display slot → stable width in px. All three slots are declared
 	// even in a two-monitor setup; `aw` here is defined but left out of the desk
 	// below, so the engine skips it whenever that display isn't connected.
+	// A slot may also set column-split defaults for its layouts and `tess snap`,
+	// e.g. `ratios: { col3: { col3Root: 1 / 3, col3Inner: 0.5 }, col2: 0.6 }`;
+	// a desk layout's own `ratios` overrides them, and `ratios` below is the
+	// last 3col fallback.
 	displays: {
 		g9: { width: 3440 }, // external display 1 — a 3440px ultrawide
 		aw: { width: 2560 }, // external display 2 — declared but unused below

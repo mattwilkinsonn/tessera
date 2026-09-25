@@ -97,19 +97,21 @@ describe("validateProfile", () => {
 		).toThrow('topology "aw-only": duplicate layout for aw');
 	});
 
-	test("layout ratios on a non-3col layout are rejected", () => {
-		expect(() =>
-			validateProfile({
-				...base,
-				desk: [
-					{
-						...layout("aw"),
-						kind: "2col",
-						ratios: { col3: { col3Root: 0.4, col3Inner: 0.5 } },
-					},
-				],
-			}),
-		).toThrow("desk aw: ratios.col3 does not apply to a 2col layout");
+	test("a layout may only set the split for its own kind", () => {
+		const cases = [
+			["2col", { col3: { col3Root: 0.4, col3Inner: 0.5 } }, "col3", "2col"],
+			["3col", { col2: 0.6 }, "col2", "3col"],
+			["stack", { col2: 0.6 }, "col2", "stack"],
+			["stack", { col3: { col3Root: 0.4, col3Inner: 0.5 } }, "col3", "stack"],
+		] as const;
+		for (const [kind, ratios, key, named] of cases) {
+			expect(() =>
+				validateProfile({
+					...base,
+					desk: [{ ...layout("aw"), kind, ratios }],
+				}),
+			).toThrow(`desk aw: ratios.${key} does not apply to a ${named} layout`);
+		}
 	});
 
 	test("a ratio outside (0, 1) is rejected", () => {

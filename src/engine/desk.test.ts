@@ -200,7 +200,6 @@ describe("deskPlan", () => {
 				target: {
 					kind: "stack",
 					columns: [[30, 31, 32, 33]],
-					ratios: undefined,
 				},
 			},
 		]);
@@ -263,7 +262,7 @@ describe("deskPlan", () => {
 			{
 				op: "realizeLayout",
 				space: "s3" as SpaceId,
-				target: { kind: "stack", columns: [[30]], ratios: undefined },
+				target: { kind: "stack", columns: [[30]] },
 			},
 		]);
 	});
@@ -300,8 +299,8 @@ describe("deskPlan", () => {
 	});
 
 	test("a display's split defaults apply, and a layout override beats them", () => {
-		// g9 takes its display 3col default; aw's display 2col default is
-		// overridden by the layout.
+		// g9 takes its display 3col default; aw's display 3col and 2col defaults
+		// are both overridden by the layout (col3 via its own 3col layout).
 		const configured = {
 			...profile,
 			displays: {
@@ -310,7 +309,10 @@ describe("deskPlan", () => {
 					...profile.displays.g9,
 					ratios: { col3: { col3Root: 0.4, col3Inner: 0.6 } },
 				},
-				aw: { ...profile.displays.aw, ratios: { col2: 0.7 } },
+				aw: {
+					...profile.displays.aw,
+					ratios: { col3: { col3Root: 0.2, col3Inner: 0.2 }, col2: 0.7 },
+				},
 			},
 			desk: [
 				{ display: "g9", label: "main", kind: "3col", columns: [["arc"]] },
@@ -344,6 +346,35 @@ describe("deskPlan", () => {
 			op: "realizeLayout",
 			space: "s2" as SpaceId,
 			target: { kind: "2col", columns: [[20]], split: 0.6 },
+		});
+
+		const awThirds = deskPlan(
+			{
+				...configured,
+				desk: [
+					{
+						display: "aw",
+						label: "plan",
+						kind: "3col",
+						columns: [["linear"]],
+						ratios: { col3: { col3Root: 1 / 3, col3Inner: 0.5 } },
+					},
+				],
+			},
+			world(
+				[display(2, AW, ["s2"])],
+				[space("s2", "plan", 2)],
+				[win(20, "Linear", 2, "s2")],
+			),
+		);
+		expect(awThirds).toContainEqual({
+			op: "realizeLayout",
+			space: "s2" as SpaceId,
+			target: {
+				kind: "3col",
+				columns: [[20]],
+				ratios: { root: 1 / 3, inner: 0.5 },
+			},
 		});
 	});
 
