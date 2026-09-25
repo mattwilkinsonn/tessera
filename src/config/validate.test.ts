@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { profile as bundled } from "./profile.ts";
 import type { Profile } from "./types.ts";
 import { validateProfile } from "./validate.ts";
 
@@ -79,5 +80,24 @@ describe("validateProfile", () => {
 		expect(message).toContain(
 			'topology "two": layout for undeclared display laptop',
 		);
+	});
+
+	test("two layouts for one display are rejected", () => {
+		expect(() =>
+			validateProfile({
+				...base,
+				topologies: [
+					{
+						name: "aw-only",
+						displays: ["aw"],
+						desk: [layout("aw"), layout("aw")],
+					},
+				],
+			}),
+		).toThrow('topology "aw-only": duplicate layout for aw');
+	});
+
+	test("the bundled default profile is valid", () => {
+		expect(() => validateProfile(bundled)).not.toThrow();
 	});
 });

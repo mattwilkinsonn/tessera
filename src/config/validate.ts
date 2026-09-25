@@ -1,10 +1,18 @@
-import type { Profile } from "./types.ts";
+import type { DisplayName, Profile } from "./types.ts";
 
 export function validateProfile(profile: Profile): void {
 	const violations: string[] = [];
 	for (const topology of profile.topologies ?? []) {
 		const declared = new Set(topology.displays);
-		const laidOut = new Set(topology.desk.map((layout) => layout.display));
+		const laidOut = new Set<DisplayName>();
+		for (const { display } of topology.desk) {
+			if (laidOut.has(display)) {
+				violations.push(
+					`topology "${topology.name}": duplicate layout for ${display}`,
+				);
+			}
+			laidOut.add(display);
+		}
 		for (const display of declared) {
 			if (!laidOut.has(display)) {
 				violations.push(

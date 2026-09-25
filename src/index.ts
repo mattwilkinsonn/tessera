@@ -467,7 +467,11 @@ async function importProfile(path: string): Promise<Profile> {
 	if (!mod.profile) {
 		throw new Error(`profile module ${path} must export a \`profile\``);
 	}
-	validateProfile(mod.profile);
+	try {
+		validateProfile(mod.profile);
+	} catch (error) {
+		throw new Error(`profile module ${path}: ${(error as Error).message}`);
+	}
 	return mod.profile;
 }
 
