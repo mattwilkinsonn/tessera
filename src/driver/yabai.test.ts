@@ -381,6 +381,7 @@ describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {
 			title: "",
 			display: 1,
 			space: 999,
+			role: "AXWindow",
 			"is-minimized": false,
 			"is-floating": false,
 			"is-sticky": false,
@@ -391,6 +392,26 @@ describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {
 		expect(() => normalizeWindows([orphan], rawSpaces)).toThrow(
 			/unknown space index 999/,
 		);
+	});
+
+	test("drops a role-less phantom window", () => {
+		// Ghostty reports these unmovable surfaces; planning for them stranded an
+		// empty lap-* space per phantom.
+		const phantom: RawYabaiWindow = {
+			id: 10937,
+			app: "ghostty",
+			title: "",
+			display: 1,
+			space: 1,
+			role: "",
+			"is-minimized": false,
+			"is-floating": false,
+			"is-sticky": false,
+			"is-visible": false,
+			"split-type": "none",
+			frame: { x: -2044, y: 1149, w: 1728, h: 1085 },
+		};
+		expect(normalizeWindows([phantom], rawSpaces)).toEqual([]);
 	});
 });
 
