@@ -125,6 +125,28 @@ describe("FakeDriver space lifecycle", () => {
 	});
 });
 
+describe("FakeDriver spawning", () => {
+	test("records argv and opens a non-floating window on the focused space", async () => {
+		const d = new FakeDriver({
+			displays: [{ idx: 1 }, { idx: 2 }],
+			spaces: [{ displayIdx: 1 }, { displayIdx: 2 }],
+			windows: [{ id: 20, app: "Arc", spaceIndex: 2 }],
+			spawnApp: "Ghostty",
+		});
+		await d.focusWindow(20);
+		await d.spawnWindow(["open", "-na", "Ghostty"]);
+		const windows = await d.queryWindows();
+		const spawned = windows.find((window) => window.app === "Ghostty");
+
+		expect(d.spawnCalls).toEqual([["open", "-na", "Ghostty"]]);
+		expect(spawned).toMatchObject({
+			title: "",
+			spaceId: (await d.queryDisplays())[1]?.spaceIds[0],
+			floating: false,
+		});
+	});
+});
+
 describe("FakeDriver window placement + queries", () => {
 	test("moveWindowToSpace updates the window's space and display", async () => {
 		const d = new FakeDriver(seed());

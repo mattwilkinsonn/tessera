@@ -444,6 +444,16 @@ export class YabaiDriver implements WmDriver {
 		return sp == null ? null : sp.index;
 	}
 
+	async spawnWindow(argv: ReadonlyArray<string>): Promise<void> {
+		const child = Bun.spawn([...argv], { stdout: "ignore", stderr: "ignore" });
+		const exitCode = await child.exited;
+		if (exitCode !== 0) {
+			throw new Error(
+				`spawnWindow failed (exit ${exitCode}): ${argv.join(" ")}`,
+			);
+		}
+	}
+
 	// ── Queries ──
 	async queryWindows(): Promise<WmWindow[]> {
 		const [rawWindows, rawSpaces] = await Promise.all([
