@@ -41,6 +41,7 @@ import {
 } from "./commands.ts";
 import { profile as defaultProfile } from "./config/profile.ts";
 import type { DisplayName, Profile } from "./config/types.ts";
+import { validateProfile } from "./config/validate.ts";
 import type { DirSel, WmDriver } from "./driver/types.ts";
 import { YabaiDriver } from "./driver/yabai.ts";
 import { DISPLAY_STAMP, FLEX_STAMP } from "./effects/constants.ts";
@@ -466,6 +467,7 @@ async function importProfile(path: string): Promise<Profile> {
 	if (!mod.profile) {
 		throw new Error(`profile module ${path} must export a \`profile\``);
 	}
+	validateProfile(mod.profile);
 	return mod.profile;
 }
 

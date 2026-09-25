@@ -223,6 +223,12 @@ describe("deskPlan", () => {
 							kind: "3col",
 							columns: [["arc"], ["linear"], ["akiflow"]],
 						},
+						{
+							display: "laptop",
+							label: "laptop",
+							kind: "stack",
+							columns: [["akiflow"]],
+						},
 					],
 				},
 			],
@@ -234,13 +240,16 @@ describe("deskPlan", () => {
 			win(21, "Arc", 2, "s2"),
 			win(20, "Linear", 2, "s2"),
 			win(23, "Akiflow", 2, "s2"),
+			win(30, "Akiflow", 3, "s3"),
 		];
 		const plan = deskPlan(topoProfile, world(displays, spaces, windows));
 
-		// Only the AW is laid out (the topology declares no laptop desk), and it
-		// carries the topology's label/kind, not the default `plan`/`2col`. A
-		// single build means no park, so nothing evacuates.
+		// Both topology displays are laid out. The laptop home is the stable park,
+		// so AW windows evacuate there before either display is rebuilt.
 		expect(plan).toEqual([
+			{ op: "moveWindow", windowId: 21, toSpace: "s3" as SpaceId },
+			{ op: "moveWindow", windowId: 20, toSpace: "s3" as SpaceId },
+			{ op: "moveWindow", windowId: 23, toSpace: "s3" as SpaceId },
 			{ op: "relabelHome", homeSpace: "s2" as SpaceId, label: "solo" },
 			{
 				op: "realizeLayout",
@@ -250,6 +259,12 @@ describe("deskPlan", () => {
 					columns: [[21], [20], [23]],
 					ratios: { root: 0.3, inner: 0.5714 },
 				},
+			},
+			{ op: "relabelHome", homeSpace: "s3" as SpaceId, label: "laptop" },
+			{
+				op: "realizeLayout",
+				space: "s3" as SpaceId,
+				target: { kind: "stack", columns: [[30]], ratios: undefined },
 			},
 		]);
 	});
