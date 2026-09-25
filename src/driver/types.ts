@@ -32,7 +32,10 @@ export interface WmWindow {
 	frame: { x: number; y: number; w: number; h: number };
 }
 
-/** A space. `windowIds` is ALL windows on it, including minimized/sticky. */
+/**
+ * A space. `windowIds` is ALL windows on it, including minimized/sticky, and
+ * may name ids `queryWindows` omits; consumers must tolerate a miss.
+ */
 export interface WmSpace {
 	id: SpaceId;
 	label: string;
@@ -115,9 +118,10 @@ export interface WmDriver {
 	// job, mirroring _WINDOWS_JSON / win_refresh) ──
 	queryWindows(): Promise<WmWindow[]>;
 	/**
-	 * A narrow, unfiltered re-query of ONE space (C3): a freshness/perf primitive
+	 * A narrow re-query of ONE space (C3), not claim-filtered: a freshness/perf primitive
 	 * cheaper than a full `queryWindows`; a separate query today so T3's
-	 * re-home finds residual windows the claim filter hides.
+	 * re-home finds residual windows the claim filter hides. Surfaces the backend
+	 * cannot address are excluded.
 	 */
 	queryWindowsOnSpace(id: SpaceId): Promise<WmWindow[]>;
 	querySpaces(): Promise<WmSpace[]>;

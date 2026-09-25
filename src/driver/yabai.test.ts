@@ -381,6 +381,7 @@ describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {
 			title: "",
 			display: 1,
 			space: 999,
+			"has-ax-reference": true,
 			"is-minimized": false,
 			"is-floating": false,
 			"is-sticky": false,
@@ -391,6 +392,35 @@ describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {
 		expect(() => normalizeWindows([orphan], rawSpaces)).toThrow(
 			/unknown space index 999/,
 		);
+	});
+
+	test("keeps addressable non-standard windows", () => {
+		// AXDialog subroles (Akiflow 104, Qalculate 8047) and the floating Arc
+		// help tag 7273 are all addressable, so all survive.
+		const ids = normalized.map((w) => w.id);
+		expect(ids).toContain(104);
+		expect(ids).toContain(8047);
+		expect(ids).toContain(7273);
+	});
+
+	test("drops a phantom window yabai holds no AX reference for", () => {
+		// Ghostty reports these unmovable surfaces; planning for them stranded an
+		// empty lap-* space per phantom.
+		const phantom: RawYabaiWindow = {
+			id: 10937,
+			app: "ghostty",
+			title: "",
+			display: 1,
+			space: 1,
+			"has-ax-reference": false,
+			"is-minimized": false,
+			"is-floating": false,
+			"is-sticky": false,
+			"is-visible": false,
+			"split-type": "none",
+			frame: { x: -2044, y: 1149, w: 1728, h: 1085 },
+		};
+		expect(normalizeWindows([phantom], rawSpaces)).toEqual([]);
 	});
 });
 

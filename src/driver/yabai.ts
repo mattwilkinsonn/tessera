@@ -68,6 +68,8 @@ export interface RawYabaiWindow {
 	display: number;
 	/** The space's live INDEX (not its stable id) — resolved to a SpaceId here. */
 	space: number;
+	/** False for a surface yabai tracks but cannot address (move, focus, …). */
+	"has-ax-reference": boolean;
 	"is-minimized": boolean;
 	"is-floating": boolean;
 	"is-sticky": boolean;
@@ -135,13 +137,19 @@ export function normalizeWindow(
 	};
 }
 
-/** Normalize a raw window list, resolving `.space` via a concurrent spaces snapshot. */
+/**
+ * Normalize a raw window list, resolving `.space` via a concurrent spaces
+ * snapshot. Surfaces yabai holds no AX reference for are dropped: it cannot
+ * move them, so planning for one strands an empty space.
+ */
 export function normalizeWindows(
 	rawWindows: ReadonlyArray<RawYabaiWindow>,
 	rawSpaces: ReadonlyArray<RawYabaiSpace>,
 ): WmWindow[] {
 	const map = indexToSpaceId(rawSpaces);
-	return rawWindows.map((w) => normalizeWindow(w, map));
+	return rawWindows
+		.filter((w) => w["has-ax-reference"])
+		.map((w) => normalizeWindow(w, map));
 }
 
 /** Normalize one raw space. `windowIds` is ALL its windows (`.windows`). */

@@ -280,7 +280,8 @@ interface WmDriver {
  // mid-converge re-query of ONE space is cheaper than a full
  // queryWindows; it is a separate query today for the same reason —
  // win_ids_on_space exists "so T3's re-home finds residual
- // windows the claim filter hides". Unfiltered.
+ // windows the claim filter hides". Not claim-filtered;
+ // excludes surfaces the backend cannot address.
  queryWindowsOnSpace(id: SpaceId): Promise<WmWindow[]>;
  querySpaces: Promise<WmSpace[]>;
  queryDisplays: Promise<WmDisplay[]>;
