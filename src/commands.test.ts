@@ -364,23 +364,30 @@ describe("apply", () => {
 		await apply(driver, spawnProfile, p.lock, p.guard, noNudge, async () => {});
 		expect(driver.spawnCalls).toEqual([]);
 	});
-	test("a spawn failure does not prevent laying out remaining windows", async () => {
+	test("a spawn failure neither stops later spawns nor the layout", async () => {
 		const spawnProfile = {
 			...profile,
 			windows: {
 				...profile.windows,
 				linear: { ...profile.windows.linear, spawn: ["open", "-a", "Linear"] },
+				akiflow: {
+					...profile.windows.akiflow,
+					spawn: ["open", "-a", "Akiflow"],
+				},
 			},
 		};
 		const driver = new FakeDriver({
 			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 3440, h: 1440 } }],
 			spaces: [{ displayIdx: 1 }, { displayIdx: 1 }],
 			windows: [{ id: 1, app: "Arc", spaceIndex: 2 }],
-			spawnFails: true,
+			spawnFails: 1,
 		});
 		const p = tempPaths();
 		await apply(driver, spawnProfile, p.lock, p.guard, noNudge, async () => {});
-		expect(driver.spawnCalls).toEqual([["open", "-a", "Linear"]]);
+		expect(driver.spawnCalls).toEqual([
+			["open", "-a", "Linear"],
+			["open", "-a", "Akiflow"],
+		]);
 		expect(
 			(await driver.querySpaces()).find((space) => space.label === "plan")
 				?.windowIds,

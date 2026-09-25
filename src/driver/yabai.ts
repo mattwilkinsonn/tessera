@@ -19,6 +19,9 @@
 // queries throw only on driver-gone (yabai not running). The runner uses
 // `.quiet().nothrow()` and inspects `.exitCode`.
 
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { $ } from "bun";
 import type {
 	DirSel,
@@ -372,9 +375,11 @@ export class YabaiDriver implements WmDriver {
 	readonly rules: WmRuleOps;
 	readonly events: WmEventSource;
 	readonly #yabaiPath: string;
+	readonly #spawnTimeoutMs: number;
 
-	constructor(opts: { yabaiPath?: string } = {}) {
+	constructor(opts: { yabaiPath?: string; spawnTimeoutMs?: number } = {}) {
 		this.#yabaiPath = opts.yabaiPath ?? DEFAULT_YABAI_PATH;
+		this.#spawnTimeoutMs = opts.spawnTimeoutMs ?? 5000;
 		this.rules = {
 			list: async () => {
 				const raw = await this.#json<Array<{ label?: string }>>(
@@ -445,16 +450,36 @@ export class YabaiDriver implements WmDriver {
 	}
 
 	async spawnWindow(argv: ReadonlyArray<string>): Promise<void> {
-		const child = Bun.spawn([...argv], { stdout: "ignore", stderr: "pipe" });
-		const result = await Promise.race([
-			child.exited.then((exitCode) => ({ state: "exited" as const, exitCode })),
-			Bun.sleep(5000).then(() => ({ state: "timeout" as const })),
+		// A file, not a pipe: a lingering launcher must not block or SIGPIPE on stderr.
+		const errPath = join(
+			tmpdir(),
+			`tess-spawn-${process.pid}-${Date.now()}.err`,
+		);
+		const child = Bun.spawn([...argv], {
+			stdout: "ignore",
+			stderr: Bun.file(errPath),
+		});
+		let timer: Timer | undefined;
+		const exitCode = await Promise.race([
+			child.exited,
+			new Promise<null>((resolve) => {
+				timer = setTimeout(() => resolve(null), this.#spawnTimeoutMs);
+			}),
 		]);
-		if (result.state === "timeout") return;
-		if (result.exitCode !== 0) {
-			const stderr = (await new Response(child.stderr).text()).trim();
+		clearTimeout(timer);
+		if (exitCode == null) {
+			child.unref();
+			return;
+		}
+		const stderr = (
+			await Bun.file(errPath)
+				.text()
+				.catch(() => "")
+		).trim();
+		rmSync(errPath, { force: true });
+		if (exitCode !== 0) {
 			throw new Error(
-				`spawnWindow failed (exit ${result.exitCode}): ${argv.join(" ")}${stderr === "" ? "" : `: ${stderr}`}`,
+				`spawnWindow failed (exit ${exitCode}): ${argv.join(" ")}${stderr === "" ? "" : `: ${stderr}`}`,
 			);
 		}
 	}
