@@ -334,4 +334,22 @@ describe("laptopConvergeStep (, four phases)", () => {
 			"lap-arc-3",
 		]);
 	});
+
+	test("re-converging a settled grid terminates and moves nothing", () => {
+		// Windows already on their lap-* spaces take the in-place path in phases
+		// A and B; it must advance the cursor rather than re-check the same entry.
+		const world = new FakeWorld([
+			win(1, "Arc"),
+			win(2, "Arc"),
+			win(3, "Arc"),
+			win(4, "Arc"),
+			win(5, "Arc"),
+			win(6, "Spotify"),
+		]);
+		runConverge(world);
+		const settled = world.labelOrder();
+		const again = runConverge(world);
+		expect(again.map((a) => a.op)).toEqual(["relabelHome", "setLayout"]);
+		expect(world.labelOrder()).toEqual(settled);
+	});
 });
