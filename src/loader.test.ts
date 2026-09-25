@@ -112,4 +112,18 @@ describe("loadProfile", () => {
 
 		await expect(loadProfile()).rejects.toThrow();
 	});
+	test("an override with an incomplete topology is rejected", async () => {
+		root = mkdtempSync(join(tmpdir(), "tess-loader-"));
+		const invalid = join(root, "invalid.ts");
+		writeFileSync(
+			invalid,
+			`${ALT_PROFILE.replace(
+				'desk: [{ display: "laptop", label: "laptop", kind: "stack", columns: [["solo"]] }],',
+				'topologies: [{ name: "aw-laptop", displays: ["aw", "laptop"], desk: [{ display: "laptop", label: "laptop", kind: "stack", columns: [["solo"]] }] }],\n\tdesk: [{ display: "laptop", label: "laptop", kind: "stack", columns: [["solo"]] }],',
+			)}`,
+		);
+		process.env.TESSERA_PROFILE = invalid;
+
+		await expect(loadProfile()).rejects.toThrow("aw-laptop");
+	});
 });

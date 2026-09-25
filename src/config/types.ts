@@ -59,7 +59,10 @@ export interface Topology {
 	name: string;
 	/** The display slots that must be present, exactly — order is irrelevant. */
 	displays: ReadonlyArray<DisplayName>;
-	/** The desk layout set that replaces `Profile.desk` under this arrangement. */
+	/**
+	 * Replaces `Profile.desk` under this arrangement. Must lay out every declared
+	 * display and no other; the profile loader rejects a mismatch.
+	 */
 	desk: ReadonlyArray<DeskLayout>;
 }
 
