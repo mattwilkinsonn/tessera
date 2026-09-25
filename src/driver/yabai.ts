@@ -643,7 +643,7 @@ export class YabaiDriver implements WmDriver {
 			await Bun.sleep(STEP_SETTLE_MS);
 		} else if (target.kind === "2col") {
 			if (a0 != null) {
-				await this.#run(yabaiArgs.setSplitRatio(a0, 0.5));
+				await this.#run(yabaiArgs.setSplitRatio(a0, target.split ?? 0.5));
 			}
 			await Bun.sleep(STEP_SETTLE_MS);
 		}

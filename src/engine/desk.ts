@@ -27,6 +27,7 @@ import { ClaimSet } from "./claim.ts";
 import { resolveDisplay } from "./display.ts";
 import type { PlanOp } from "./plan.ts";
 import { straySpaces, teardownLabels } from "./reap.ts";
+import { splitFor } from "./split.ts";
 import { resolveDesk } from "./topology.ts";
 import type { WorldSnapshot } from "./world.ts";
 
@@ -87,7 +88,7 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 		readonly label: string;
 		readonly kind: SpaceLayoutTarget["kind"];
 		readonly columns: number[][];
-		readonly ratios: Profile["ratios"];
+		readonly split: Pick<SpaceLayoutTarget, "ratios" | "split">;
 	}
 	const builds: Build[] = [];
 	for (const layout of resolveDesk(profile, world.displays)) {
@@ -124,7 +125,7 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 			label: layout.label,
 			kind: layout.kind,
 			columns,
-			ratios: layout.ratios ?? profile.ratios,
+			split: splitFor(profile, layout.kind, layout.display, layout.ratios),
 		});
 	}
 
@@ -178,10 +179,7 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 			const target: SpaceLayoutTarget = {
 				kind: b.kind,
 				columns: b.columns,
-				ratios:
-					b.kind === "3col"
-						? { root: b.ratios.col3Root, inner: b.ratios.col3Inner }
-						: undefined,
+				...b.split,
 			};
 			ops.push({ op: "realizeLayout", space: b.homeSpace, target });
 		}

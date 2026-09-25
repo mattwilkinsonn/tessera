@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { profile } from "../config/profile.fixture.ts";
+import type { Profile } from "../config/types.ts";
 import type { SpaceId, WmWindow } from "../driver/types.ts";
 import { snapPlan } from "./snap.ts";
 import type { WorldSnapshot } from "./world.ts";
@@ -34,7 +35,50 @@ function world(windows: WmWindow[]): WorldSnapshot {
 	return { windows, spaces: [], displays: [] };
 }
 
+function worldOnG9(windows: WmWindow[]): WorldSnapshot {
+	return {
+		windows,
+		spaces: [
+			{ id: FOCUS, label: "", displayIdx: 4, windowIds: [], layout: "bsp" },
+		],
+		displays: [
+			{
+				idx: 4,
+				frame: { x: 0, y: 0, w: profile.displays.g9.width, h: 1000 },
+				spaceIds: [FOCUS],
+			},
+		],
+	};
+}
+
 describe("snapPlan", () => {
+	test("both split modes use the focused display defaults", () => {
+		const configured = {
+			...profile,
+			displays: {
+				...profile.displays,
+				g9: {
+					...profile.displays.g9,
+					ratios: { col3: { col3Root: 0.42, col3Inner: 0.61 }, col2: 0.68 },
+				},
+			},
+		} satisfies Profile;
+		const focused = worldOnG9([win(1, 0), win(2, 100), win(3, 200)]);
+		expect(snapPlan(configured, focused, FOCUS, "3col")).toContainEqual({
+			op: "realizeLayout",
+			space: FOCUS,
+			target: {
+				kind: "3col",
+				columns: [[1], [2], [3]],
+				ratios: { root: 0.42, inner: 0.61 },
+			},
+		});
+		expect(snapPlan(configured, focused, FOCUS, "50-50")).toContainEqual({
+			op: "realizeLayout",
+			space: FOCUS,
+			target: { kind: "2col", columns: [[1, 2], [3]], split: 0.68 },
+		});
+	});
 	test("x-sort: out-of-order windows yield left→right visual order", () => {
 		const w = world([win(30, 300), win(10, 100), win(20, 200)]);
 		const plan = snapPlan(profile, w, FOCUS, "3col");
@@ -102,6 +146,7 @@ describe("snapPlan", () => {
 						[0, 1],
 						[2, 3],
 					],
+					split: 0.5,
 				},
 			},
 		]);
@@ -126,6 +171,7 @@ describe("snapPlan", () => {
 						[0, 1, 2],
 						[3, 4],
 					],
+					split: 0.5,
 				},
 			},
 		]);

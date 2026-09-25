@@ -101,9 +101,15 @@ describe("validateProfile", () => {
 		expect(() =>
 			validateProfile({
 				...base,
-				desk: [{ ...layout("aw"), ratios: { col3Root: 0.4, col3Inner: 0.5 } }],
+				desk: [
+					{
+						...layout("aw"),
+						kind: "2col",
+						ratios: { col3: { col3Root: 0.4, col3Inner: 0.5 } },
+					},
+				],
 			}),
-		).toThrow("desk aw: ratios only apply to a 3col layout");
+		).toThrow("desk aw: ratios.col3 does not apply to a 2col layout");
 	});
 
 	test("a ratio outside (0, 1) is rejected", () => {
@@ -114,13 +120,27 @@ describe("validateProfile", () => {
 					{
 						...layout("aw"),
 						kind: "3col",
-						ratios: { col3Root: 1, col3Inner: 0.5 },
+						ratios: { col3: { col3Root: 1, col3Inner: 0.5 } },
 					},
 				],
 			}),
 		).toThrow("desk aw: ratios must be between 0 and 1");
 	});
 
+	test("display and 2col layout ratios must be strictly between zero and one", () => {
+		expect(() =>
+			validateProfile({
+				...base,
+				displays: { ...base.displays, aw: { width: 2, ratios: { col2: 0 } } },
+			}),
+		).toThrow("display aw: ratios must be between 0 and 1");
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [{ ...layout("aw"), kind: "2col", ratios: { col2: 1 } }],
+			}),
+		).toThrow("desk aw: ratios must be between 0 and 1");
+	});
 	test("the bundled default profile is valid", () => {
 		expect(() => validateProfile(bundled)).not.toThrow();
 	});

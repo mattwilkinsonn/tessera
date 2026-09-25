@@ -12,6 +12,12 @@ export type DisplayName = "g9" | "aw" | "laptop";
 /** A WIN logical name — the interchangeable handle a slot claims ("arc", "ghostty-wave", …). */
 export type WindowName = string;
 
+/** Column splits per layout kind: 3col root/inner ratios, 2col left share. */
+export interface SplitRatios {
+	col3?: { col3Root: number; col3Inner: number };
+	col2?: number;
+}
+
 /**
  * A window match spec: `<app-regex>|<title-regex>` insplit into
  * fields. ONE regex engine (JS `RegExp`) matches both the claim and the slug,
@@ -37,8 +43,8 @@ export interface DeskLayout {
 	kind: "3col" | "2col" | "stack";
 	/** Ordered columns of window names; `col[0]` is the anchor, the rest stack. */
 	columns: ReadonlyArray<ReadonlyArray<WindowName>>;
-	/** 3col split for this layout; absent → `Profile.ratios`. `tess snap` ignores it. */
-	ratios?: { col3Root: number; col3Inner: number };
+	/** Overrides the display's split default for this layout's kind. */
+	ratios?: SplitRatios;
 }
 
 /** A numpad focus slot: a window name, optionally pinned to a display (`name@display`). */
@@ -70,8 +76,11 @@ export interface Topology {
 
 /** The full typed layout profile — the 1:1 shape of. */
 export interface Profile {
-	/** Logical display name → stable width in px (`DISPLAY_W`). */
-	displays: Record<DisplayName, { width: number }>;
+	/**
+	 * Logical display name → stable width in px (`DISPLAY_W`), plus the split
+	 * defaults its layouts and `tess snap` use.
+	 */
+	displays: Record<DisplayName, { width: number; ratios?: SplitRatios }>;
 	/** WIN specs, keyed by logical name. */
 	windows: Record<WindowName, WindowSpec>;
 	/** Desk columns: G9_LEFT/MAIN/RIGHT, AW_LEFT/RIGHT, MBP_STACK. */
@@ -81,7 +90,7 @@ export interface Profile {
 	 * (declaration order is the precedence). Absent → `desk` always applies.
 	 */
 	topologies?: ReadonlyArray<Topology>;
-	/** Default COL3_ROOT_RATIO / COL3_INNER_RATIO; a `DeskLayout` may override. */
+	/** 3col fallback when neither the layout nor its display sets one. */
 	ratios: { col3Root: number; col3Inner: number };
 	/** Numpad focus slots with `@display` preference (`DESK_SLOTS`). */
 	deskSlots: ReadonlyArray<DeskSlot>;

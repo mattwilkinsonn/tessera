@@ -131,7 +131,7 @@ describe("deskPlan", () => {
 						[20, 21],
 						[22, 23],
 					],
-					ratios: undefined,
+					split: 0.5,
 				},
 			},
 			{ op: "relabelHome", homeSpace: "s3" as SpaceId, label: "laptop" },
@@ -141,7 +141,6 @@ describe("deskPlan", () => {
 				target: {
 					kind: "stack",
 					columns: [[30, 31, 32, 33]],
-					ratios: undefined,
 				},
 			},
 		]);
@@ -278,7 +277,7 @@ describe("deskPlan", () => {
 					label: "main",
 					kind: "3col",
 					columns: [["arc"]],
-					ratios: { col3Root: 1 / 3, col3Inner: 0.5 },
+					ratios: { col3: { col3Root: 1 / 3, col3Inner: 0.5 } },
 				},
 			],
 		} satisfies Profile;
@@ -297,6 +296,54 @@ describe("deskPlan", () => {
 				columns: [[10]],
 				ratios: { root: 1 / 3, inner: 0.5 },
 			},
+		});
+	});
+
+	test("a display's split defaults apply, and a layout override beats them", () => {
+		// g9 takes its display 3col default; aw's display 2col default is
+		// overridden by the layout.
+		const configured = {
+			...profile,
+			displays: {
+				...profile.displays,
+				g9: {
+					...profile.displays.g9,
+					ratios: { col3: { col3Root: 0.4, col3Inner: 0.6 } },
+				},
+				aw: { ...profile.displays.aw, ratios: { col2: 0.7 } },
+			},
+			desk: [
+				{ display: "g9", label: "main", kind: "3col", columns: [["arc"]] },
+				{
+					display: "aw",
+					label: "plan",
+					kind: "2col",
+					columns: [["linear"]],
+					ratios: { col2: 0.6 },
+				},
+			],
+		} satisfies Profile;
+		const plan = deskPlan(
+			configured,
+			world(
+				[display(1, G9, ["s1"]), display(2, AW, ["s2"])],
+				[space("s1", "main", 1), space("s2", "plan", 2)],
+				[win(10, "Arc", 1, "s1"), win(20, "Linear", 2, "s2")],
+			),
+		);
+		expect(plan).toContainEqual({
+			op: "realizeLayout",
+			space: "s1" as SpaceId,
+			target: {
+				kind: "3col",
+				columns: [[10]],
+				ratios: { root: 0.4, inner: 0.6 },
+			},
+		});
+		expect(plan).toContainEqual({
+			op: "realizeLayout",
+			space: "s2" as SpaceId,
+			target: { kind: "2col", columns: [[20]], split: 0.6 },
 		});
 	});
 
@@ -388,7 +435,7 @@ describe("deskPlan", () => {
 					[20, 21],
 					[22, 23],
 				],
-				ratios: undefined,
+				split: 0.5,
 			},
 		});
 	});
