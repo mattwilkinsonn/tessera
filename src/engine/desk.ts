@@ -27,6 +27,7 @@ import { ClaimSet } from "./claim.ts";
 import { resolveDisplay } from "./display.ts";
 import type { PlanOp } from "./plan.ts";
 import { straySpaces, teardownLabels } from "./reap.ts";
+import { splitFor } from "./split.ts";
 import { resolveDesk } from "./topology.ts";
 import type { WorldSnapshot } from "./world.ts";
 
@@ -87,6 +88,7 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 		readonly label: string;
 		readonly kind: SpaceLayoutTarget["kind"];
 		readonly columns: number[][];
+		readonly splits: Pick<SpaceLayoutTarget, "ratios" | "split">;
 	}
 	const builds: Build[] = [];
 	for (const layout of resolveDesk(profile, world.displays)) {
@@ -118,7 +120,13 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 			.map((col) => claims.claimMany(windows, [...col], idx))
 			.filter((col) => col.length > 0);
 
-		builds.push({ homeSpace, label: layout.label, kind: layout.kind, columns });
+		builds.push({
+			homeSpace,
+			label: layout.label,
+			kind: layout.kind,
+			columns,
+			splits: splitFor(profile, layout.kind, layout.display, layout.ratios),
+		});
 	}
 
 	// ── Stable park ───────────────────────────
@@ -171,10 +179,7 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 			const target: SpaceLayoutTarget = {
 				kind: b.kind,
 				columns: b.columns,
-				ratios:
-					b.kind === "3col"
-						? { root: profile.ratios.col3Root, inner: profile.ratios.col3Inner }
-						: undefined,
+				...b.splits,
 			};
 			ops.push({ op: "realizeLayout", space: b.homeSpace, target });
 		}

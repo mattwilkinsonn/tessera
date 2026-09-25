@@ -97,6 +97,52 @@ describe("validateProfile", () => {
 		).toThrow('topology "aw-only": duplicate layout for aw');
 	});
 
+	test("a layout may only set the split for its own kind", () => {
+		const cases = [
+			["2col", { col3: { col3Root: 0.4, col3Inner: 0.5 } }, "col3", "2col"],
+			["3col", { col2: 0.6 }, "col2", "3col"],
+			["stack", { col2: 0.6 }, "col2", "stack"],
+			["stack", { col3: { col3Root: 0.4, col3Inner: 0.5 } }, "col3", "stack"],
+		] as const;
+		for (const [kind, ratios, key, named] of cases) {
+			expect(() =>
+				validateProfile({
+					...base,
+					desk: [{ ...layout("aw"), kind, ratios }],
+				}),
+			).toThrow(`desk aw: ratios.${key} does not apply to a ${named} layout`);
+		}
+	});
+
+	test("a ratio outside (0, 1) is rejected", () => {
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [
+					{
+						...layout("aw"),
+						kind: "3col",
+						ratios: { col3: { col3Root: 1, col3Inner: 0.5 } },
+					},
+				],
+			}),
+		).toThrow("desk aw: ratios must be between 0 and 1");
+	});
+
+	test("display and 2col layout ratios must be strictly between zero and one", () => {
+		expect(() =>
+			validateProfile({
+				...base,
+				displays: { ...base.displays, aw: { width: 2, ratios: { col2: 0 } } },
+			}),
+		).toThrow("display aw: ratios must be between 0 and 1");
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [{ ...layout("aw"), kind: "2col", ratios: { col2: 1 } }],
+			}),
+		).toThrow("desk aw: ratios must be between 0 and 1");
+	});
 	test("the bundled default profile is valid", () => {
 		expect(() => validateProfile(bundled)).not.toThrow();
 	});

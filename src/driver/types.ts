@@ -64,8 +64,10 @@ export type DisplaySel = number | "next" | "prev" | "first" | "last";
 export interface SpaceLayoutTarget {
 	kind: "3col" | "2col" | "stack";
 	columns: ReadonlyArray<ReadonlyArray<number>>;
-	/** COL3 ratios from the Profile (`{ root, inner }`). */
+	/** 3col split ratios (`{ root, inner }`). */
 	ratios?: { root: number; inner: number };
+	/** 2col left-column share. */
+	split?: number;
 }
 
 /** Arrival-routing rules — yabai-specific shape, optional per backend. */

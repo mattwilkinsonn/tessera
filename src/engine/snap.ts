@@ -2,15 +2,12 @@
 // tiled leaves into a target column layout, in place, by present left→right
 // (frame.x) visual order rather than profile membership.
 //
-// DEVIATION FROM DESIGN SKETCH: the sketch wrote `snapPlan(mode, world)`. A pure
-// function additionally needs (a) `profile` for the 3col ratios
-// (COL3_ROOT_RATIO/COL3_INNER_RATIO) and (b) an explicit `focusedSpace`
-// because `WorldSnapshot` carries no focus marker and is a frozen T3 contract we
-// must not widen. Signature is `snapPlan(profile, world, focusedSpace, mode)`.
+// The focused space's display selects its per-kind split default.
 
 import type { Profile } from "../config/types.ts";
 import type { SpaceId } from "../driver/types.ts";
 import type { PlanOp } from "./plan.ts";
+import { displayOfSpace, splitFor } from "./split.ts";
 import type { WorldSnapshot } from "./world.ts";
 
 export type SnapMode = "3col" | "50-50" | "columns";
@@ -37,6 +34,7 @@ export function snapPlan(
 	if (mode !== "3col" && mode !== "50-50") {
 		return [{ op: "balanceSpace", space: focusedSpace }];
 	}
+	const display = displayOfSpace(profile, world, focusedSpace);
 
 	if (mode === "3col") {
 		// First three leaves become the three columns; any beyond stack on col 3.
@@ -60,10 +58,7 @@ export function snapPlan(
 				target: {
 					kind: "3col",
 					columns,
-					ratios: {
-						root: profile.ratios.col3Root,
-						inner: profile.ratios.col3Inner,
-					},
+					...splitFor(profile, "3col", display),
 				},
 			},
 		];
@@ -84,7 +79,11 @@ export function snapPlan(
 		{
 			op: "realizeLayout",
 			space: focusedSpace,
-			target: { kind: "2col", columns },
+			target: {
+				kind: "2col",
+				columns,
+				...splitFor(profile, "2col", display),
+			},
 		},
 	];
 }
