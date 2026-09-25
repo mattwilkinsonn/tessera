@@ -381,7 +381,7 @@ describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {
 			title: "",
 			display: 1,
 			space: 999,
-			role: "AXWindow",
+			"has-ax-reference": true,
 			"is-minimized": false,
 			"is-floating": false,
 			"is-sticky": false,
@@ -394,7 +394,16 @@ describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {
 		);
 	});
 
-	test("drops a role-less phantom window", () => {
+	test("keeps addressable non-standard windows", () => {
+		// AXDialog subroles (Akiflow 104, Qalculate 8047) and the floating Arc
+		// help tag 7273 are all addressable, so all survive.
+		const ids = normalized.map((w) => w.id);
+		expect(ids).toContain(104);
+		expect(ids).toContain(8047);
+		expect(ids).toContain(7273);
+	});
+
+	test("drops a phantom window yabai holds no AX reference for", () => {
 		// Ghostty reports these unmovable surfaces; planning for them stranded an
 		// empty lap-* space per phantom.
 		const phantom: RawYabaiWindow = {
@@ -403,7 +412,7 @@ describe("normalizeWindows (kebab query JSON → camelCase WmWindow[])", () => {
 			title: "",
 			display: 1,
 			space: 1,
-			role: "",
+			"has-ax-reference": false,
 			"is-minimized": false,
 			"is-floating": false,
 			"is-sticky": false,
