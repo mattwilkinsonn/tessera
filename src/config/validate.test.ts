@@ -173,6 +173,12 @@ describe("validateProfile", () => {
 		).not.toThrow();
 	});
 
+	test("equal huge weights are as valid as equal small ones", () => {
+		expect(() =>
+			validateProfile({ ...base, weights: { columns: { 2: [1e308, 1e308] } } }),
+		).not.toThrow();
+	});
+
 	test("chain ratios outside the bound are rejected in full vectors and subsequences", () => {
 		expect(() =>
 			validateProfile({ ...base, weights: { columns: { 2: [9.01, 1] } } }),

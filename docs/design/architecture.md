@@ -302,13 +302,10 @@ interface WmDriver {
  // ── Layout realization (D2) ──
  // The engine's declarative target; the driver realizes it end to end with
  // its own imperative recipe + settle cadence (yabai: lib.sh;
- // Hyprland: a dispatch batch). The driver — NOT the engine — owns clearing
- // the target space first: evacuating residual windows and choosing the park
- // target ("laptop first, else AW", apply-workspace.sh) is a
- // yabai-Tahoe workaround ("always creates on the laptop display",
- // lib.sh; foreign-space `--warp` is non-deterministic), so it lives
- // here where a Hyprland driver simply omits it. The full resolved window
- // set is in `target`, so realization needs no engine-side pre-evacuation.
+ // Hyprland: a dispatch batch). The driver does NOT clear the space first:
+ // deskPlan moves every tiled window, targets included, to one stable park
+ // before any realize, because yabai only consumes an armed insert on a real
+ // cross-space move. One park chosen up front cannot ping-pong.
  realizeSpaceLayout(id: SpaceId, target: SpaceLayoutTarget): Promise<void>;
 
  // ── Window placement (always-explicit window ids, C3) ──
@@ -682,7 +679,8 @@ Interfaces:
   non-sticky window, not last-on-display) and `teardownLabels(world,
   prefix)`.
 - `src/engine/snap.ts` — x-sorted leaves → `3col`/`50-50`/`columns` modes;
-  `src/engine/focus.ts` — `resolveSlot(profile, anywhere)`.
+  `src/engine/focus.ts` — `resolveSlot(profile, world, n): number | null`
+  (`focus-slot.sh`: `@display` preference then anywhere).
 - Tests: layout-target goldens for full/partial app sets and the stray-space
   rule truth table, including the sticky-floater case.
 
