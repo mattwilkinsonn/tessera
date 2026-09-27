@@ -438,7 +438,8 @@ export async function apply(
  * turn so a long grid rebuild can't outrun GUARD_TTL_SECS and let the flex
  * waiter fire on top of it (re-stamps per phase).
  * Flex-order / lock / guard paths and the nudge are injectable so tests never
- * touch the live machine's state or real sketchybar.
+ * touch the live machine's state or real sketchybar. `explicit` runs spawn
+ * missing windows and clear blank spaces; a window-event converge does neither.
  */
 export async function laptop(
 	driver: WmDriver,
@@ -448,7 +449,7 @@ export async function laptop(
 	guardPath: string = SIGNAL_GUARD,
 	nudge: (event: string) => Promise<void> = nudgeSketchybar,
 	sleep: Sleep = Bun.sleep,
-	spawnMissing = true,
+	explicit = true,
 ): Promise<LaptopResult> {
 	const lock = acquireLock(lockDir);
 	if (lock == null) {
@@ -470,7 +471,7 @@ export async function laptop(
 		if (homeSpace == null) {
 			return "skipped";
 		}
-		if (spawnMissing) {
+		if (explicit) {
 			await spawnMissingWindows(
 				driver,
 				profile,
@@ -494,7 +495,7 @@ export async function laptop(
 				// incoming state through so runConverge returns it (and its toPersist).
 				return "done" in step ? { done: true, state } : step;
 			},
-			initialConvergeState(homeSpace, persisted),
+			initialConvergeState(homeSpace, persisted, explicit),
 		);
 		writeFlexOrder(finalState.toPersist, flexPath);
 		// The home space keeps its stack layout for the catch-all windows
@@ -634,8 +635,8 @@ export async function runDisplayCascade(
  * The live flex-space converge callback: reconverge the
  * laptop grid. Identical to `laptop` — factored as its own export so the debounce
  * slice can wire `tess flex-event = runWaiter(this)` without importing `laptop`
- * under a second name. It never spawns: a window event is often the user
- * closing one, and reopening it would fight them.
+ * under a second name. It never spawns or clears blank spaces: a window event is
+ * often the user closing a window or adding a desktop, and undoing that fights them.
  */
 export async function runFlexConverge(
 	driver: WmDriver,

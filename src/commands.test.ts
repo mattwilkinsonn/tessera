@@ -509,7 +509,7 @@ describe("laptop", () => {
 		expect(Array.isArray(readFlexOrder(p.flex))).toBe(true);
 	});
 
-	test("spawns a missing pinned Ghostty, but a window-event converge does not", async () => {
+	test("an explicit run spawns and clears blank spaces; a window-event converge does neither", async () => {
 		const spawnProfile = {
 			...profile,
 			windows: {
@@ -522,7 +522,10 @@ describe("laptop", () => {
 		};
 		const seed = {
 			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 1728, h: 1117 } }],
-			spaces: [{ displayIdx: 1, label: "laptop" }],
+			spaces: [
+				{ displayIdx: 1, label: "laptop" },
+				{ displayIdx: 1, label: "" },
+			],
 			windows: [{ id: 1, app: "Arc", title: "a", spaceIndex: 1 }],
 		};
 		const settle = async (): Promise<void> => {};
@@ -539,6 +542,9 @@ describe("laptop", () => {
 			settle,
 		);
 		expect(explicit.spawnCalls).toEqual([["open", "-na", "Ghostty"]]);
+		expect((await explicit.querySpaces()).some((s) => s.label === "")).toBe(
+			false,
+		);
 
 		const onEvent = new FakeDriver(seed);
 		const q = tempPaths();
@@ -553,6 +559,9 @@ describe("laptop", () => {
 			false,
 		);
 		expect(onEvent.spawnCalls).toEqual([]);
+		expect((await onEvent.querySpaces()).some((s) => s.label === "")).toBe(
+			true,
+		);
 	});
 
 	test("returns contended when a live holder owns the converge lock", async () => {

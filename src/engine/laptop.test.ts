@@ -53,6 +53,10 @@ class FakeWorld {
 	private spaceOrder: SpaceId[];
 	private nextSpace = 1;
 	private readonly createSpaceEnabled: boolean;
+	/** Space ids whose destroy is refused, like yabai without its scripting addition. */
+	readonly undestroyable = new Set<SpaceId>();
+	/** Window ids listed on a space but missing from the window query. */
+	readonly unreported = new Set<number>();
 
 	constructor(
 		windows: WmWindow[],
@@ -114,7 +118,9 @@ class FakeWorld {
 			spaceIds: [...this.spaceOrder],
 		};
 		return {
-			windows: this.windows.map((w) => ({ ...w })),
+			windows: this.windows
+				.filter((w) => !this.unreported.has(w.id))
+				.map((w) => ({ ...w })),
 			spaces: orderedSpaces.map((sp) => ({ ...sp })),
 			displays: [display],
 		};
@@ -145,8 +151,7 @@ class FakeWorld {
 				this.windows = this.windows.map((w) =>
 					w.spaceId === a.staleSpace ? { ...w, spaceId: a.homeSpace } : w,
 				);
-				this.spaces = this.spaces.filter((sp) => sp.id !== a.staleSpace);
-				this.spaceOrder = this.spaceOrder.filter((id) => id !== a.staleSpace);
+				this.destroy(a.staleSpace);
 				this.recomputeWindowIds();
 				break;
 			}
@@ -164,7 +169,19 @@ class FakeWorld {
 				);
 				break;
 			}
+			case "destroySpace": {
+				this.destroy(a.space);
+				break;
+			}
 		}
+	}
+
+	private destroy(id: SpaceId): void {
+		if (this.undestroyable.has(id)) {
+			return;
+		}
+		this.spaces = this.spaces.filter((sp) => sp.id !== id);
+		this.spaceOrder = this.spaceOrder.filter((x) => x !== id);
 	}
 
 	labelOrder(): string[] {
@@ -182,8 +199,9 @@ class FakeWorld {
 function runConverge(
 	world: FakeWorld,
 	persistedFlexOrder: readonly string[] = [],
+	reapStrays = true,
 ): ConvergeAction[] {
-	let state = initialConvergeState(HOME, persistedFlexOrder);
+	let state = initialConvergeState(HOME, persistedFlexOrder, reapStrays);
 	const actions: ConvergeAction[] = [];
 	for (let guard = 0; guard < 1000; guard++) {
 		const r = laptopConvergeStep(profile, world.snapshot(), state);
@@ -371,5 +389,38 @@ describe("laptopConvergeStep (, four phases)", () => {
 		);
 		runConverge(world);
 		expect(world.spaceIdOrder()).toContain(blank);
+	});
+
+	test("keeps a blank space whose window the window query does not report", () => {
+		const blank = "s-1" as SpaceId;
+		const world = new FakeWorld(
+			[win(1, "Arc"), win(9, "Finder", { spaceId: blank, floating: true })],
+			[""],
+		);
+		world.unreported.add(9);
+		runConverge(world);
+		expect(world.spaceIdOrder()).toContain(blank);
+	});
+
+	test("a window-event converge leaves blank spaces alone", () => {
+		const world = new FakeWorld([win(1, "Arc")], [""]);
+		const actions = runConverge(world, [], false);
+		expect(actions.some((a) => a.op === "destroySpace")).toBe(false);
+		expect(world.labelOrder()).toContain("");
+	});
+
+	test("a refused destroy is tried once and the converge still finishes", () => {
+		const world = new FakeWorld([win(1, "Arc")], ["", "lap-oldapp"]);
+		const [, blank, stale] = world.spaceIdOrder() as SpaceId[];
+		world.undestroyable.add(blank as SpaceId);
+		world.undestroyable.add(stale as SpaceId);
+		const actions = runConverge(world);
+		const tries = actions.filter(
+			(a) =>
+				(a.op === "destroySpace" && a.space === blank) ||
+				(a.op === "rehomeAndDestroy" && a.staleSpace === stale),
+		);
+		expect(tries).toHaveLength(2);
+		expect(actions.at(-1)?.op).toBe("setLayout");
 	});
 });
