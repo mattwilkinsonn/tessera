@@ -7,8 +7,8 @@
 // `SpaceId` (D1), never a live index that renumbers on destroy.
 //
 // `PlanOp` is a SUPERSET of the laptop converger's `ConvergeAction`: it reuses
-// those six ops verbatim (a desk build relabels a display's home space exactly
-// as the converger does) and adds the three desk/snap ops below.
+// those ops verbatim (a desk build relabels a display's home space exactly as
+// the converger does) and adds the realize/balance ops below.
 
 import type { SpaceId, SpaceLayoutTarget } from "../driver/types.ts";
 import type { ConvergeAction } from "./laptop.ts";
@@ -58,8 +58,4 @@ export interface BalanceSpaceOp {
  * laptop converger's `ConvergeAction` plus the desk/snap ops. An executor maps
  * each op to one `WmDriver` call.
  */
-export type PlanOp =
-	| ConvergeAction
-	| DestroySpaceOp
-	| RealizeLayoutOp
-	| BalanceSpaceOp;
+export type PlanOp = ConvergeAction | RealizeLayoutOp | BalanceSpaceOp;

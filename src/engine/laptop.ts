@@ -52,6 +52,8 @@
 //                        step resolves it via `resolveDisplay`).
 //   - `persistedFlexOrder` the flex-order file contents at converge start.
 //   - `toPersist`        the flex order to write back (recomputed in phase B).
+//   - `reapStrays`       explicit runs only: phase C also destroys blank spaces.
+//   - `destroyTried`     spaces phase C already tried to destroy; never retried.
 //
 // Resume is world-driven, not blind replay. A `createSpace` and the following
 // `moveWindow` are two turns: the planner emits `createSpace`, and on the NEXT
