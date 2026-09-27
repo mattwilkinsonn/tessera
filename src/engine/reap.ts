@@ -82,14 +82,14 @@ export function straySpaces(world: WorldSnapshot): SpaceId[] {
 	return out;
 }
 
-/** A space is empty of non-sticky windows. */
+/** A space is empty of non-sticky windows. A window tessera cannot see counts as present. */
 function isStray(sp: WmSpace, windows: Map<number, WmWindow>): boolean {
 	if (sp.label !== "") {
 		return false;
 	}
 	for (const wid of sp.windowIds) {
 		const w = windows.get(wid);
-		if (w != null && !w.sticky) {
+		if (w == null || !w.sticky) {
 			return false;
 		}
 	}

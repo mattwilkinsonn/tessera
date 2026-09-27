@@ -57,9 +57,9 @@
 // `moveWindow` are two turns: the planner emits `createSpace`, and on the NEXT
 // call looks for the label in the fresh `world.spaces` — present → emit the
 // `moveWindow` (and record the target); still absent → `createFailed`. Phase C
-// is fully world-driven (no cursor): each call finds the first stale `lap-*`
-// space and emits one `rehomeAndDestroy`, so the executor's destroy + re-query
-// surfaces the next one. Under D1 SpaceIds are stable — no action re-derives a
+// is world-driven (no cursor): each call destroys the first untried stale
+// `lap-*` space, then (when `reapStrays`) the first blank stray, and the
+// re-query surfaces the next. Under D1 SpaceIds are stable — no action re-derives a
 // space by live index — so a re-query never invalidates a threaded id.
 
 import type { Profile } from "../config/types.ts";
@@ -67,6 +67,7 @@ import type { SpaceId, WmSpace, WmWindow } from "../driver/types.ts";
 import { ClaimSet } from "./claim.ts";
 import { resolveDisplay } from "./display.ts";
 import { laptopFlexWindows, reconcileFlexOrder } from "./flex.ts";
+import type { DestroySpaceOp } from "./plan.ts";
 import { straySpaces } from "./reap.ts";
 import type { WorldSnapshot } from "./world.ts";
 
@@ -105,7 +106,8 @@ export type ConvergeAction =
 			readonly op: "setLayout";
 			readonly space: SpaceId;
 			readonly layout: "bsp" | "stack" | "float";
-	  };
+	  }
+	| DestroySpaceOp;
 
 /** The converge phase (see the module header for the per-phase cursor meaning). */
 export type ConvergePhase = "pre" | "A" | "B" | "C" | "D" | "layout" | "done";
@@ -124,6 +126,10 @@ export interface ConvergeState {
 	readonly laptopIdx: number;
 	readonly persistedFlexOrder: readonly string[];
 	readonly toPersist: readonly string[];
+	/** Remove blank, window-less spaces on the laptop display (explicit runs only). */
+	readonly reapStrays: boolean;
+	/** Spaces phase C already tried to destroy; never retried, so C always ends. */
+	readonly destroyTried: ReadonlySet<SpaceId>;
 }
 
 /** The result of one planner step: a corrective action + next state, or done. */
@@ -139,6 +145,7 @@ export type ConvergeStep =
 export function initialConvergeState(
 	homeSpace: SpaceId,
 	persistedFlexOrder: readonly string[],
+	reapStrays = false,
 ): ConvergeState {
 	return {
 		phase: "pre",
@@ -153,6 +160,8 @@ export function initialConvergeState(
 		laptopIdx: -1,
 		persistedFlexOrder: [...persistedFlexOrder],
 		toPersist: [...persistedFlexOrder],
+		reapStrays,
+		destroyTried: new Set<SpaceId>(),
 	};
 }
 
@@ -426,13 +435,15 @@ export function laptopConvergeStep(
 				s = { ...s, phase: "layout" };
 				continue;
 			}
-			// World-driven: find the first lap-* space no longer targeted, or a blank
-			// stray (e.g. old spaces left unlabelled by a yabai restart), and emit one
-			// rehomeAndDestroy; the re-query surfaces the next.
-			const stale =
-				world.spaces.find(
-					(sp) => sp.label.startsWith("lap-") && !s.targetLabels.has(sp.label),
-				) ?? strayOnDisplay(world, s.laptopIdx);
+			// World-driven: each call destroys one space and the re-query surfaces the
+			// next. A space yabai refused to destroy stays in `destroyTried` and is
+			// skipped, so the phase ends.
+			const stale = world.spaces.find(
+				(sp) =>
+					sp.label.startsWith("lap-") &&
+					!s.targetLabels.has(sp.label) &&
+					!s.destroyTried.has(sp.id),
+			);
 			if (stale != null) {
 				return {
 					action: {
@@ -440,7 +451,16 @@ export function laptopConvergeStep(
 						staleSpace: stale.id,
 						homeSpace: s.homeSpace,
 					},
-					state: s,
+					state: { ...s, destroyTried: new Set([...s.destroyTried, stale.id]) },
+				};
+			}
+			// Blank strays (e.g. the old grid a yabai restart left unlabelled) hold no
+			// window to re-home, so a plain destroy is enough.
+			const stray = s.reapStrays ? strayOnDisplay(world, s) : undefined;
+			if (stray != null) {
+				return {
+					action: { op: "destroySpace", space: stray.id },
+					state: { ...s, destroyTried: new Set([...s.destroyTried, stray.id]) },
 				};
 			}
 			s = { ...s, phase: "D", cursor: 0, placed: 0 };
@@ -497,13 +517,17 @@ export function laptopConvergeStep(
 	}
 }
 
-/** The first blank, window-less space on the given display, if any. */
+/** The first untried blank, window-less space on the laptop display, never home. */
 function strayOnDisplay(
 	world: WorldSnapshot,
-	displayIdx: number,
+	s: ConvergeState,
 ): WmSpace | undefined {
 	const strays = new Set(straySpaces(world));
 	return world.spaces.find(
-		(sp) => sp.displayIdx === displayIdx && strays.has(sp.id),
+		(sp) =>
+			sp.displayIdx === s.laptopIdx &&
+			sp.id !== s.homeSpace &&
+			!s.destroyTried.has(sp.id) &&
+			strays.has(sp.id),
 	);
 }
