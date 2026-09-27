@@ -63,10 +63,11 @@
 // space by live index — so a re-query never invalidates a threaded id.
 
 import type { Profile } from "../config/types.ts";
-import type { SpaceId, WmWindow } from "../driver/types.ts";
+import type { SpaceId, WmSpace, WmWindow } from "../driver/types.ts";
 import { ClaimSet } from "./claim.ts";
 import { resolveDisplay } from "./display.ts";
 import { laptopFlexWindows, reconcileFlexOrder } from "./flex.ts";
+import { straySpaces } from "./reap.ts";
 import type { WorldSnapshot } from "./world.ts";
 
 /**
@@ -425,12 +426,13 @@ export function laptopConvergeStep(
 				s = { ...s, phase: "layout" };
 				continue;
 			}
-			// World-driven: find the first lap-* space no longer targeted and emit
-			// one rehomeAndDestroy; the executor re-homes its residual windows
-			// (unfiltered) then destroys it, and the re-query surfaces the next.
-			const stale = world.spaces.find(
-				(sp) => sp.label.startsWith("lap-") && !s.targetLabels.has(sp.label),
-			);
+			// World-driven: find the first lap-* space no longer targeted, or a blank
+			// stray (e.g. old spaces left unlabelled by a yabai restart), and emit one
+			// rehomeAndDestroy; the re-query surfaces the next.
+			const stale =
+				world.spaces.find(
+					(sp) => sp.label.startsWith("lap-") && !s.targetLabels.has(sp.label),
+				) ?? strayOnDisplay(world, s.laptopIdx);
 			if (stale != null) {
 				return {
 					action: {
@@ -493,4 +495,15 @@ export function laptopConvergeStep(
 
 		return { done: true };
 	}
+}
+
+/** The first blank, window-less space on the given display, if any. */
+function strayOnDisplay(
+	world: WorldSnapshot,
+	displayIdx: number,
+): WmSpace | undefined {
+	const strays = new Set(straySpaces(world));
+	return world.spaces.find(
+		(sp) => sp.displayIdx === displayIdx && strays.has(sp.id),
+	);
 }
