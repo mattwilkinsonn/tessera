@@ -32,10 +32,7 @@ export const profile = {
 	// Logical display slot → stable width in px. All three slots are declared
 	// even in a two-monitor setup; `aw` here is defined but left out of the desk
 	// below, so the engine skips it whenever that display isn't connected.
-	// A slot may also set column-split defaults for its layouts and `tess snap`,
-	// e.g. `ratios: { col3: { col3Root: 1 / 3, col3Inner: 0.5 }, col2: 0.6 }`;
-	// a desk layout's own `ratios` overrides them, and `ratios` below is the
-	// last 3col fallback.
+	// Per-axis defaults use weights keyed by track count; layout weights override them.
 	displays: {
 		g9: { width: 3440 }, // external display 1 — a 3440px ultrawide
 		aw: { width: 2560 }, // external display 2 — declared but unused below
@@ -58,32 +55,25 @@ export const profile = {
 		chat: { app: /Chat/ },
 	},
 
-	// Desk columns per space. `col[0]` is the column anchor; the rest of a
-	// column stacks behind it. `3col`/`2col`/`stack` are the three shapes. This
-	// default lays the external display out as a 3-column desk and the laptop as
-	// a single stack; the `aw` slot is intentionally omitted.
+	// Each track starts with its anchor; remaining windows stack behind it.
+	// `stack` piles the whole space, and `rows` lays tracks top to bottom.
+	// This default uses three columns externally and one laptop stack.
 	desk: [
 		{
 			display: "g9",
 			label: "main",
-			kind: "3col",
-			columns: [
-				["browser", "notes"],
-				["terminal-work"],
-				["editor", "calendar"],
-			],
+			kind: "columns",
+			tracks: [["browser", "notes"], ["terminal-work"], ["editor", "calendar"]],
 		},
 		{
 			display: "laptop",
 			label: "laptop",
 			kind: "stack",
-			columns: [["browser", "terminal-work", "chat", "music"]],
+			tracks: [["browser", "terminal-work", "chat", "music"]],
 		},
 	],
 
-	// Split ratios for the 3-column desk: for a 30/40/30 layout the outer root
-	// split is 0.30 and the inner split is 0.40/0.70 = 0.5714.
-	ratios: { col3Root: 0.3, col3Inner: 0.5714 },
+	weights: { columns: { 3: [3, 4, 3] } },
 
 	// Numpad 1-9 focus order. `onDisplay` pins a slot to a logical display when
 	// the same window name can appear on more than one screen.

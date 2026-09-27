@@ -1,10 +1,8 @@
 // Layer 1 — CONFIG shapes.
 //
-// The typed 1:1 port of the currentdeclarations. Pure data, no
-// logic: this module defines the shapes; `profile.ts` holds the values (the ONE
-// file Matt edits). Topology-portable by construction — layout binds to logical
-// `DisplayName`s and the engine skips a display that is absent (D2-corollary),
-// so a no-laptop rig (Hyprland) is a config selection, not a code change.
+// Pure data, no logic: this module defines the shapes; `profile.ts` holds the
+// values. Layout binds to logical `DisplayName`s and the engine skips an absent
+// display, so a different rig is a config selection, not a code change.
 
 /** Logical display name. Width (not the unstable macOS UUID/index) is the identity key. */
 export type DisplayName = "g9" | "aw" | "laptop";
@@ -12,10 +10,14 @@ export type DisplayName = "g9" | "aw" | "laptop";
 /** A WIN logical name — the interchangeable handle a slot claims ("arc", "ghostty-wave", …). */
 export type WindowName = string;
 
-/** Column splits per layout kind: 3col root/inner ratios, 2col left share. */
-export interface SplitRatios {
-	col3?: { col3Root: number; col3Inner: number };
-	col2?: number;
+/** Which way the tracks run: columns side by side, rows top to bottom. */
+export type TrackKind = "columns" | "rows";
+/** Relative track sizes, one per track: `[3, 4, 3]` is 30/40/30. */
+export type Weights = ReadonlyArray<number>;
+/** Default weights keyed by track count. */
+export interface WeightDefaults {
+	columns?: Readonly<Record<number, Weights>>;
+	rows?: Readonly<Record<number, Weights>>;
 }
 
 /**
@@ -35,18 +37,18 @@ export interface WindowSpec {
 	spawn?: ReadonlyArray<string>;
 }
 
-/** A desk column set for one space on one display — apply-workspace's three shapes. */
+/** A desk layout for one space on one display. */
 export interface DeskLayout {
 	/** The display this space lives on; skipped when the display is absent. */
 	display: DisplayName;
 	/** Space label: "main" | "plan" | "laptop". */
 	label: string;
-	/** The layout shape ('s three kinds). */
-	kind: "3col" | "2col" | "stack";
-	/** Ordered columns of window names; `col[0]` is the anchor, the rest stack. */
-	columns: ReadonlyArray<ReadonlyArray<WindowName>>;
-	/** Overrides the display's split default for this layout's kind. */
-	ratios?: SplitRatios;
+	/** `columns` / `rows` split the space into tracks; `stack` piles the whole space. */
+	kind: TrackKind | "stack";
+	/** One entry per track: `track[0]` is the anchor, the rest stack behind it. */
+	tracks: ReadonlyArray<ReadonlyArray<WindowName>>;
+	/** Overrides the display/profile default for this track count. */
+	weights?: Weights;
 }
 
 /** A numpad focus slot: a window name, optionally pinned to a display (`name@display`). */
@@ -76,24 +78,21 @@ export interface Topology {
 	desk: ReadonlyArray<DeskLayout>;
 }
 
-/** The full typed layout profile — the 1:1 shape of. */
+/** The full typed layout profile. */
 export interface Profile {
-	/**
-	 * Logical display name → stable width in px (`DISPLAY_W`), plus the split
-	 * defaults its layouts and `tess snap` use.
-	 */
-	displays: Record<DisplayName, { width: number; ratios?: SplitRatios }>;
+	/** Logical display name → stable width in px, plus per-axis track defaults. */
+	displays: Record<DisplayName, { width: number; weights?: WeightDefaults }>;
 	/** WIN specs, keyed by logical name. */
 	windows: Record<WindowName, WindowSpec>;
-	/** Desk columns: G9_LEFT/MAIN/RIGHT, AW_LEFT/RIGHT, MBP_STACK. */
+	/** Desk layouts by display. */
 	desk: ReadonlyArray<DeskLayout>;
 	/**
 	 * Per-arrangement desk overrides, first exact present-set match winning
 	 * (declaration order is the precedence). Absent → `desk` always applies.
 	 */
 	topologies?: ReadonlyArray<Topology>;
-	/** 3col fallback when neither the layout nor its display sets one. */
-	ratios: { col3Root: number; col3Inner: number };
+	/** Profile-wide defaults; the last fallback before equal weights. */
+	weights?: WeightDefaults;
 	/** Numpad focus slots with `@display` preference (`DESK_SLOTS`). */
 	deskSlots: ReadonlyArray<DeskSlot>;
 	/**
