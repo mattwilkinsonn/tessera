@@ -353,4 +353,23 @@ describe("laptopConvergeStep (, four phases)", () => {
 		expect(again.map((a) => a.op)).toEqual(["relabelHome", "setLayout"]);
 		expect(world.labelOrder()).toEqual(settled);
 	});
+
+	test("reaps blank empty spaces left behind by a yabai restart", () => {
+		// A restart drops labels; the old grid comes back as unlabelled, empty
+		// spaces beside the rebuilt lap-* grid.
+		const world = new FakeWorld([win(1, "Arc"), win(2, "Arc")], ["", "", ""]);
+		runConverge(world);
+		expect(world.labelOrder()).toEqual(["laptop", "lap-arc", "lap-arc-2"]);
+	});
+
+	test("keeps a blank space that still holds a window", () => {
+		// A floating window is left where it is by the grid, so its blank space stays.
+		const blank = "s-1" as SpaceId;
+		const world = new FakeWorld(
+			[win(1, "Arc"), win(9, "Finder", { spaceId: blank, floating: true })],
+			[""],
+		);
+		runConverge(world);
+		expect(world.spaceIdOrder()).toContain(blank);
+	});
 });
