@@ -94,6 +94,29 @@ describe("snap", () => {
 		expect(space?.layout).toBe("bsp");
 		expect([...(space?.windowIds ?? [])].sort((a, b) => a - b)).toEqual([1, 2]);
 	});
+	test("applies configured column weights to the seeded display frame", async () => {
+		const driver = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 1000, h: 800 } }],
+			spaces: [{ displayIdx: 1, label: "focus" }],
+			windows: [1, 2].map((id) => ({ id, app: "A", spaceIndex: 1 })),
+		});
+		await driver.focusWindow(1);
+		const weightedProfile = {
+			...profile,
+			displays: {
+				...profile.displays,
+				g9: {
+					...profile.displays.g9,
+					width: 1000,
+					weights: { columns: { 2: [3, 2] } },
+				},
+			},
+		};
+		await snap(driver, weightedProfile, "50-50");
+		const windows = await driver.queryWindows();
+		expect(windows.find((window) => window.id === 1)?.frame.w).toBe(600);
+		expect(windows.find((window) => window.id === 2)?.frame.w).toBe(400);
+	});
 
 	test("no-op when no space is focused", async () => {
 		const driver = new FakeDriver({

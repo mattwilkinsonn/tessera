@@ -183,6 +183,84 @@ describe("FakeDriver window placement + queries", () => {
 			expect(w?.floating).toBe(false);
 		}
 	});
+	test("realizeSpaceLayout cuts columns by weight and copies anchor frames", async () => {
+		const d = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 10, y: 20, w: 1000, h: 800 } }],
+			spaces: [{ displayIdx: 1, label: "grid" }],
+			windows: [1, 2, 3, 4].map((id) => ({ id, app: "A", spaceIndex: 1 })),
+		});
+		const space = (await d.querySpaces())[0];
+		if (space == null) throw new Error("missing seeded space");
+		await d.realizeSpaceLayout(space.id, {
+			kind: "columns",
+			tracks: [[1, 4], [2], [3]],
+			weights: [3, 4, 3],
+		});
+		const windows = await d.queryWindows();
+		expect(windows.find((window) => window.id === 1)?.frame).toEqual({
+			x: 10,
+			y: 20,
+			w: 300,
+			h: 800,
+		});
+		expect(windows.find((window) => window.id === 2)?.frame).toEqual({
+			x: 310,
+			y: 20,
+			w: 400,
+			h: 800,
+		});
+		expect(windows.find((window) => window.id === 3)?.frame).toEqual({
+			x: 710,
+			y: 20,
+			w: 300,
+			h: 800,
+		});
+		expect(windows.find((window) => window.id === 4)?.frame).toEqual(
+			windows.find((window) => window.id === 1)?.frame,
+		);
+		expect(windows.find((window) => window.id === 4)?.frame?.w).toBe(300);
+	});
+
+	test("realizeSpaceLayout cuts rows along height and stack preserves frames", async () => {
+		const d = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 10, y: 20, w: 1000, h: 800 } }],
+			spaces: [{ displayIdx: 1, label: "grid" }],
+			windows: [
+				{ id: 1, app: "A", spaceIndex: 1, frame: { x: 1, y: 2, w: 3, h: 4 } },
+				{ id: 2, app: "B", spaceIndex: 1, frame: { x: 5, y: 6, w: 7, h: 8 } },
+			],
+		});
+		const space = (await d.querySpaces())[0];
+		if (space == null) throw new Error("missing seeded space");
+		await d.realizeSpaceLayout(space.id, { kind: "rows", tracks: [[1], [2]] });
+		let windows = await d.queryWindows();
+		expect(windows.find((window) => window.id === 1)?.frame).toEqual({
+			x: 10,
+			y: 20,
+			w: 1000,
+			h: 400,
+		});
+		expect(windows.find((window) => window.id === 2)?.frame).toEqual({
+			x: 10,
+			y: 420,
+			w: 1000,
+			h: 400,
+		});
+		await d.realizeSpaceLayout(space.id, { kind: "stack", tracks: [[1, 2]] });
+		windows = await d.queryWindows();
+		expect(windows.find((window) => window.id === 1)?.frame).toEqual({
+			x: 10,
+			y: 20,
+			w: 1000,
+			h: 400,
+		});
+		expect(windows.find((window) => window.id === 2)?.frame).toEqual({
+			x: 10,
+			y: 420,
+			w: 1000,
+			h: 400,
+		});
+	});
 
 	test("realizeSpaceLayout moves extras from every track", async () => {
 		const d = new FakeDriver(seed());

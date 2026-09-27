@@ -12,10 +12,9 @@
 // Scope: it faithfully models the space lifecycle + window placement + query
 // surface the desk/snap plans and the laptop converger exercise. The
 // interaction verbs (directional focus/swap/warp/resize, split/insert arming)
-// are observable-minimal — the Fake tracks no pixel geometry, so a
-// balance/resize/ratio has no id-level effect and a directional op resolves
-// truthfully without a spatial model. This is an id/space-level test double,
-// not a pixel-accurate yabai simulator.
+// remain observable-minimal. Layout realization models implied track frames,
+// but not yabai's tree, balance, or resize behavior; it is not a pixel-accurate
+// yabai simulator.
 
 import type {
 	DirSel,
@@ -382,6 +381,49 @@ export class FakeDriver implements WmDriver {
 			}
 		}
 		sp.layout = target.kind === "stack" ? "stack" : "bsp";
+		if (target.kind === "stack") {
+			return;
+		}
+		const display = this.#displays.find((d) => d.idx === sp.displayIdx);
+		if (display == null) {
+			return;
+		}
+		const weights = target.weights ?? target.tracks.map(() => 1);
+		const total = weights.reduce((sum, weight) => sum + weight, 0);
+		let offset = 0;
+		for (const [i, track] of target.tracks.entries()) {
+			const share = (weights[i] ?? 0) / total;
+			const frame =
+				target.kind === "columns"
+					? {
+							x: display.frame.x + display.frame.w * offset,
+							y: display.frame.y,
+							w: display.frame.w * share,
+							h: display.frame.h,
+						}
+					: {
+							x: display.frame.x,
+							y: display.frame.y + display.frame.h * offset,
+							w: display.frame.w,
+							h: display.frame.h * share,
+						};
+			const anchorId = track[0];
+			if (anchorId == null) {
+				offset += share;
+				continue;
+			}
+			const anchor = this.#winById(anchorId);
+			if (anchor != null) {
+				anchor.frame = { ...frame };
+				for (const wid of track.slice(1)) {
+					const extra = this.#winById(wid);
+					if (extra != null) {
+						extra.frame = { ...anchor.frame };
+					}
+				}
+			}
+			offset += share;
+		}
 	}
 
 	// ── Window placement ──
