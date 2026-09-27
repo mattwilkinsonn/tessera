@@ -408,7 +408,7 @@ export async function apply(
 				(layout) =>
 					resolveDisplay(profile, layout.display, world.displays) != null,
 			)
-			.flatMap((layout) => layout.columns.flat());
+			.flatMap((layout) => layout.tracks.flat());
 		await spawnMissingWindows(driver, profile, names, world.windows, sleep);
 		world = await worldSnapshot(driver);
 		// Re-stamp the guard before each plan op: a full desk converge carries

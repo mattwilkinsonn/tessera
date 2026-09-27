@@ -1,6 +1,4 @@
-// snap (T4): snapPlan port of. Builds worlds with SpaceId casts
-// and a small window helper; each leaf gets a distinct frame.x to fix sort
-// order, and every leaf's spaceId is the focused space.
+// snapPlan reshapes focused-space leaves in visual order and resolves nominal weights.
 
 import { describe, expect, test } from "bun:test";
 import { profile } from "../config/profile.fixture.ts";
@@ -18,9 +16,9 @@ function win(
 ): WmWindow {
 	return {
 		id,
-		app: "X",
+		app: "app",
 		title: "",
-		displayIdx: 0,
+		displayIdx: 1,
 		spaceId: opts.spaceId ?? FOCUS,
 		minimized: opts.minimized ?? false,
 		floating: opts.floating ?? false,
@@ -39,27 +37,23 @@ function worldOnG9(windows: WmWindow[]): WorldSnapshot {
 	return {
 		windows,
 		spaces: [
-			{ id: FOCUS, label: "", displayIdx: 4, windowIds: [], layout: "bsp" },
+			{ id: FOCUS, label: "main", displayIdx: 1, windowIds: [], layout: "bsp" },
 		],
 		displays: [
-			{
-				idx: 4,
-				frame: { x: 0, y: 0, w: profile.displays.g9.width, h: 1000 },
-				spaceIds: [FOCUS],
-			},
+			{ idx: 1, frame: { x: 0, y: 0, w: 5120, h: 1440 }, spaceIds: [FOCUS] },
 		],
 	};
 }
 
 describe("snapPlan", () => {
-	test("both split modes use the focused display defaults", () => {
+	test("snap modes use nominal count defaults on the focused display", () => {
 		const configured = {
 			...profile,
 			displays: {
 				...profile.displays,
 				g9: {
 					...profile.displays.g9,
-					ratios: { col3: { col3Root: 0.42, col3Inner: 0.61 }, col2: 0.68 },
+					weights: { columns: { 2: [3, 2], 3: [4, 3, 3] } },
 				},
 			},
 		} satisfies Profile;
@@ -67,145 +61,167 @@ describe("snapPlan", () => {
 		expect(snapPlan(configured, focused, FOCUS, "3col")).toContainEqual({
 			op: "realizeLayout",
 			space: FOCUS,
-			target: {
-				kind: "3col",
-				columns: [[1], [2], [3]],
-				ratios: { root: 0.42, inner: 0.61 },
-			},
+			target: { kind: "columns", tracks: [[1], [2], [3]], weights: [4, 3, 3] },
 		});
 		expect(snapPlan(configured, focused, FOCUS, "50-50")).toContainEqual({
 			op: "realizeLayout",
 			space: FOCUS,
-			target: { kind: "2col", columns: [[1, 2], [3]], split: 0.68 },
+			target: { kind: "columns", tracks: [[1, 2], [3]], weights: [3, 2] },
 		});
 	});
-	test("x-sort: out-of-order windows yield left→right visual order", () => {
-		const w = world([win(30, 300), win(10, 100), win(20, 200)]);
-		const plan = snapPlan(profile, w, FOCUS, "3col");
-		expect(plan).toEqual([
+
+	test("x-sort preserves left-to-right track order", () => {
+		expect(
+			snapPlan(
+				profile,
+				world([win(30, 300), win(10, 100), win(20, 200)]),
+				FOCUS,
+				"3col",
+			),
+		).toEqual([
 			{
 				op: "realizeLayout",
 				space: FOCUS,
 				target: {
-					kind: "3col",
-					columns: [[10], [20], [30]],
-					ratios: { root: 0.3, inner: 0.5714 },
+					kind: "columns",
+					tracks: [[10], [20], [30]],
+					weights: [3, 4, 3],
 				},
 			},
 		]);
 	});
 
-	test("3col with 5 leaves → [[0],[1],[2,3,4]] with ratios", () => {
-		const w = world([
-			win(0, 0),
-			win(1, 100),
-			win(2, 200),
-			win(3, 300),
-			win(4, 400),
-		]);
-		const plan = snapPlan(profile, w, FOCUS, "3col");
-		expect(plan).toEqual([
+	test("3col with 5 leaves stacks extras on the third track", () => {
+		expect(
+			snapPlan(
+				profile,
+				world([win(0, 0), win(1, 100), win(2, 200), win(3, 300), win(4, 400)]),
+				FOCUS,
+				"3col",
+			),
+		).toEqual([
 			{
 				op: "realizeLayout",
 				space: FOCUS,
 				target: {
-					kind: "3col",
-					columns: [[0], [1], [2, 3, 4]],
-					ratios: { root: 0.3, inner: 0.5714 },
+					kind: "columns",
+					tracks: [[0], [1], [2, 3, 4]],
+					weights: [3, 4, 3],
 				},
 			},
 		]);
 	});
 
-	test("3col with 2 leaves → [[0],[1]] (empty col3 dropped)", () => {
-		const w = world([win(0, 0), win(1, 100)]);
-		const plan = snapPlan(profile, w, FOCUS, "3col");
-		expect(plan).toEqual([
+	test("3col with 2 leaves drops third track and weight", () => {
+		expect(
+			snapPlan(profile, world([win(0, 0), win(1, 100)]), FOCUS, "3col"),
+		).toEqual([
 			{
 				op: "realizeLayout",
 				space: FOCUS,
-				target: {
-					kind: "3col",
-					columns: [[0], [1]],
-					ratios: { root: 0.3, inner: 0.5714 },
-				},
+				target: { kind: "columns", tracks: [[0], [1]], weights: [3, 4] },
 			},
 		]);
 	});
 
-	test("50-50 with 4 leaves → [[0,1],[2,3]], 2col, no ratios", () => {
-		const w = world([win(0, 0), win(1, 100), win(2, 200), win(3, 300)]);
-		const plan = snapPlan(profile, w, FOCUS, "50-50");
-		expect(plan).toEqual([
+	test("50-50 puts leaves into two stacked halves", () => {
+		expect(
+			snapPlan(
+				profile,
+				world([win(0, 0), win(1, 100), win(2, 200), win(3, 300)]),
+				FOCUS,
+				"50-50",
+			),
+		).toEqual([
 			{
 				op: "realizeLayout",
 				space: FOCUS,
 				target: {
-					kind: "2col",
-					columns: [
+					kind: "columns",
+					tracks: [
 						[0, 1],
 						[2, 3],
 					],
-					split: 0.5,
+					weights: [1, 1],
 				},
 			},
 		]);
-	});
-
-	test("50-50 with 5 leaves → half=3 → [[0,1,2],[3,4]]", () => {
-		const w = world([
-			win(0, 0),
-			win(1, 100),
-			win(2, 200),
-			win(3, 300),
-			win(4, 400),
-		]);
-		const plan = snapPlan(profile, w, FOCUS, "50-50");
-		expect(plan).toEqual([
+		expect(
+			snapPlan(
+				profile,
+				world([win(0, 0), win(1, 100), win(2, 200), win(3, 300), win(4, 400)]),
+				FOCUS,
+				"50-50",
+			),
+		).toEqual([
 			{
 				op: "realizeLayout",
 				space: FOCUS,
 				target: {
-					kind: "2col",
-					columns: [
+					kind: "columns",
+					tracks: [
 						[0, 1, 2],
 						[3, 4],
 					],
-					split: 0.5,
+					weights: [1, 1],
 				},
 			},
 		]);
 	});
 
-	test("columns mode → single balanceSpace op", () => {
-		const w = world([win(0, 0), win(1, 100)]);
-		const plan = snapPlan(profile, w, FOCUS, "columns");
-		expect(plan).toEqual([{ op: "balanceSpace", space: FOCUS }]);
+	test("columns mode balances and empty space does nothing", () => {
+		expect(
+			snapPlan(profile, world([win(0, 0), win(1, 100)]), FOCUS, "columns"),
+		).toEqual([{ op: "balanceSpace", space: FOCUS }]);
+		expect(
+			snapPlan(
+				profile,
+				world([win(0, 0, { spaceId: "other" as SpaceId })]),
+				FOCUS,
+				"3col",
+			),
+		).toEqual([]);
 	});
 
-	test("empty focused space (no tiled leaves) → []", () => {
-		const w = world([win(0, 0, { spaceId: "other" as SpaceId })]);
-		expect(snapPlan(profile, w, FOCUS, "3col")).toEqual([]);
-		expect(snapPlan(profile, w, FOCUS, "columns")).toEqual([]);
-	});
-
-	test("floating/minimized on focus are not counted as leaves", () => {
-		const w = world([
-			win(0, 0),
-			win(1, 100, { floating: true }),
-			win(2, 200, { minimized: true }),
-		]);
-		const plan = snapPlan(profile, w, FOCUS, "3col");
-		expect(plan).toEqual([
+	test("floating and minimized leaves do not change tracks", () => {
+		expect(
+			snapPlan(
+				profile,
+				world([
+					win(0, 0),
+					win(1, 100, { floating: true }),
+					win(2, 200, { minimized: true }),
+				]),
+				FOCUS,
+				"3col",
+			),
+		).toEqual([
 			{
 				op: "realizeLayout",
 				space: FOCUS,
-				target: {
-					kind: "3col",
-					columns: [[0]],
-					ratios: { root: 0.3, inner: 0.5714 },
-				},
+				target: { kind: "columns", tracks: [[0]], weights: [3] },
 			},
 		]);
+	});
+
+	test("3col drops an empty nominal middle track with its weight", () => {
+		const configured = {
+			...profile,
+			displays: {
+				...profile.displays,
+				g9: { ...profile.displays.g9, weights: { columns: { 3: [3, 4, 3] } } },
+			},
+		};
+		const target = snapPlan(
+			configured,
+			worldOnG9([win(0, 0), win(2, 200)]),
+			FOCUS,
+			"3col",
+		).find((op) => op.op === "realizeLayout");
+		expect(target).toEqual({
+			op: "realizeLayout",
+			space: FOCUS,
+			target: { kind: "columns", tracks: [[0], [2]], weights: [3, 4] },
+		});
 	});
 });

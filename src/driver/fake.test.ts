@@ -173,14 +173,32 @@ describe("FakeDriver window placement + queries", () => {
 			true,
 		);
 		await d.realizeSpaceLayout(plan?.id as SpaceId, {
-			kind: "2col",
-			columns: [[10], [11]],
+			kind: "columns",
+			tracks: [[10], [11]],
 		});
 		const wins = await d.queryWindows();
 		for (const id of [10, 11]) {
 			const w = wins.find((x) => x.id === id);
 			expect(w?.spaceId).toBe(plan?.id as SpaceId);
 			expect(w?.floating).toBe(false);
+		}
+	});
+
+	test("realizeSpaceLayout moves extras from every track", async () => {
+		const d = new FakeDriver(seed());
+		const plan = (await d.querySpaces()).find(
+			(space) => space.label === "plan",
+		);
+		await d.realizeSpaceLayout(plan?.id as SpaceId, {
+			kind: "rows",
+			tracks: [[10, 20], [11]],
+			weights: [1, 2],
+		});
+		const windows = await d.queryWindows();
+		for (const id of [10, 11, 20]) {
+			expect(windows.find((window) => window.id === id)?.spaceId).toBe(
+				plan?.id,
+			);
 		}
 	});
 

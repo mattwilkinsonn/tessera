@@ -18,11 +18,10 @@ const base = {
 	displays: { g9: { width: G9 }, aw: { width: AW }, laptop: { width: LAPTOP } },
 	windows: { arc: { app: /Arc/ } },
 	desk: [
-		{ display: "g9", label: "main", kind: "3col", columns: [["arc"]] },
-		{ display: "aw", label: "plan", kind: "2col", columns: [["arc"]] },
-		{ display: "laptop", label: "laptop", kind: "stack", columns: [["arc"]] },
+		{ display: "g9", label: "main", kind: "columns", tracks: [["arc"]] },
+		{ display: "aw", label: "plan", kind: "columns", tracks: [["arc"]] },
+		{ display: "laptop", label: "laptop", kind: "stack", tracks: [["arc"]] },
 	],
-	ratios: { col3Root: 0.3, col3Inner: 0.5714 },
 	deskSlots: [],
 	laptopPinned: [],
 	laptopStackApps: {},
@@ -36,7 +35,7 @@ describe("resolveDesk", () => {
 
 	test("exact present-set match wins over the default desk", () => {
 		const awOnly = [
-			{ display: "aw", label: "solo", kind: "3col", columns: [["arc"]] },
+			{ display: "aw", label: "solo", kind: "columns", tracks: [["arc"]] },
 		] as const;
 		const profile = {
 			...base,
@@ -44,16 +43,12 @@ describe("resolveDesk", () => {
 				{ name: "aw-laptop", displays: ["aw", "laptop"], desk: awOnly },
 			],
 		} satisfies Profile;
-
-		// AW + laptop present, G9 absent → the named topology.
 		expect(resolveDesk(profile, [display(2, AW), display(3, LAPTOP)])).toBe(
 			awOnly,
 		);
 	});
 
-	test("a superset of a topology's displays does NOT match it", () => {
-		// Exact-set, not subset: with G9 also present this is a different rig, and
-		// silently reusing the two-display layout would drop G9 entirely.
+	test("a superset or subset of a topology display set does not match", () => {
 		const profile = {
 			...base,
 			topologies: [
@@ -61,43 +56,32 @@ describe("resolveDesk", () => {
 					name: "aw-laptop",
 					displays: ["aw", "laptop"],
 					desk: [
-						{ display: "aw", label: "solo", kind: "3col", columns: [["arc"]] },
+						{
+							display: "aw",
+							label: "solo",
+							kind: "columns",
+							tracks: [["arc"]],
+						},
 					],
 				},
 			],
 		} satisfies Profile;
-
-		const desk = resolveDesk(profile, [
-			display(1, G9),
-			display(2, AW),
-			display(3, LAPTOP),
-		]);
-		expect(desk).toBe(profile.desk);
-	});
-
-	test("a subset of a topology's displays does NOT match it", () => {
-		const profile = {
-			...base,
-			topologies: [
-				{
-					name: "aw-laptop",
-					displays: ["aw", "laptop"],
-					desk: [
-						{ display: "aw", label: "solo", kind: "3col", columns: [["arc"]] },
-					],
-				},
-			],
-		} satisfies Profile;
-
+		expect(
+			resolveDesk(profile, [
+				display(1, G9),
+				display(2, AW),
+				display(3, LAPTOP),
+			]),
+		).toBe(profile.desk);
 		expect(resolveDesk(profile, [display(2, AW)])).toBe(profile.desk);
 	});
 
-	test("first matching topology wins — declaration order is the precedence", () => {
+	test("first matching topology wins and display declaration order is irrelevant", () => {
 		const first = [
-			{ display: "aw", label: "first", kind: "3col", columns: [["arc"]] },
+			{ display: "aw", label: "first", kind: "columns", tracks: [["arc"]] },
 		] as const;
 		const second = [
-			{ display: "aw", label: "second", kind: "3col", columns: [["arc"]] },
+			{ display: "aw", label: "second", kind: "columns", tracks: [["arc"]] },
 		] as const;
 		const profile = {
 			...base,
@@ -106,29 +90,12 @@ describe("resolveDesk", () => {
 				{ name: "b", displays: ["laptop", "aw"], desk: second },
 			],
 		} satisfies Profile;
-
 		expect(resolveDesk(profile, [display(2, AW), display(3, LAPTOP)])).toBe(
 			first,
 		);
 	});
 
-	test("declared display order is irrelevant — it is a set, not a sequence", () => {
-		const desk = [
-			{ display: "aw", label: "solo", kind: "3col", columns: [["arc"]] },
-		] as const;
-		const profile = {
-			...base,
-			topologies: [{ name: "x", displays: ["laptop", "aw"], desk }],
-		} satisfies Profile;
-
-		expect(resolveDesk(profile, [display(2, AW), display(3, LAPTOP)])).toBe(
-			desk,
-		);
-	});
-
-	test("an unrecognized display width does not match any topology", () => {
-		// A display whose width is in no profile slot is not a known display; the
-		// present set cannot equal a declared set, so the default desk stands.
+	test("unrecognized and duplicate display widths fall back to default", () => {
 		const profile = {
 			...base,
 			topologies: [
@@ -136,41 +103,29 @@ describe("resolveDesk", () => {
 					name: "aw-laptop",
 					displays: ["aw", "laptop"],
 					desk: [
-						{ display: "aw", label: "solo", kind: "3col", columns: [["arc"]] },
+						{
+							display: "aw",
+							label: "solo",
+							kind: "columns",
+							tracks: [["arc"]],
+						},
 					],
 				},
 			],
 		} satisfies Profile;
-
-		const desk = resolveDesk(profile, [
-			display(2, AW),
-			display(3, LAPTOP),
-			display(9, 2560),
-		]);
-		expect(desk).toBe(profile.desk);
-	});
-
-	test("two displays of one width do not match any topology", () => {
-		// Both panels resolve to the aw slot, so {aw, laptop} under-counts the rig;
-		// like an unrecognized width, the arrangement falls back to `desk`.
-		const profile = {
-			...base,
-			topologies: [
-				{
-					name: "aw-laptop",
-					displays: ["aw", "laptop"],
-					desk: [
-						{ display: "aw", label: "solo", kind: "3col", columns: [["arc"]] },
-					],
-				},
-			],
-		} satisfies Profile;
-
-		const desk = resolveDesk(profile, [
-			display(2, AW),
-			display(4, AW),
-			display(3, LAPTOP),
-		]);
-		expect(desk).toBe(profile.desk);
+		expect(
+			resolveDesk(profile, [
+				display(2, AW),
+				display(3, LAPTOP),
+				display(9, 2560),
+			]),
+		).toBe(profile.desk);
+		expect(
+			resolveDesk(profile, [
+				display(2, AW),
+				display(4, AW),
+				display(3, LAPTOP),
+			]),
+		).toBe(profile.desk);
 	});
 });

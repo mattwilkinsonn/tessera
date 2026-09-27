@@ -27,15 +27,7 @@ export interface DestroySpaceOp {
 	readonly space: SpaceId;
 }
 
-/**
- * Realize a declarative layout target (D2) — desk builds and snap
- * `3col`/`50-50`. The engine names only
- * the target (kind + resolved column ids + ratios); the driver owns the
- * build recipe and its empirical settle cadence, a
- * yabai-Tahoe workaround a Hyprland driver omits. The driver does NOT clear the
- * space first: the desk plan evacuates foreign windows up front via `moveWindow`
- * ops, so realize builds from the space AS-IS.
- */
+/** Realize tracks with relative weights; the driver owns the recipe. */
 export interface RealizeLayoutOp {
 	readonly op: "realizeLayout";
 	readonly space: SpaceId;

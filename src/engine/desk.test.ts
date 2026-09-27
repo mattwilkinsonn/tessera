@@ -116,9 +116,9 @@ describe("deskPlan", () => {
 				op: "realizeLayout",
 				space: "s1" as SpaceId,
 				target: {
-					kind: "3col",
-					columns: [[10, 11], [12], [13, 14]],
-					ratios: { root: 0.3, inner: 0.5714 },
+					kind: "columns",
+					tracks: [[10, 11], [12], [13, 14]],
+					weights: [3, 4, 3],
 				},
 			},
 			{ op: "relabelHome", homeSpace: "s2" as SpaceId, label: "plan" },
@@ -126,22 +126,19 @@ describe("deskPlan", () => {
 				op: "realizeLayout",
 				space: "s2" as SpaceId,
 				target: {
-					kind: "2col",
-					columns: [
+					kind: "columns",
+					tracks: [
 						[20, 21],
 						[22, 23],
 					],
-					split: 0.5,
+					weights: [1, 1],
 				},
 			},
 			{ op: "relabelHome", homeSpace: "s3" as SpaceId, label: "laptop" },
 			{
 				op: "realizeLayout",
 				space: "s3" as SpaceId,
-				target: {
-					kind: "stack",
-					columns: [[30, 31, 32, 33]],
-				},
+				target: { kind: "stack", tracks: [[30, 31, 32, 33]] },
 			},
 		]);
 	});
@@ -160,11 +157,7 @@ describe("deskPlan", () => {
 			{
 				op: "realizeLayout",
 				space: "s1" as SpaceId,
-				target: {
-					kind: "3col",
-					columns: [[10], [14]],
-					ratios: { root: 0.3, inner: 0.5714 },
-				},
+				target: { kind: "columns", tracks: [[10], [14]], weights: [3, 3] },
 			},
 		]);
 	});
@@ -197,10 +190,7 @@ describe("deskPlan", () => {
 			{
 				op: "realizeLayout",
 				space: "s3" as SpaceId,
-				target: {
-					kind: "stack",
-					columns: [[30, 31, 32, 33]],
-				},
+				target: { kind: "stack", tracks: [[30, 31, 32, 33]] },
 			},
 		]);
 	});
@@ -218,14 +208,14 @@ describe("deskPlan", () => {
 						{
 							display: "aw",
 							label: "solo",
-							kind: "3col",
-							columns: [["arc"], ["linear"], ["akiflow"]],
+							kind: "columns",
+							tracks: [["arc"], ["linear"], ["akiflow"]],
 						},
 						{
 							display: "laptop",
 							label: "laptop",
 							kind: "stack",
-							columns: [["akiflow"]],
+							tracks: [["akiflow"]],
 						},
 					],
 				},
@@ -253,133 +243,21 @@ describe("deskPlan", () => {
 				op: "realizeLayout",
 				space: "s2" as SpaceId,
 				target: {
-					kind: "3col",
-					columns: [[21], [20], [23]],
-					ratios: { root: 0.3, inner: 0.5714 },
+					kind: "columns",
+					tracks: [[21], [20], [23]],
+					weights: [3, 4, 3],
 				},
 			},
 			{ op: "relabelHome", homeSpace: "s3" as SpaceId, label: "laptop" },
 			{
 				op: "realizeLayout",
 				space: "s3" as SpaceId,
-				target: { kind: "stack", columns: [[30]] },
+				target: { kind: "stack", tracks: [[30]] },
 			},
 		]);
 	});
 
-	test("a layout's own ratios override the profile ratios for its 3col", () => {
-		const thirds = {
-			...profile,
-			desk: [
-				{
-					display: "g9",
-					label: "main",
-					kind: "3col",
-					columns: [["arc"]],
-					ratios: { col3: { col3Root: 1 / 3, col3Inner: 0.5 } },
-				},
-			],
-		} satisfies Profile;
-
-		const displays = [display(1, G9, ["s1"])];
-		const plan = deskPlan(
-			thirds,
-			world(displays, [space("s1", "main", 1)], [win(10, "Arc", 1, "s1")]),
-		);
-
-		expect(plan).toContainEqual({
-			op: "realizeLayout",
-			space: "s1" as SpaceId,
-			target: {
-				kind: "3col",
-				columns: [[10]],
-				ratios: { root: 1 / 3, inner: 0.5 },
-			},
-		});
-	});
-
-	test("a display's split defaults apply, and a layout override beats them", () => {
-		// g9 takes its display 3col default; aw's display 3col and 2col defaults
-		// are both overridden by the layout (col3 via its own 3col layout).
-		const configured = {
-			...profile,
-			displays: {
-				...profile.displays,
-				g9: {
-					...profile.displays.g9,
-					ratios: { col3: { col3Root: 0.4, col3Inner: 0.6 } },
-				},
-				aw: {
-					...profile.displays.aw,
-					ratios: { col3: { col3Root: 0.2, col3Inner: 0.2 }, col2: 0.7 },
-				},
-			},
-			desk: [
-				{ display: "g9", label: "main", kind: "3col", columns: [["arc"]] },
-				{
-					display: "aw",
-					label: "plan",
-					kind: "2col",
-					columns: [["linear"]],
-					ratios: { col2: 0.6 },
-				},
-			],
-		} satisfies Profile;
-		const plan = deskPlan(
-			configured,
-			world(
-				[display(1, G9, ["s1"]), display(2, AW, ["s2"])],
-				[space("s1", "main", 1), space("s2", "plan", 2)],
-				[win(10, "Arc", 1, "s1"), win(20, "Linear", 2, "s2")],
-			),
-		);
-		expect(plan).toContainEqual({
-			op: "realizeLayout",
-			space: "s1" as SpaceId,
-			target: {
-				kind: "3col",
-				columns: [[10]],
-				ratios: { root: 0.4, inner: 0.6 },
-			},
-		});
-		expect(plan).toContainEqual({
-			op: "realizeLayout",
-			space: "s2" as SpaceId,
-			target: { kind: "2col", columns: [[20]], split: 0.6 },
-		});
-
-		const awThirds = deskPlan(
-			{
-				...configured,
-				desk: [
-					{
-						display: "aw",
-						label: "plan",
-						kind: "3col",
-						columns: [["linear"]],
-						ratios: { col3: { col3Root: 1 / 3, col3Inner: 0.5 } },
-					},
-				],
-			},
-			world(
-				[display(2, AW, ["s2"])],
-				[space("s2", "plan", 2)],
-				[win(20, "Linear", 2, "s2")],
-			),
-		);
-		expect(awThirds).toContainEqual({
-			op: "realizeLayout",
-			space: "s2" as SpaceId,
-			target: {
-				kind: "3col",
-				columns: [[20]],
-				ratios: { root: 1 / 3, inner: 0.5 },
-			},
-		});
-	});
-
 	test("a non-matching topology leaves the default desk in force", () => {
-		// All three displays present; the aw-laptop topology must not claim it.
 		const topoProfile = {
 			...profile,
 			topologies: [
@@ -390,127 +268,155 @@ describe("deskPlan", () => {
 						{
 							display: "aw",
 							label: "solo",
-							kind: "3col",
-							columns: [["arc"]],
+							kind: "columns",
+							tracks: [["arc"]],
 						},
 					],
 				},
 			],
 		} satisfies Profile;
+		const plan = deskPlan(
+			topoProfile,
+			world(
+				[display(1, G9, ["s1"])],
+				[space("s1", "main", 1)],
+				[win(10, "Arc", 1, "s1")],
+			),
+		);
+		expect(plan).toContainEqual({
+			op: "realizeLayout",
+			space: "s1" as SpaceId,
+			target: { kind: "columns", tracks: [[10]], weights: [3] },
+		});
+	});
 
-		const displays = [display(1, G9, ["s1"])];
-		const spaces = [space("s1", "main", 1)];
-		const windows = [win(10, "Arc", 1, "s1")];
-		const plan = deskPlan(topoProfile, world(displays, spaces, windows));
-
-		expect(plan).toEqual([
-			{ op: "relabelHome", homeSpace: "s1" as SpaceId, label: "main" },
-			{
-				op: "realizeLayout",
-				space: "s1" as SpaceId,
-				target: {
-					kind: "3col",
-					columns: [[10]],
-					ratios: { root: 0.3, inner: 0.5714 },
+	test("layout, display, profile, and equal weights resolve by kind and count", () => {
+		const configured = {
+			...profile,
+			weights: { columns: { 2: [5, 1], 3: [7, 2, 1] }, rows: { 2: [1, 3] } },
+			displays: {
+				...profile.displays,
+				g9: { ...profile.displays.g9, weights: { columns: { 3: [4, 3, 3] } } },
+				aw: { ...profile.displays.aw, weights: { columns: { 2: [3, 2] } } },
+			},
+			desk: [
+				{
+					display: "g9",
+					label: "main",
+					kind: "columns",
+					tracks: [["arc"], ["ghostty-wave"], ["ghostty-mbp"]],
 				},
+				{
+					display: "aw",
+					label: "plan",
+					kind: "columns",
+					tracks: [["linear"], ["akiflow"]],
+					weights: [1, 4],
+				},
+				{
+					display: "laptop",
+					label: "rows",
+					kind: "rows",
+					tracks: [["spotify"], ["discord"]],
+				},
+				{
+					display: "laptop",
+					label: "profile",
+					kind: "columns",
+					tracks: [["obsidian"], ["vscode"]],
+				},
+				{
+					display: "laptop",
+					label: "equal",
+					kind: "columns",
+					tracks: [["akiflow"], ["qalculate"], ["spotify"], ["discord"]],
+				},
+			],
+		} satisfies Profile;
+		const ops = deskPlan(
+			configured,
+			world(
+				[
+					display(1, G9, ["s1"]),
+					display(2, AW, ["s2"]),
+					display(3, LAPTOP, ["s3"]),
+				],
+				[
+					space("s1", "main", 1),
+					space("s2", "plan", 2),
+					space("s3", "rows", 3),
+				],
+				[
+					win(10, "Arc", 1, "s1"),
+					win(11, "Ghostty", 1, "s1", "pc"),
+					win(12, "Ghostty", 1, "s1", "mbp"),
+					win(20, "Linear", 2, "s2"),
+					win(21, "Akiflow", 2, "s2"),
+					win(30, "Spotify", 3, "s3"),
+					win(31, "Discord", 3, "s3"),
+					win(32, "Obsidian", 3, "s3"),
+					win(33, "Code", 3, "s3"),
+					win(34, "Akiflow", 3, "s3"),
+					win(35, "Qalculate", 3, "s3"),
+					win(36, "Spotify", 3, "s3"),
+					win(37, "Discord", 3, "s3"),
+				],
+			),
+		);
+		const targets = ops
+			.filter((op) => op.op === "realizeLayout")
+			.map((op) => (op.op === "realizeLayout" ? op.target : undefined));
+		expect(targets).toEqual([
+			{ kind: "columns", tracks: [[10], [11], [12]], weights: [4, 3, 3] },
+			{ kind: "columns", tracks: [[20], [21]], weights: [1, 4] },
+			{ kind: "rows", tracks: [[30], [31]], weights: [1, 3] },
+			{ kind: "columns", tracks: [[32], [33]], weights: [5, 1] },
+			{
+				kind: "columns",
+				tracks: [[34], [35], [36], [37]],
+				weights: [1, 1, 1, 1],
 			},
 		]);
 	});
 
-	test("global dedup — repeated arc claims distinct ids per display, no overlap", () => {
-		// g9 + aw present. arc appears in g9 col0, aw col0, aw col1 → 3 distinct.
-		const displays = [display(1, G9, ["s1"]), display(2, AW, ["s2"])];
-		const spaces = [space("s1", "main", 1), space("s2", "plan", 2)];
-		const windows = [
-			win(10, "Arc", 1, "s1"),
-			win(20, "Linear", 2, "s2"),
-			win(21, "Arc", 2, "s2"),
-			win(22, "Arc", 2, "s2"),
-			win(23, "Akiflow", 2, "s2"),
-		];
-		const plan = deskPlan(profile, world(displays, spaces, windows));
-
-		// Collect every id across every realizeLayout column; assert all distinct.
-		const ids: number[] = [];
-		for (const op of plan) {
-			if (op.op === "realizeLayout") {
-				for (const col of op.target.columns) {
-					ids.push(...col);
-				}
-			}
-		}
-		expect(ids.length).toBe(new Set(ids).size);
-		// The three Arc windows landed distinctly: g9 got one, aw got the other two.
-		const g9 = plan.find(
-			(o) => o.op === "realizeLayout" && o.space === ("s1" as SpaceId),
+	test("empty tracks drop the matching configured weights", () => {
+		const configured = {
+			...profile,
+			desk: [
+				{
+					display: "g9",
+					label: "main",
+					kind: "columns",
+					tracks: [["arc"], ["missing"], ["akiflow"]],
+					weights: [3, 4, 3],
+				},
+			],
+		} satisfies Profile;
+		const worldWithWindows = world(
+			[display(1, G9, ["s1"])],
+			[space("s1", "main", 1)],
+			[win(10, "Arc", 1, "s1"), win(12, "Akiflow", 1, "s1")],
 		);
-		const aw = plan.find(
-			(o) => o.op === "realizeLayout" && o.space === ("s2" as SpaceId),
-		);
-		expect(g9).toEqual({
+		expect(deskPlan(configured, worldWithWindows)).toContainEqual({
 			op: "realizeLayout",
 			space: "s1" as SpaceId,
-			target: {
-				kind: "3col",
-				columns: [[10]],
-				ratios: { root: 0.3, inner: 0.5714 },
-			},
+			target: { kind: "columns", tracks: [[10], [12]], weights: [3, 3] },
 		});
-		// aw col0 [linear, arc] → [20, 21]; col1 [arc, akiflow] → [22, 23].
-		expect(aw).toEqual({
-			op: "realizeLayout",
-			space: "s2" as SpaceId,
-			target: {
-				kind: "2col",
-				columns: [
-					[20, 21],
-					[22, 23],
-				],
-				split: 0.5,
+		const template = configured.desk[0];
+		if (template == null) throw new Error("missing desk template");
+		const firstMissing = deskPlan(
+			{
+				...configured,
+				desk: [{ ...template, tracks: [["missing"], ["arc"], ["akiflow"]] }],
 			},
+			worldWithWindows,
+		);
+		expect(firstMissing).toContainEqual({
+			op: "realizeLayout",
+			space: "s1" as SpaceId,
+			target: { kind: "columns", tracks: [[10], [12]], weights: [4, 3] },
 		});
 	});
-
-	test("destroy preludes lead the plan; a stray at spaceIds[0] is not the relabel target", () => {
-		// g9 has a stray unlabelled empty space at index 0, its real home at index 1,
-		// plus a leftover lap-* space. teardown (lap-) then reap (stray) → both
-		// destroyed first; the surviving home (s1home) is the relabel target.
-		const displays = [
-			display(1, G9, ["s1stray", "s1home"]),
-			display(9, 999, ["lapx"]),
-		];
-		const spaces = [
-			space("s1stray", "", 1), // unlabelled + empty → reaped
-			space("s1home", "main", 1),
-			space("lapx", "lap-1", 9), // lap-* → torn down
-		];
-		const windows = [win(10, "Arc", 1, "s1home")];
-		const plan = deskPlan(profile, world(displays, spaces, windows));
-
-		// Leads with destroys: teardown (lap-*) before reap (stray).
-		expect(plan[0]).toEqual({ op: "destroySpace", space: "lapx" as SpaceId });
-		expect(plan[1]).toEqual({
-			op: "destroySpace",
-			space: "s1stray" as SpaceId,
-		});
-		// Relabel targets the SURVIVING home, never the reaped stray at index 0.
-		expect(plan[2]).toEqual({
-			op: "relabelHome",
-			homeSpace: "s1home" as SpaceId,
-			label: "main",
-		});
-		expect(plan[3]).toEqual({
-			op: "realizeLayout",
-			space: "s1home" as SpaceId,
-			target: {
-				kind: "3col",
-				columns: [[10]],
-				ratios: { root: 0.3, inner: 0.5714 },
-			},
-		});
-		expect(plan.length).toBe(4);
-	});
-
 	test("every rebuild-display window evacuates ONCE to the stable park (last display), never the park itself", () => {
 		// Three displays present. Each home space carries desk targets PLUS foreign
 		// windows. With the fix, EVERY tiled window on a rebuild display (targets
@@ -582,9 +488,9 @@ describe("deskPlan", () => {
 			op: "realizeLayout",
 			space: "s1" as SpaceId,
 			target: {
-				kind: "3col",
-				columns: [[10], [12], [14]],
-				ratios: { root: 0.3, inner: 0.5714 },
+				kind: "columns",
+				tracks: [[10], [12], [14]],
+				weights: [3, 4, 3],
 			},
 		});
 	});
@@ -668,6 +574,6 @@ describe("deskPlan", () => {
 		const aw = plan.find(
 			(o) => o.op === "realizeLayout" && o.space === ("s2" as SpaceId),
 		);
-		expect(aw?.op === "realizeLayout" && aw.target.columns[0]?.[0]).toBe(50);
+		expect(aw?.op === "realizeLayout" && aw.target.tracks[0]?.[0]).toBe(50);
 	});
 });

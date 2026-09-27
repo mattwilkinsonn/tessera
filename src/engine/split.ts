@@ -1,27 +1,31 @@
-// Column-split resolution shared by desk and snap: the layout's override, then
-// the display's default, then the profile-wide fallback.
-
-import type { DeskLayout, DisplayName, Profile } from "../config/types.ts";
-import type { SpaceLayoutTarget } from "../driver/types.ts";
+import type {
+	DisplayName,
+	Profile,
+	TrackKind,
+	Weights,
+} from "../config/types.ts";
 import type { WorldSnapshot } from "./world.ts";
 
-/** The split fields of a realize target for `kind`: 3col ratios or 2col share. */
-export function splitFor(
+/** Layout override → display default → profile default → equal weights, keyed by kind + count. */
+export function weightsFor(
 	profile: Profile,
-	kind: DeskLayout["kind"],
+	kind: TrackKind,
+	count: number,
 	display: DisplayName | undefined,
-	override?: DeskLayout["ratios"],
-): Pick<SpaceLayoutTarget, "ratios" | "split"> {
-	const defaults =
-		display == null ? undefined : profile.displays[display].ratios;
-	if (kind === "3col") {
-		const r = override?.col3 ?? defaults?.col3 ?? profile.ratios;
-		return { ratios: { root: r.col3Root, inner: r.col3Inner } };
+	override?: Weights,
+): number[] {
+	if (override != null) {
+		return [...override];
 	}
-	if (kind === "2col") {
-		return { split: override?.col2 ?? defaults?.col2 ?? 0.5 };
-	}
-	return {};
+	const displayWeights =
+		display == null
+			? undefined
+			: profile.displays[display].weights?.[kind]?.[count];
+	const profileWeights = profile.weights?.[kind]?.[count];
+	const selected = displayWeights ?? profileWeights;
+	return selected == null
+		? Array.from({ length: count }, () => 1)
+		: [...selected];
 }
 
 /** The profile display holding `space`, matched by width; unknown → undefined. */
