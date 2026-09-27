@@ -261,7 +261,7 @@ at `layout.columns.flat()`.
   remainder fraction by hand, the `0.5714` today), and it is meaningless to a
   non-bsp backend. Weights are what a user thinks in.
 - **Weights keyed only by count, not by axis** (`weights: { 3: [3,4,3] }`).
-  Rejected; see Open Question 1.
+  Rejected; see Decision 1.
 
 ## Plan
 
@@ -432,7 +432,7 @@ point `$TESSERA_PROFILE` at a throwaway profile whose laptop layout is
 --windows`: each anchor's frame `w` (columns) or `h` (rows) is within 1px
 per nesting level of `usable extent × w[i] / sum(w)`, where the usable
 extent is the display width, or the display height minus the 32px
-`external_bar` for rows. This is also what confirms OQ4's `south` nesting
+`external_bar` for rows. This is also what confirms Open Question 1's `south` nesting
 and N ≥ 4 assumptions.
 
 ### T4 — FakeDriver geometry + the profile cutover (orion)
@@ -500,38 +500,22 @@ PR 3 (orion):
 - [ ] T4b — orion profile cutover + AW thirds + solo topologies; both pins
   (package.json `tessera-wm` ref + flake input `tessera`) to one commit
 
+## Decisions
+
+Matt decided the three config-shape calls on RIG-3989, 2026-09-27, all (a):
+
+1. **Weight defaults are keyed by axis and count:**
+   `weights: { columns: { 3: [3,4,3] }, rows: { 2: [1,1] } }`. A display's
+   column shares and row shares are different numbers.
+2. **`stack` stays its own `kind`.** The whole space is `--layout stack`, so
+   parked windows on the laptop home join the stack rather than tile beside it.
+3. **`rows` is N rows of stacks**, the one-axis `columns` model turned 90°. No
+   row contains columns. A nested layout, if ever wanted, is a later `children`
+   variant on a track entry; `kind`/`tracks`/`weights` stay.
+
 ## Open Questions
 
-Designed against the recommendation in each; only 1–3 are load-bearing.
-
-1. **Weight-default key: by axis and count, or by count only?** *(load-bearing —
-   it is the `Profile`/display shape Matt edits).*
-   (a) `weights: { columns: { 3: [3,4,3] }, rows: { 2: [1,1] } }` — one
-   default per (axis, count). (b) `weights: { 3: [3,4,3] }` — a 3-track
-   default applies to both 3 columns and 3 rows. **Recommend (a):** a
-   3-column and a 3-row default on the same display are different numbers
-   (an ultrawide's column shares are not its row shares). The record is
-   written against (a).
-2. **`stack` as a third `kind`, or a one-track `columns` layout?**
-   *(load-bearing — it sets the `kind` union and the driver's branch).*
-   (a) keep `kind: "stack"` — the whole space becomes `--layout stack`, which
-   is what absorbs parked refugees on the laptop home (`deskPlan`'s park).
-   (b) drop it; a single-track `columns` layout with extras stacked on the
-   anchor is visually the same for its own windows, but leaves the space in
-   `bsp`, so refugees tile beside the stack instead of joining it.
-   **Recommend (a):** the refugee behavior is load-bearing for the laptop
-   park and is not expressible as a grid.
-3. **`rows` = N rows of stacks (this record) vs. a 2-D grid (rows × columns,
-   the tree)** *(load-bearing — it sets what `kind: "rows"` means and whether
-   `tracks` stays flat).* (a) Flat: `rows` is the same one-axis model as
-   `columns` turned 90°; each track is a stack; no row contains columns.
-   (b) Grid: `rows` × `columns` nest, the tree model in Alternatives.
-   **Recommend (a):** every stated need is one-axis, every consumer stays a
-   flat loop, and the driver recipe stays a chain. If a rows-inside-a-column
-   layout is ever wanted, add a `children` variant to a track entry;
-   `kind`/`tracks`/`weights` stay. That extension is deferred, not designed
-   here.
-4. **Assumptions about yabai not confirmed live** *(non-load-bearing; T3's
+1. **Assumptions about yabai not confirmed live** *(non-load-bearing; T3's
    live smoke verifies them)*. Read from yabai's source, not exercised:
    `--insert east|south` makes the moved-in window the *second* child
    (`window_manager_set_window_insertion` sets `CHILD_SECOND` for east/south)
