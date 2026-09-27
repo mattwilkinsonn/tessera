@@ -69,8 +69,23 @@ type Sleep = (ms: number) => Promise<void>;
 interface SpawnTarget {
 	app: RegExp;
 	count: number;
+	baselineIds: ReadonlySet<number>;
 }
 
+const SPAWN_POLLS = 50;
+
+function newWindowCount(
+	target: SpawnTarget,
+	windows: WorldSnapshot["windows"],
+): number {
+	return windows.filter(
+		(window) =>
+			!target.baselineIds.has(window.id) &&
+			matchesSpec({ app: target.app }, window.app, window.title),
+	).length;
+}
+
+/** Open a window for each unclaimable spawnable name, then wait up to ~5s for the new windows. */
 async function spawnMissingWindows(
 	driver: WmDriver,
 	profile: Profile,
@@ -78,53 +93,58 @@ async function spawnMissingWindows(
 	windows: WorldSnapshot["windows"],
 	sleep: Sleep,
 ): Promise<void> {
-	const needed = spawnsNeeded(profile, names, windows);
-	if (needed.length === 0) {
-		return;
-	}
 	const targets = new Map<string, SpawnTarget>();
-	const baselines = new Map<string, number>();
-	for (const name of needed) {
+	for (const name of spawnsNeeded(profile, names, windows)) {
 		const spec = profile.windows[name];
 		if (spec?.spawn == null) {
 			continue;
 		}
+		try {
+			await driver.spawnWindow(spec.spawn);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			process.stderr.write(`tess: spawn failed for ${name}: ${message}\n`);
+			continue;
+		}
 		const key = `${spec.app.source}/${spec.app.flags}`;
 		const target = targets.get(key);
-		if (target == null) {
-			targets.set(key, { app: spec.app, count: 1 });
-			baselines.set(
-				key,
-				windows.filter((window) =>
-					matchesSpec({ app: spec.app }, window.app, window.title),
-				).length,
-			);
-		} else {
+		if (target != null) {
 			target.count += 1;
+			continue;
 		}
-		await driver.spawnWindow(spec.spawn);
+		targets.set(key, {
+			app: spec.app,
+			count: 1,
+			baselineIds: new Set(
+				windows
+					.filter((window) =>
+						matchesSpec({ app: spec.app }, window.app, window.title),
+					)
+					.map((window) => window.id),
+			),
+		});
 	}
-	if (targets.size === 0) {
-		return;
-	}
-	for (let attempt = 0; attempt <= 20; attempt++) {
+	let missing = [...targets.values()];
+	for (let attempt = 0; missing.length > 0; attempt++) {
 		const current = await driver.queryWindows();
-		if (
-			[...targets].every(
-				([key, { app, count }]) =>
-					current.filter((window) =>
-						matchesSpec({ app }, window.app, window.title),
-					).length >=
-					(baselines.get(key) ?? 0) + count,
-			)
-		) {
+		missing = missing.filter(
+			(target) => newWindowCount(target, current) < target.count,
+		);
+		if (missing.length === 0) {
 			return;
 		}
-		if (attempt < 20) {
-			await sleep(100);
+		if (attempt === SPAWN_POLLS - 1) {
+			break;
 		}
+		await sleep(100);
+	}
+	if (missing.length > 0) {
+		process.stderr.write(
+			`tess: spawned windows not found for ${missing.map((t) => t.app.source).join(", ")}\n`,
+		);
 	}
 }
+
 /**
  * 1-based mission-control index of a space in the display-ordered flatten — the
  * value yabai's `.spaces[]` array holds and `rule --add space=` accepts.
@@ -383,9 +403,12 @@ export async function apply(
 	try {
 		suppressSignals(guardPath);
 		let world = await worldSnapshot(driver);
-		const names = resolveDesk(profile, world.displays).flatMap((layout) =>
-			layout.columns.flat(),
-		);
+		const names = resolveDesk(profile, world.displays)
+			.filter(
+				(layout) =>
+					resolveDisplay(profile, layout.display, world.displays) != null,
+			)
+			.flatMap((layout) => layout.columns.flat());
 		await spawnMissingWindows(driver, profile, names, world.windows, sleep);
 		world = await worldSnapshot(driver);
 		// Re-stamp the guard before each plan op: a full desk converge carries

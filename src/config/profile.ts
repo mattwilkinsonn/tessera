@@ -45,6 +45,8 @@ export const profile = {
 	// Logical window name → `<app>|<title>` matcher. An absent `title` matches
 	// any window of that app; give a `title` only when one app hosts several
 	// distinct windows you want in different slots.
+	// Example: spawn: ["open", "-a", "SingleWindowApp"] for a single-window app,
+	// or ["osascript", "-e", 'tell application "Arc" to make new window'] for a browser.
 	windows: {
 		browser: { app: /Browser/ },
 		"terminal-work": { app: /Terminal/, title: /work/ },
