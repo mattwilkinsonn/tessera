@@ -8,12 +8,14 @@
 import { describe, expect, test } from "bun:test";
 import type { SpaceId } from "./types.ts";
 import {
+	bspSteps,
 	normalizeDisplay,
 	normalizeSpace,
 	normalizeWindows,
 	type RawYabaiDisplay,
 	type RawYabaiSpace,
 	type RawYabaiWindow,
+	ratioArg,
 	YabaiDriver,
 	yabaiArgs,
 } from "./yabai.ts";
@@ -323,6 +325,106 @@ describe("yabaiArgs argv goldens", () => {
 			"event=display_added",
 			"action=tess apply --desk",
 		]);
+	});
+
+	describe("bspSteps", () => {
+		test("3 columns build chain ratios, stack extras, and unfloat every move", () => {
+			const steps = bspSteps(7, {
+				kind: "columns",
+				tracks: [[10, 11], [12], [13, 14]],
+				weights: [3, 4, 3],
+			});
+			expect(steps).toEqual([
+				{ args: ["-m", "space", "7", "--layout", "bsp"], settleMs: 0 },
+				{
+					args: ["-m", "window", "10", "--space", "7"],
+					settleMs: 400,
+					unfloat: 10,
+				},
+				{ args: ["-m", "window", "10", "--insert", "east"], settleMs: 150 },
+				{
+					args: ["-m", "window", "12", "--space", "7"],
+					settleMs: 400,
+					unfloat: 12,
+				},
+				{ args: ["-m", "window", "12", "--insert", "east"], settleMs: 150 },
+				{
+					args: ["-m", "window", "13", "--space", "7"],
+					settleMs: 400,
+					unfloat: 13,
+				},
+				{
+					args: ["-m", "window", "10", "--ratio", "abs:0.3000"],
+					settleMs: 150,
+				},
+				{
+					args: ["-m", "window", "12", "--ratio", "abs:0.5714"],
+					settleMs: 150,
+				},
+				{ args: ["-m", "window", "10", "--insert", "stack"], settleMs: 150 },
+				{
+					args: ["-m", "window", "11", "--space", "7"],
+					settleMs: 350,
+					unfloat: 11,
+				},
+				{ args: ["-m", "window", "13", "--insert", "stack"], settleMs: 150 },
+				{
+					args: ["-m", "window", "14", "--space", "7"],
+					settleMs: 350,
+					unfloat: 14,
+				},
+			]);
+		});
+
+		test("four equal columns, weighted rows, and one track", () => {
+			const four = bspSteps(2, {
+				kind: "columns",
+				tracks: [[1], [2], [3], [4]],
+				weights: [1, 1, 1, 1],
+			});
+			expect(
+				four
+					.filter((step) => step.args.includes("--ratio"))
+					.map((step) => step.args.at(-1)),
+			).toEqual(["abs:0.2500", "abs:0.3333", "abs:0.5000"]);
+			const rows = bspSteps(2, {
+				kind: "rows",
+				tracks: [[1], [2]],
+				weights: [2, 1],
+			});
+			expect(rows).toContainEqual({
+				args: ["-m", "window", "1", "--insert", "south"],
+				settleMs: 150,
+			});
+			expect(rows).toContainEqual({
+				args: ["-m", "window", "1", "--ratio", "abs:0.6667"],
+				settleMs: 150,
+			});
+			const single = bspSteps(2, { kind: "columns", tracks: [[1]] });
+			expect(
+				single.some(
+					(step) =>
+						step.args.includes("--ratio") || step.args.includes("--insert"),
+				),
+			).toBe(false);
+		});
+
+		test("clamps an out-of-range runtime chain ratio once per target", () => {
+			const warnings: string[] = [];
+			const steps = bspSteps(
+				4,
+				{ kind: "columns", tracks: [[1], [2]], weights: [9, 0.5] },
+				(line) => warnings.push(line),
+			);
+			expect(steps).toContainEqual({
+				args: ["-m", "window", "1", "--ratio", "abs:0.9000"],
+				settleMs: 150,
+			});
+			expect(warnings).toEqual([
+				"space 4: ratio 0.9473684210526315 clamped to 0.9000",
+			]);
+			expect(ratioArg(1 / 3)).toBe("abs:0.3333");
+		});
 	});
 });
 
