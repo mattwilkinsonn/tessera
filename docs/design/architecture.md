@@ -66,11 +66,9 @@ through the layers below:
  one legitimately index-typed method — ordering is genuinely positional.
  The driver owns the `SpaceId → live-index` bookkeeping (§Layer 3).
 - **D2 — The plan is a declarative layout IR** (Matt). The engine emits a
- backend-neutral layout target (per space: label, kind, column membership,
- ratios), never yabai verbs; each driver *realizes* the target with its own
- imperative recipe and settle cadence (§Layer 3). Settle timing in plan
- data is abstract `units` scaled by the driver's `settleMs` — never
- absolute milliseconds.
+ backend-neutral target (per space: label, kind, tracks, and optional relative
+ weights), never yabai verbs; each driver realizes it with its own recipe and
+ settle cadence (§Layer 3). Plan timing stays abstract `units`, never absolute ms.
 - **D2-corollary — topology-portable config** (Matt). The config expresses
  layout per display topology and adapts when a named display is absent (the
  Hyprland rig has no `laptop` display). The laptop-specific machinery
@@ -106,17 +104,23 @@ declarations:
 // "display UUIDs/indexes are not [stable] (macOS reorders them on connect)"
 // declare -A DISPLAY_W=( [g9]=5120 [aw]=3440 [laptop]=1728 )
 type DisplayName = "g9" | "aw" | "laptop";
+type TrackKind = "columns" | "rows";
+type Weights = ReadonlyArray<number>; // relative track sizes: [3, 4, 3] = 30/40/30
+interface WeightDefaults {
+ columns?: Readonly<Record<number, Weights>>; // keyed by track count
+ rows?: Readonly<Record<number, Weights>>;
+}
 interface Profile {
- displays: Record<DisplayName, { width: number }>;
+ displays: Record<DisplayName, { width: number; weights?: WeightDefaults }>;
  // WIN "app-regex|title-regex" specs, split into fields.
  // `titleInvert` replaces the leading-`!` convention parsed by callers today
  // ONE regex engine: JS RegExp for both claim and slug.
  windows: Record<WindowName, WindowSpec>;
- // Desk columns: G9_LEFT=(arc) / G9_MAIN / G9_RIGHT,
+ // Desk layouts: G9_LEFT=(arc) / G9_MAIN / G9_RIGHT,
  // AW_LEFT / AW_RIGHT, MBP_STACK.
  desk: DeskLayout[];
- // COL3_ROOT_RATIO=0.30 / COL3_INNER_RATIO=0.5714.
- ratios: { col3Root: number; col3Inner: number };
+ // Profile-wide defaults; layout → display → profile → equal weights.
+ weights?: WeightDefaults;
  // DESK_SLOTS with the name@display suffix parsed
  // into a structured field instead of string-splitting on `@`.
  deskSlots: ReadonlyArray<{ name: WindowName; onDisplay?: DisplayName }>;
@@ -135,8 +139,9 @@ interface WindowSpec {
 interface DeskLayout {
  display: DisplayName;
  label: string; // space label: "main" | "plan" | "laptop"
- kind: "3col" | "2col" | "stack"; // apply-workspace.sh's three shapes
- columns: ReadonlyArray<ReadonlyArray<WindowName>>; // col[0] = anchor, rest stack
+ kind: TrackKind | "stack"; // tracks side by side, top to bottom, or one stack
+ tracks: ReadonlyArray<ReadonlyArray<WindowName>>; // track[0] = anchor, rest stack
+ weights?: Weights; // overrides the display/profile default for this count
 }
 ```
 
@@ -199,22 +204,13 @@ Engine modules, each porting a named piece of lib.sh logic:
  D2-corollary topology portability rests on.
 - **`desk.ts`** — `deskPlan(profile, world)`: claims per display in
  apply-workspace order (`apply-workspace.sh` resolves "all claims up
- front (global dedup across displays)"), and emits **only** a declarative
- layout target per present display's space (D2): `{ label, kind:
- "3col"|"2col"|"stack", columns (resolved window ids), ratios }`. The engine
- emits no evacuate/park step and makes no park-target choice: the entire
- imperative realization — clearing residual windows off the target space
- (the "laptop first, else AW" park dance at `apply-workspace.sh`,
- which exists only as a yabai-Tahoe workaround: "yabai on Tahoe always
- creates on the laptop display" `lib.sh`, and `--warp` from a
- foreign space is non-deterministic), then evacuate→insert-east→ratio→
- insert-stack — is `YabaiDriver.realizeSpaceLayout`'s
- concern (§Layer 3). `realizeSpaceLayout` already receives the resolved
- window ids, so it owns residual-clearing end to end; a Hyprland driver
- realizing the same target emits no park step at all. Where the plan
- sequences steps, settles are `{ op: "settle", units }` — abstract units the
- executor scales by `driver.settleMs`, never absolute ms — pure data,
- testable.
+ front"), then emits one backend-neutral target per present desk space
+ (D2): `{ label, kind: "columns" | "rows" | "stack", tracks (resolved
+ ids), weights }`. The engine chooses one stable park and evacuates foreign
+ and target windows before realization. The driver builds the tracks without
+ choosing a park. Where the plan sequences steps, settles are `{ op:
+ "settle", units }` — abstract units the executor scales by
+ `driver.settleMs`, never absolute milliseconds — pure data, testable.
 - **`laptop.ts`** — `laptopConvergePlan(profile, world, persistedOrder)`:
  the four-phase converger (pinned core with occurrence-suffixed labels,
  flex tail, reconcile-and-re-home, order) from `laptop-layout.sh`.
@@ -229,8 +225,8 @@ Engine modules, each porting a named piece of lib.sh logic:
  pure.
 - **`focus.ts`, `snap.ts`** — slot resolution (`focus-slot.sh`:
  `name@display` preference, fall back anywhere) and the in-place reshape
- plans (`snap-layout.sh`: x-sorted current leaves into 3col/50-50/
- columns).
+ plans (`snap-layout.sh`: x-sorted leaves arranged by the `3col`, `50-50`,
+ and `columns` snap modes).
 
 Every module above is bun:test-able with fixture snapshots (recorded yabai
 query JSON) and zero mocking of effects, because effects don't exist here.
@@ -337,13 +333,12 @@ interface WmDriver {
  events?: WmEventSource; // signal subscription — used by `tess init` wiring
  settleMs: number; // base settle unit; {op:"settle",units} sleeps units × settleMs (yabai: 150). No absolute ms in plan data (D2).
 }
-// The declarative layout target (D2): backend-neutral intent the driver
-// realizes. columns hold resolved window ids; col[0] is the anchor, the
-// rest stack (from DeskLayout post-claim).
+// The declarative layout target (D2): backend-neutral intent the driver realizes.
+// Tracks hold resolved ids; track[0] is the anchor, the rest stack.
 interface SpaceLayoutTarget {
- kind: "3col" | "2col" | "stack";
- columns: ReadonlyArray<ReadonlyArray<number>>;
- ratios?: { root: number; inner: number }; // COL3 ratios from Profile
+ kind: "columns" | "rows" | "stack";
+ tracks: ReadonlyArray<ReadonlyArray<number>>;
+ weights?: ReadonlyArray<number>; // one relative weight per track; absent for stack
 }
 interface WmRuleOps {
  list: Promise<Array<{ label: string }>>;
@@ -378,13 +373,11 @@ set-difference bookkeeping the scripts already do to discover a fresh space's
 index moved one layer down. Stated honestly: the
 map is driver-internal **mutable state** that must stay synced with yabai's
 renumbering (invalidated/refreshed on every create/destroy/move) — the
-YabaiDriver's one stateful concern, and a named FakeDriver test target in T5
-(destroy renumbers the underlying index; the stable id survives). Under D2,
-`realizeSpaceLayout` carries the imperative column recipe — evacuate →
-insert-east anchors L→R → set ratios → insert-stack extras
-— plus the driver's **settle profile** (the empirical 0.4/0.15/0.35s
-durations, `lib.sh`) as driver-owned timing; no absolute milliseconds
-appear in engine plan data. The **Hyprland seam** is documented, not built:
+YabaiDriver's one stateful concern, and a named FakeDriver test target in T5.
+`realizeSpaceLayout` carries the imperative track recipe: set bsp, chain-insert
+anchors east for columns or south for rows, apply chain weights as ratios, then
+stack extras per track. It owns the empirical settle profile (0.4/0.15/0.35s,
+`lib.sh`); no absolute milliseconds appear in engine plan data.
 `hyprctl -j` covers the query surface; workspaces/dispatchers cover
 space+window ops; `armInsert` has no Hyprland analogue — which is fine: under
 D2 a HyprlandDriver realizes the SAME `SpaceLayoutTarget` with a dispatch
@@ -592,8 +585,9 @@ Create the source tree with tsconfig (strict), Biome config, and:
 - `src/config/profile.ts` — the ported data: `DISPLAY_W`,
  all 10 `WIN` specs as `RegExp` pairs with
  `titleInvert` for a future `!` spec (none exist today — all current titles
- are plain: `pc`, `mbp`, empty), `G9_*`/`AW_*`/`MBP_STACK` as `desk` entries with labels `main`/`plan`/`laptop`
- (labels from `apply-workspace.sh`), ratios, `DESK_SLOTS`, `LAPTOP_PINNED` + `LAPTOP_STACK_APPS`.
+ are plain: `pc`, `mbp`, empty), `G9_*`/`AW_*`/`MBP_STACK` as desk entries with
+ labels `main`/`plan`/`laptop`, weight defaults, `DESK_SLOTS`, and
+ `LAPTOP_PINNED` + `LAPTOP_STACK_APPS`.
 - `src/engine/display.ts` — `resolveDisplay(profile, displays): number | null`:
  the logical `DisplayName` → live macOS display index resolver, matching by
  frame width because "display UUIDs/indexes are not [stable] (macOS reorders
@@ -677,28 +671,20 @@ Interfaces:
 
 ### T4 — Desk/snap/focus engine
 
-- `src/engine/desk.ts` — `deskPlan(profile, world): PlanOp[]` porting
- apply-workspace's engine-side logic only: up-front global claims, display resolution via `resolveDisplay` (T1),
- teardown/reap preludes as backend-neutral ops,
- and one `SpaceLayoutTarget` (D2) per present desk space
- (`{ label, kind, columns: resolved ids, ratios }`). The engine emits **no**
- evacuate/park op and makes **no** park-target choice: both the "laptop
- first, else AW" park selection and the
- imperative anchors-insert-east→ratios→stack-extras sequence with its empirical settle durations (0.4s anchor, 0.15s
- insert/ratio, 0.35s extra — `lib.sh`) are `YabaiDriver`'s to realize
- inside `realizeSpaceLayout` (T5), since they exist only as yabai-Tahoe
- workarounds. A Hyprland driver realizing the same target
- emits neither.
-- `src/engine/reap.ts` — `straySpaces(world): number[]` porting the
- `reap_stray_spaces` candidate rule (`lib.sh`: unlabelled, no
- non-sticky window, not last-on-display) and `teardownLabels(world,
- prefix)`.
-- `src/engine/snap.ts` — x-sorted leaves → 3col/50-50/columns plans; `src/engine/focus.ts` — `resolveSlot(profile,
- world, n): number | null` (`focus-slot.sh`: `@display` preference then
- anywhere).
-- Tests: layout-target goldens for full/partial app sets ("Missing windows are
- skipped", `apply-workspace.sh`); stray-space rule truth table incl.
- the sticky-floater case.
+- `src/engine/desk.ts` — `deskPlan(profile, world): PlanOp[]` ports the engine
+  side of apply-workspace: global claims, display resolution, and a target per
+  present desk space (`{ label, kind, tracks: resolved ids, weights }`). When
+  multiple desk displays are present, the engine moves tiled windows from
+  rebuild spaces to one stable park before realization. The driver realizes
+  each target by building its tracks; it does not choose the park.
+- `src/engine/reap.ts` — `straySpaces(world): number[]` ports the
+  `reap_stray_spaces` candidate rule (`lib.sh`: unlabelled, no
+  non-sticky window, not last-on-display) and `teardownLabels(world,
+  prefix)`.
+- `src/engine/snap.ts` — x-sorted leaves → `3col`/`50-50`/`columns` modes;
+  `src/engine/focus.ts` — `resolveSlot(profile, anywhere)`.
+- Tests: layout-target goldens for full/partial app sets and the stray-space
+  rule truth table, including the sticky-floater case.
 
 Interfaces:
 
@@ -716,9 +702,9 @@ Interfaces:
  the **`SpaceId → live-index` map** (D1) — minted on `createSpace` via the
  set-difference resolution, invalidated/refreshed
  on every create/destroy/move — the driver's one stateful concern;
- `realizeSpaceLayout` (D2) carrying the evacuate→insert-east→ratio→
- insert-stack recipe and the driver settle profile
- (`lib.sh` durations expressed as multiples of `settleMs`);
+`realizeSpaceLayout` (D2) carrying the track chain recipe: east/south inserts,
+relative weights converted to bounded formatted chain ratios, stack extras,
+and the driver settle profile (`lib.sh` timings).
  `rules` + `events` impls (`rules.sh` verbs; `yabai -m signal --add`).
 - `src/exec.ts` — `runPlan(driver, plan)` (settles via
  `Bun.sleep(units * driver.settleMs)`) and `runConverge(driver, stepFn)`

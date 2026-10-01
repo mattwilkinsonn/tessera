@@ -23,6 +23,8 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
+
+import { chainRatios } from "../config/chain.ts";
 import type {
 	DirSel,
 	DisplaySel,
@@ -48,12 +50,98 @@ const ANCHOR_SETTLE_MS = 400; // 0.4s after bringing an anchor on
 const STEP_SETTLE_MS = 150; // 0.15s after insert/ratio/unfloat (=1 settle unit)
 const EXTRA_SETTLE_MS = 350; // 0.35s after stacking an extra
 
-// 3-col split defaults (30/40/30), profile-tunable in bash.
-const COL3_ROOT_RATIO = 0.3;
-const COL3_INNER_RATIO = 0.5714;
-
 const DEFAULT_YABAI_PATH = "/opt/homebrew/bin/yabai"; //
 
+export interface BspStep {
+	args: string[];
+	settleMs: number;
+	unfloat?: number;
+}
+
+/** Clamps a yabai chain ratio and keeps its argv representation stable. */
+export function ratioArg(r: number, warn?: (line: string) => void): string {
+	const clamped = Math.max(0.1, Math.min(0.9, r));
+	if (clamped !== r) {
+		warn?.(`ratio ${r} clamped to ${clamped.toFixed(4)}`);
+	}
+	return `abs:${clamped.toFixed(4)}`;
+}
+
+/** Ordered argv recipe for columns/rows with unfloat after each moved window. */
+export function bspSteps(
+	spaceIdx: number,
+	target: SpaceLayoutTarget,
+	warn?: (line: string) => void,
+): BspStep[] {
+	const tracks = target.tracks.filter((track) => track.length > 0);
+	const anchors = tracks.flatMap((track) =>
+		track[0] == null ? [] : [track[0]],
+	);
+	if (anchors.length === 0) {
+		return [];
+	}
+	const direction = target.kind === "rows" ? "south" : "east";
+	const steps: BspStep[] = [
+		{ args: yabaiArgs.setSpaceLayout(spaceIdx, "bsp"), settleMs: 0 },
+	];
+	for (let index = 0; index < anchors.length; index++) {
+		const anchor = anchors[index];
+		if (anchor == null) {
+			continue;
+		}
+		steps.push({
+			args: yabaiArgs.moveWindowToSpace(anchor, spaceIdx),
+			settleMs: ANCHOR_SETTLE_MS,
+			unfloat: anchor,
+		});
+		if (index < anchors.length - 1) {
+			steps.push({
+				args: yabaiArgs.armInsert(anchor, direction),
+				settleMs: STEP_SETTLE_MS,
+			});
+		}
+	}
+	const weights = target.weights ?? anchors.map(() => 1);
+	const ratios = chainRatios(weights);
+	const ratioSteps = ratios.flatMap((ratio, index) => {
+		const anchor = anchors[index];
+		return anchor == null
+			? []
+			: [
+					{
+						args: yabaiArgs.setSplitRatioArg(
+							anchor,
+							ratioArg(ratio, (line) => warn?.(`space ${spaceIdx}: ${line}`)),
+						),
+						settleMs: STEP_SETTLE_MS,
+					},
+				];
+	});
+	steps.push(...ratioSteps);
+	for (const track of tracks) {
+		const anchor = track[0];
+		if (anchor == null) {
+			continue;
+		}
+		for (const extra of track.slice(1)) {
+			if (extra === anchor) {
+				continue;
+			}
+			steps.push(
+				{
+					args: yabaiArgs.armInsert(anchor, "stack"),
+					settleMs: STEP_SETTLE_MS,
+				},
+				{
+					args: yabaiArgs.moveWindowToSpace(extra, spaceIdx),
+					settleMs: EXTRA_SETTLE_MS,
+					unfloat: extra,
+				},
+			);
+		}
+	}
+	return steps;
+}
 /** yabai `space.type` → WmSpace.layout. A static membership table (Record, not Set). */
 const LAYOUT_BY_TYPE: Readonly<Record<string, "bsp" | "stack" | "float">> = {
 	bsp: "bsp",
@@ -268,8 +356,10 @@ export const yabaiArgs = {
 		return ["-m", "window", String(winId), "--display", String(sel)];
 	},
 	setSplitRatio(winId: number, absRatio: number): string[] {
-		// ≙ `--ratio abs:`.
 		return ["-m", "window", String(winId), "--ratio", `abs:${absRatio}`];
+	},
+	setSplitRatioArg(winId: number, ratio: string): string[] {
+		return ["-m", "window", String(winId), "--ratio", ratio];
 	},
 	toggleSplit(winId: number): string[] {
 		// ≙ `--toggle split`.
@@ -613,7 +703,7 @@ export class YabaiDriver implements WmDriver {
 		await this.#run(yabaiArgs.balanceSpace(idx));
 	}
 
-	// ── Layout realization (D2): the build_columns_on_space port ──
+	// Execute the pure bsp recipe so ratios and move settling can be golden-tested.
 	async realizeSpaceLayout(
 		id: SpaceId,
 		target: SpaceLayoutTarget,
@@ -622,14 +712,8 @@ export class YabaiDriver implements WmDriver {
 		if (idx == null) {
 			return;
 		}
-
-		// Stack desk (the laptop home): move the target windows in, unfloat each,
-		// then set the WHOLE space to stack so every window on it — targets plus
-		// any refugee the desk plan parked here — joins one stack.
-		// No column recipe: a stack has no columns to
-		// build, and `--layout stack` on the space subsumes the parked windows.
 		if (target.kind === "stack") {
-			for (const wid of target.columns.flat()) {
+			for (const wid of target.tracks.flat()) {
 				await this.#run(yabaiArgs.moveWindowToSpace(wid, idx));
 				await Bun.sleep(EXTRA_SETTLE_MS);
 				await this.#unfloatOne(wid);
@@ -637,82 +721,15 @@ export class YabaiDriver implements WmDriver {
 			await this.#run(yabaiArgs.setSpaceLayout(idx, "stack"));
 			return;
 		}
-
-		// Column desks (3col/2col): build the target tree from the space AS-IS. The
-		// desk plan has already evacuated every foreign window off this space up
-		// front, so no per-display park/evacuate here — that per-display
-		// park is exactly what ping-ponged an already-built display's layout.
-
-		const anchors: number[] = [];
-		for (const col of target.columns) {
-			const anchor = col[0];
-			if (anchor != null) {
-				anchors.push(anchor);
+		for (const step of bspSteps(idx, target, (line) =>
+			process.stderr.write(`${line}\n`),
+		)) {
+			await this.#run(step.args);
+			if (step.settleMs > 0) {
+				await Bun.sleep(step.settleMs);
 			}
-		}
-		if (anchors.length === 0) {
-			return;
-		}
-
-		await this.#run(yabaiArgs.setSpaceLayout(idx, "bsp"));
-
-		// 1) Anchors in order, insert-east between (armed only when another anchor
-		// follows — a trailing insert leaves the red overlay armed).
-		for (let i = 0; i < anchors.length; i++) {
-			const anchor = anchors[i];
-			if (anchor == null) {
-				continue;
-			}
-			await this.#run(yabaiArgs.moveWindowToSpace(anchor, idx));
-			await Bun.sleep(ANCHOR_SETTLE_MS);
-			await this.#unfloatOne(anchor);
-			if (i < anchors.length - 1) {
-				await this.#run(yabaiArgs.armInsert(anchor, "east"));
-				await Bun.sleep(STEP_SETTLE_MS);
-			}
-		}
-
-		// 2) Ratios on the clean anchor tree.
-		const a0 = anchors[0];
-		if (target.kind === "3col") {
-			const root = target.ratios?.root ?? COL3_ROOT_RATIO;
-			const inner = target.ratios?.inner ?? COL3_INNER_RATIO;
-			if (a0 != null) {
-				await this.#run(yabaiArgs.setSplitRatio(a0, root));
-			}
-			await Bun.sleep(STEP_SETTLE_MS);
-			const a1 = anchors[1];
-			const a2 = anchors[2];
-			if (a1 != null && a2 != null) {
-				await this.#run(yabaiArgs.setSplitRatio(a1, inner));
-			} else if (a1 != null) {
-				await this.#run(yabaiArgs.setSplitRatio(a1, 0.5));
-			}
-			await Bun.sleep(STEP_SETTLE_MS);
-		} else if (target.kind === "2col") {
-			if (a0 != null) {
-				await this.#run(yabaiArgs.setSplitRatio(a0, target.split ?? 0.5));
-			}
-			await Bun.sleep(STEP_SETTLE_MS);
-		}
-
-		// 3) Stack each column's extras onto its anchor via insert-stack, armed
-		// immediately before each extra, never after the last.
-		for (const col of target.columns) {
-			const anchor = col[0];
-			if (anchor == null) {
-				continue;
-			}
-			for (let j = 1; j < col.length; j++) {
-				const extra = col[j];
-				if (extra == null || extra === anchor) {
-					continue;
-				}
-				await this.#run(yabaiArgs.armInsert(anchor, "stack"));
-				await Bun.sleep(STEP_SETTLE_MS);
-				await this.#run(yabaiArgs.moveWindowToSpace(extra, idx));
-				await Bun.sleep(EXTRA_SETTLE_MS);
-				await this.#unfloatOne(extra);
+			if (step.unfloat != null) {
+				await this.#unfloatOne(step.unfloat);
 			}
 		}
 	}

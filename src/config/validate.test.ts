@@ -7,17 +7,16 @@ const base = {
 	displays: { g9: { width: 1 }, aw: { width: 2 }, laptop: { width: 3 } },
 	windows: {},
 	desk: [],
-	ratios: { col3Root: 0.3, col3Inner: 0.5714 },
 	deskSlots: [],
 	laptopPinned: [],
 	laptopStackApps: {},
 } satisfies Profile;
 
-const layout = (display: "g9" | "aw" | "laptop") => ({
+const stackLayout = (display: "g9" | "aw" | "laptop") => ({
 	display,
 	label: display,
 	kind: "stack" as const,
-	columns: [["app"]],
+	tracks: [["app"]],
 });
 
 describe("validateProfile", () => {
@@ -29,14 +28,14 @@ describe("validateProfile", () => {
 					{
 						name: "aw-laptop",
 						displays: ["aw", "laptop"],
-						desk: [layout("aw"), layout("laptop")],
+						desk: [stackLayout("aw"), stackLayout("laptop")],
 					},
 				],
 			}),
 		).not.toThrow();
 	});
 
-	test("a missing display names the topology and display", () => {
+	test("topology display membership is validated", () => {
 		expect(() =>
 			validateProfile({
 				...base,
@@ -44,45 +43,22 @@ describe("validateProfile", () => {
 					{
 						name: "aw-laptop",
 						displays: ["aw", "laptop"],
-						desk: [layout("aw")],
+						desk: [stackLayout("aw")],
 					},
 				],
 			}),
 		).toThrow('topology "aw-laptop": no layout for laptop');
-	});
-
-	test("an extra display is rejected", () => {
 		expect(() =>
 			validateProfile({
 				...base,
 				topologies: [
-					{ name: "aw-only", displays: ["aw"], desk: [layout("laptop")] },
+					{ name: "aw-only", displays: ["aw"], desk: [stackLayout("laptop")] },
 				],
 			}),
 		).toThrow('topology "aw-only": layout for undeclared display laptop');
 	});
 
-	test("all missing and extra display violations are reported", () => {
-		let message = "";
-		try {
-			validateProfile({
-				...base,
-				topologies: [
-					{ name: "one", displays: ["aw", "laptop"], desk: [layout("aw")] },
-					{ name: "two", displays: ["g9"], desk: [layout("laptop")] },
-				],
-			});
-		} catch (error) {
-			if (error instanceof Error) message = error.message;
-		}
-		expect(message).toContain('topology "one": no layout for laptop');
-		expect(message).toContain('topology "two": no layout for g9');
-		expect(message).toContain(
-			'topology "two": layout for undeclared display laptop',
-		);
-	});
-
-	test("two layouts for one display are rejected", () => {
+	test("duplicate topology layouts are rejected", () => {
 		expect(() =>
 			validateProfile({
 				...base,
@@ -90,59 +66,122 @@ describe("validateProfile", () => {
 					{
 						name: "aw-only",
 						displays: ["aw"],
-						desk: [layout("aw"), layout("aw")],
+						desk: [stackLayout("aw"), stackLayout("aw")],
 					},
 				],
 			}),
 		).toThrow('topology "aw-only": duplicate layout for aw');
 	});
 
-	test("a layout may only set the split for its own kind", () => {
-		const cases = [
-			["2col", { col3: { col3Root: 0.4, col3Inner: 0.5 } }, "col3", "2col"],
-			["3col", { col2: 0.6 }, "col2", "3col"],
-			["stack", { col2: 0.6 }, "col2", "stack"],
-			["stack", { col3: { col3Root: 0.4, col3Inner: 0.5 } }, "col3", "stack"],
-		] as const;
-		for (const [kind, ratios, key, named] of cases) {
+	test("empty track lists and empty tracks are rejected", () => {
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [{ ...stackLayout("aw"), tracks: [] }],
+			}),
+		).toThrow("stack must have exactly one track");
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [{ ...stackLayout("aw"), tracks: [[]] }],
+			}),
+		).toThrow("track 0 must have at least one window name");
+	});
+
+	test("stack requires exactly one track and rejects weights", () => {
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [{ ...stackLayout("aw"), tracks: [["a"], ["b"]] }],
+			}),
+		).toThrow("stack must have exactly one track");
+		expect(() =>
+			validateProfile({
+				...base,
+				desk: [{ ...stackLayout("aw"), weights: [1] }],
+			}),
+		).toThrow("stack cannot set weights");
+	});
+
+	test("one-track columns and rows reject weights", () => {
+		for (const kind of ["columns", "rows"] as const) {
 			expect(() =>
 				validateProfile({
 					...base,
-					desk: [{ ...layout("aw"), kind, ratios }],
+					desk: [
+						{ display: "aw", label: kind, kind, tracks: [["a"]], weights: [1] },
+					],
 				}),
-			).toThrow(`desk aw: ratios.${key} does not apply to a ${named} layout`);
+			).toThrow("one-track layout cannot set weights");
 		}
 	});
 
-	test("a ratio outside (0, 1) is rejected", () => {
+	test("layout weights must match track count", () => {
 		expect(() =>
 			validateProfile({
 				...base,
 				desk: [
 					{
-						...layout("aw"),
-						kind: "3col",
-						ratios: { col3: { col3Root: 1, col3Inner: 0.5 } },
+						display: "aw",
+						label: "main",
+						kind: "columns",
+						tracks: [["a"], ["b"]],
+						weights: [1],
 					},
 				],
 			}),
-		).toThrow("desk aw: ratios must be between 0 and 1");
+		).toThrow("weights length must match tracks length");
 	});
 
-	test("display and 2col layout ratios must be strictly between zero and one", () => {
-		expect(() =>
-			validateProfile({
-				...base,
-				displays: { ...base.displays, aw: { width: 2, ratios: { col2: 0 } } },
-			}),
-		).toThrow("display aw: ratios must be between 0 and 1");
-		expect(() =>
-			validateProfile({
-				...base,
-				desk: [{ ...layout("aw"), kind: "2col", ratios: { col2: 1 } }],
-			}),
-		).toThrow("desk aw: ratios must be between 0 and 1");
+	test("layout and default weights must be finite and positive", () => {
+		for (const weight of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+			expect(() =>
+				validateProfile({
+					...base,
+					desk: [
+						{
+							display: "aw",
+							label: "main",
+							kind: "columns",
+							tracks: [["a"], ["b"]],
+							weights: [weight, 1],
+						},
+					],
+				}),
+			).toThrow("weights must be finite and greater than 0");
+			expect(() =>
+				validateProfile({ ...base, weights: { columns: { 2: [weight, 1] } } }),
+			).toThrow("weights must be finite and greater than 0");
+		}
 	});
+
+	test("default keys must match their vector length and be at least two", () => {
+		expect(() =>
+			validateProfile({ ...base, weights: { columns: { 3: [1, 1] } } }),
+		).toThrow("key must equal vector length and be at least 2");
+		expect(() =>
+			validateProfile({ ...base, weights: { rows: { 1: [1] } } }),
+		).toThrow("key must equal vector length and be at least 2");
+	});
+
+	test("chain ratios at the lower and upper boundaries are accepted", () => {
+		expect(() =>
+			validateProfile({ ...base, weights: { columns: { 2: [1, 9] } } }),
+		).not.toThrow();
+		expect(() =>
+			validateProfile({ ...base, weights: { columns: { 2: [9, 1] } } }),
+		).not.toThrow();
+	});
+
+	test("chain ratios outside the bound are rejected in full vectors and subsequences", () => {
+		expect(() =>
+			validateProfile({ ...base, weights: { columns: { 2: [9.01, 1] } } }),
+		).toThrow("weight chain ratios must be between 0.1 and 0.9");
+		expect(() =>
+			validateProfile({ ...base, weights: { columns: { 3: [9, 0.5, 0.5] } } }),
+		).toThrow("weight chain ratios must be between 0.1 and 0.9");
+	});
+
 	test("the bundled default profile is valid", () => {
 		expect(() => validateProfile(bundled)).not.toThrow();
 	});

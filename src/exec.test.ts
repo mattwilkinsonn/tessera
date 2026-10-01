@@ -14,7 +14,7 @@ import {
 const sid = (n: number): SpaceId => String(n) as SpaceId;
 
 describe("runPlan", () => {
-	test("relabelHome + realizeLayout builds the desk column on the labelled space", async () => {
+	test("relabelHome + realizeLayout builds tracks on the labelled space", async () => {
 		const driver = new FakeDriver({
 			displays: [{ idx: 1 }],
 			spaces: [{ displayIdx: 1, label: "" }],
@@ -24,25 +24,23 @@ describe("runPlan", () => {
 			],
 		});
 		const home = sid(1);
-		const plan: PlanOp[] = [
+		await runPlan(driver, [
 			{ op: "relabelHome", homeSpace: home, label: "desk-code" },
 			{
 				op: "realizeLayout",
 				space: home,
-				target: { kind: "2col", columns: [[10], [11]] },
+				target: { kind: "columns", tracks: [[10], [11]], weights: [3, 2] },
 			},
-		];
-		await runPlan(driver, plan);
-
-		const spaces = await driver.querySpaces();
-		expect(spaces).toHaveLength(1);
-		const space = spaces[0];
-		if (space == null) throw new Error("no space");
-		expect(space.label).toBe("desk-code");
-		expect([...space.windowIds].sort((a, b) => a - b)).toEqual([10, 11]);
-		const win11 = (await driver.queryWindows()).find((w) => w.id === 11);
-		if (win11 == null) throw new Error("no win 11");
-		expect(win11.floating).toBe(false);
+		]);
+		const [desk] = await driver.querySpaces();
+		expect(desk?.label).toBe("desk-code");
+		expect([...(desk?.windowIds ?? [])].sort((a, b) => a - b)).toEqual([
+			10, 11,
+		]);
+		expect(
+			(await driver.queryWindows()).find((window) => window.id === 11)
+				?.floating,
+		).toBe(false);
 	});
 
 	test("createSpace mints a labelled space, moveWindow places a window on it", async () => {
@@ -51,16 +49,13 @@ describe("runPlan", () => {
 			spaces: [{ displayIdx: 1, label: "home" }],
 			windows: [{ id: 20, app: "Safari", spaceIndex: 1 }],
 		});
-		// createSpace mints stable id 2 (nextSpaceId after seed space 1).
-		const plan: PlanOp[] = [
+		await runPlan(driver, [
 			{ op: "createSpace", displayIdx: 1, label: "scratch" },
 			{ op: "moveWindow", windowId: 20, toSpace: sid(2) },
-		];
-		await runPlan(driver, plan);
-
+		]);
 		const spaces = await driver.querySpaces();
 		expect(spaces).toHaveLength(2);
-		const scratch = spaces.find((s) => s.label === "scratch");
+		const scratch = spaces.find((space) => space.label === "scratch");
 		if (scratch == null) throw new Error("no scratch space");
 		expect(scratch.id).toBe(sid(2));
 		expect(scratch.windowIds).toEqual([20]);
@@ -75,11 +70,12 @@ describe("runPlan", () => {
 				{ displayIdx: 1, label: "c" },
 			],
 		});
-		// Move space "c" (stable id 3) to index 1 (front).
 		await runPlan(driver, [{ op: "moveSpace", space: sid(3), toIndex: 1 }]);
-
-		const labels = (await driver.querySpaces()).map((s) => s.label);
-		expect(labels).toEqual(["c", "a", "b"]);
+		expect((await driver.querySpaces()).map((space) => space.label)).toEqual([
+			"c",
+			"a",
+			"b",
+		]);
 	});
 
 	test("destroySpace removes a non-last space", async () => {
@@ -91,9 +87,9 @@ describe("runPlan", () => {
 			],
 		});
 		await runPlan(driver, [{ op: "destroySpace", space: sid(2) }]);
-
-		const labels = (await driver.querySpaces()).map((s) => s.label);
-		expect(labels).toEqual(["keep"]);
+		expect((await driver.querySpaces()).map((space) => space.label)).toEqual([
+			"keep",
+		]);
 	});
 
 	test("rehomeAndDestroy re-homes residual windows before destroying", async () => {
@@ -111,13 +107,11 @@ describe("runPlan", () => {
 		await runPlan(driver, [
 			{ op: "rehomeAndDestroy", staleSpace: sid(2), homeSpace: sid(1) },
 		]);
-
 		const spaces = await driver.querySpaces();
 		expect(spaces).toHaveLength(1);
 		const home = spaces[0];
 		if (home == null) throw new Error("no home");
 		expect(home.label).toBe("home");
-		// Windows preserved on the home space — nothing closed.
 		expect([...home.windowIds].sort((a, b) => a - b)).toEqual([30, 31]);
 	});
 
@@ -130,16 +124,10 @@ describe("runPlan", () => {
 			{ op: "setLayout", space: sid(1), layout: "stack" },
 			{ op: "balanceSpace", space: sid(1) },
 		]);
-
-		const space = (await driver.querySpaces())[0];
-		if (space == null) throw new Error("no space");
-		expect(space.layout).toBe("stack");
+		expect((await driver.querySpaces())[0]?.layout).toBe("stack");
 	});
 
 	test("exhaustiveness — every PlanOp kind is a valid runPlan input", async () => {
-		// Keyed by every `PlanOp["op"]` tag: adding a union member without a
-		// sample here is a compile error in THIS test (missing key), independent
-		// of `applyOp`'s `never` default. So the vocabulary is guarded twice.
 		const byOp: Record<PlanOp["op"], PlanOp> = {
 			relabelHome: { op: "relabelHome", homeSpace: sid(1), label: "x" },
 			createSpace: { op: "createSpace", displayIdx: 1, label: "x" },
@@ -155,13 +143,12 @@ describe("runPlan", () => {
 			realizeLayout: {
 				op: "realizeLayout",
 				space: sid(1),
-				target: { kind: "stack", columns: [[1]] },
+				target: { kind: "stack", tracks: [[1]] },
 			},
 			balanceSpace: { op: "balanceSpace", space: sid(1) },
 		};
 		const ops: readonly PlanOp[] = Object.values(byOp);
-		const kinds = new Set(ops.map((o) => o.op));
-		expect(kinds.size).toBe(ops.length);
+		expect(new Set(ops.map((op) => op.op)).size).toBe(ops.length);
 	});
 
 	test("onOp fires once before each op, in order", async () => {
@@ -178,56 +165,39 @@ describe("runPlan", () => {
 		await runPlan(driver, plan, (op) => {
 			seen.push(op.op);
 		});
-		// The hook fires once per op in plan order — a dropped hook leaves `seen`
-		// empty.
 		expect(seen).toEqual(["relabelHome", "setLayout", "balanceSpace"]);
-		// The plan still ran: the layout landed.
 		expect((await driver.querySpaces())[0]?.layout).toBe("stack");
 	});
 
-	test("onOp runs BEFORE each op's effect (a throw skips that op)", async () => {
-		// The guard re-stamp must precede the op it protects, so onOp runs before
-		// applyOp. Prove the ordering: throwing in the hook aborts the op's effect.
-		// If onOp were moved to AFTER applyOp, the relabel would land before the
-		// throw and this test would fail — the ordering the "fires in order" test
-		// above cannot distinguish on its own.
+	test("onOp runs before each op effect", async () => {
 		const driver = new FakeDriver({
 			displays: [{ idx: 1 }],
 			spaces: [{ displayIdx: 1, label: "a" }],
 		});
-		const plan: PlanOp[] = [
-			{ op: "relabelHome", homeSpace: sid(1), label: "b" },
-		];
 		await expect(
-			runPlan(driver, plan, () => {
-				throw new Error("stop before effect");
-			}),
+			runPlan(
+				driver,
+				[{ op: "relabelHome", homeSpace: sid(1), label: "b" }],
+				() => {
+					throw new Error("stop before effect");
+				},
+			),
 		).rejects.toThrow("stop before effect");
-		// The relabel never happened: the hook threw before applyOp ran.
 		expect((await driver.querySpaces())[0]?.label).toBe("a");
 	});
 });
 
 describe("runConverge", () => {
-	// A hand-rolled converger: it names spaces by label and drives the FakeDriver
-	// toward a fixed point — label the home space, create + fill a "code" space,
-	// then declare done. It is world-driven (reads the fresh snapshot each turn)
-	// exactly like the real laptop converger, so it exercises the LOOP contract
-	// (query → step → execute → re-query, termination) without the converger's
-	// internal phase logic (covered in laptop.test.ts).
 	interface DemoState {
 		readonly step: number;
 	}
-
 	const homeLabel = "conv-home";
-
 	const demoStep: ConvergeStepFn<DemoState> = (
 		world: WorldSnapshot,
 		state: DemoState,
 	): ConvergeStepResult<DemoState> => {
 		const home = world.spaces[0];
 		if (home == null) throw new Error("no home space");
-		// 1: label the home space if not already.
 		if (home.label !== homeLabel) {
 			const action: ConvergeAction = {
 				op: "relabelHome",
@@ -236,8 +206,7 @@ describe("runConverge", () => {
 			};
 			return { action, state: { step: state.step + 1 } };
 		}
-		// 2: ensure a "conv-code" space exists.
-		const code = world.spaces.find((s) => s.label === "conv-code");
+		const code = world.spaces.find((space) => space.label === "conv-code");
 		if (code == null) {
 			const action: ConvergeAction = {
 				op: "createSpace",
@@ -246,9 +215,8 @@ describe("runConverge", () => {
 			};
 			return { action, state: { step: state.step + 1 } };
 		}
-		// 3: ensure window 40 lives on the code space.
-		const win = world.windows.find((w) => w.id === 40);
-		if (win != null && win.spaceId !== code.id) {
+		const window = world.windows.find((candidate) => candidate.id === 40);
+		if (window != null && window.spaceId !== code.id) {
 			const action: ConvergeAction = {
 				op: "moveWindow",
 				windowId: 40,
@@ -258,7 +226,6 @@ describe("runConverge", () => {
 		}
 		return { done: true, state };
 	};
-
 	const seed = () =>
 		new FakeDriver({
 			displays: [{ idx: 1 }],
@@ -268,25 +235,18 @@ describe("runConverge", () => {
 
 	test("converges to the fixed point and is idempotent on a second run", async () => {
 		const driver = seed();
-		const final = await runConverge(driver, demoStep, { step: 0 });
-		expect(final.step).toBe(3);
-
+		expect((await runConverge(driver, demoStep, { step: 0 })).step).toBe(3);
 		const assertConverged = async () => {
 			const spaces = await driver.querySpaces();
-			const home = spaces.find((s) => s.label === homeLabel);
-			const code = spaces.find((s) => s.label === "conv-code");
+			const home = spaces.find((space) => space.label === homeLabel);
+			const code = spaces.find((space) => space.label === "conv-code");
 			if (home == null || code == null) throw new Error("not converged");
 			expect(code.windowIds).toEqual([40]);
-			return spaces.map((s) => ({ id: s.id, label: s.label }));
+			return spaces.map((space) => ({ id: space.id, label: space.label }));
 		};
 		const after1 = await assertConverged();
-
-		// Second run: already at the fixed point — the step fn returns done on the
-		// FIRST turn, so nothing changes (idempotency).
-		const final2 = await runConverge(driver, demoStep, { step: 0 });
-		expect(final2.step).toBe(0);
-		const after2 = await assertConverged();
-		expect(after2).toEqual(after1);
+		expect((await runConverge(driver, demoStep, { step: 0 })).step).toBe(0);
+		expect(await assertConverged()).toEqual(after1);
 	});
 
 	test("throws the cap error on a non-terminating converger", async () => {
@@ -298,7 +258,6 @@ describe("runConverge", () => {
 			const home = world.spaces[0];
 			if (home == null) throw new Error("no home");
 			n += 1;
-			// Always emits an action, never done — a converger bug.
 			const action: ConvergeAction = {
 				op: "relabelHome",
 				homeSpace: home.id,
@@ -306,7 +265,7 @@ describe("runConverge", () => {
 			};
 			return { action, state: { step: n } };
 		};
-		expect(runConverge(driver, forever, { step: 0 })).rejects.toThrow(
+		await expect(runConverge(driver, forever, { step: 0 })).rejects.toThrow(
 			/exceeded 200 iterations/,
 		);
 	});

@@ -43,14 +43,13 @@ export const profile = {
 		qalculate: { app: /Qalculate/ },
 	},
 
-	// Desk columns. G9 30/40/30 `main`, AW 50/50 `plan`, MBP single-stack
-	// `laptop`. col[0] is the anchor, the rest of a column stacks.
+	// Each track begins with its anchor; subsequent windows stack on it.
 	desk: [
 		{
 			display: "g9",
 			label: "main",
-			kind: "3col",
-			columns: [
+			kind: "columns",
+			tracks: [
 				["arc", "obsidian"],
 				["ghostty-wave"],
 				["ghostty-mbp", "vscode"],
@@ -59,8 +58,8 @@ export const profile = {
 		{
 			display: "aw",
 			label: "plan",
-			kind: "2col",
-			columns: [
+			kind: "columns",
+			tracks: [
 				["linear", "arc"],
 				["arc", "akiflow"],
 			],
@@ -69,13 +68,12 @@ export const profile = {
 			display: "laptop",
 			label: "laptop",
 			kind: "stack",
-			columns: [["arc", "spotify", "discord", "qalculate"]],
+			tracks: [["arc", "spotify", "discord", "qalculate"]],
 		},
 	],
 
-	// COL3_ROOT_RATIO / COL3_INNER_RATIO: for 30/40/30,
-	// root = 0.30, inner = 0.40/0.70 = 0.5714.
-	ratios: { col3Root: 0.3, col3Inner: 0.5714 },
+	// The default thirds are relative weights for three columns.
+	weights: { columns: { 3: [3, 4, 3] } },
 
 	// DESK_SLOTS: numpad 1-9 focus order, `@display`
 	// parsed into a field. Arc slots resolve to whichever Arc is on that display.

@@ -3,19 +3,10 @@
 // layout — as a flat, backend-neutral `PlanOp[]` computed from ONE
 // `WorldSnapshot`. No driver / filesystem / clock; inputs are never mutated.
 //
-// The bash's imperative COLUMN recipe (co-locate → stack → ratio, with its
-// yabai-Tahoe settle sleeps) is NOT here: that is
-// the driver's `realizeSpaceLayout` (T5). deskPlan names the DECLARATIVE target
-// (kind + resolved column ids + ratios) AND, when ≥2 desk displays are present,
-// the up-front evacuation: it picks ONE stable park (the last present desk
-// display's home) and emits `moveWindow` ops that
-// clear EVERY tiled window (targets and foreign) off each REBUILD display onto
-// that park BEFORE any build. Targets go too: the driver re-adds each
-// with a cross-space move to consume an armed insert, which no-ops if the target
-// still sits on-space. Evacuation is the engine's job, not the driver's: a single
-// stable park chosen up front cannot ping-pong (the per-display park the driver
-// used to choose dumped the last display's refugees back onto an already-built
-// earlier display).
+// The engine emits a declarative tracks-and-weights target. When multiple desk
+// displays are present, it evacuates tiled windows from rebuild spaces to one
+// stable park before realization; this prevents insert operations from no-oping
+// when a target window is already on its destination space.
 //
 // Order of ops: all destroy preludes first
 // (teardown_laptop_grid `:42`, then reap_stray_spaces `:49`), then per present
@@ -27,7 +18,7 @@ import { ClaimSet } from "./claim.ts";
 import { resolveDisplay } from "./display.ts";
 import type { PlanOp } from "./plan.ts";
 import { straySpaces, teardownLabels } from "./reap.ts";
-import { splitFor } from "./split.ts";
+import { weightsFor } from "./split.ts";
 import { resolveDesk } from "./topology.ts";
 import type { WorldSnapshot } from "./world.ts";
 
@@ -80,15 +71,14 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 	// across every claim so the query-order dedup is preserved.
 	const windows = [...world.windows];
 
-	// ── Pass 1: resolve every present desk display's home + columns ───────────
-	// Resolve first (no ops emitted yet) so the stable park can be chosen from
-	// the full set of present displays before any evacuation or build op.
+	// ── Pass 1: resolve every present desk display's home + tracks ────────────
+	// Resolve first so the stable park is chosen before any build op.
 	interface Build {
 		readonly homeSpace: SpaceId;
 		readonly label: string;
 		readonly kind: SpaceLayoutTarget["kind"];
-		readonly columns: number[][];
-		readonly splits: Pick<SpaceLayoutTarget, "ratios" | "split">;
+		readonly tracks: number[][];
+		readonly weights?: number[];
 	}
 	const builds: Build[] = [];
 	for (const layout of resolveDesk(profile, world.displays)) {
@@ -114,18 +104,39 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 			continue;
 		}
 
-		// Resolve columns and drop the empty ones. Each claimMany hands back the
-		// distinct ids for that column's names, preferring windows already on idx.
-		const columns = layout.columns
-			.map((col) => claims.claimMany(windows, [...col], idx))
-			.filter((col) => col.length > 0);
-
+		const claimedTracks = layout.tracks.map((track) =>
+			claims.claimMany(windows, [...track], idx),
+		);
+		const tracks: number[][] = [];
+		const configuredWeights =
+			layout.kind === "stack"
+				? undefined
+				: weightsFor(
+						profile,
+						layout.kind,
+						layout.tracks.length,
+						layout.display,
+						layout.weights,
+					);
+		const weights: number[] = [];
+		for (const [index, track] of claimedTracks.entries()) {
+			if (track.length === 0) {
+				continue;
+			}
+			tracks.push(track);
+			if (configuredWeights != null) {
+				const weight = configuredWeights[index];
+				if (weight != null) {
+					weights.push(weight);
+				}
+			}
+		}
 		builds.push({
 			homeSpace,
 			label: layout.label,
 			kind: layout.kind,
-			columns,
-			splits: splitFor(profile, layout.kind, layout.display, layout.ratios),
+			tracks,
+			...(configuredWeights == null ? {} : { weights }),
 		});
 	}
 
@@ -173,13 +184,11 @@ export function deskPlan(profile: Profile, world: WorldSnapshot): PlanOp[] {
 		// (label the space unconditionally).
 		ops.push({ op: "relabelHome", homeSpace: b.homeSpace, label: b.label });
 
-		// realizeLayout only when at least one column claimed a window; otherwise
-		// there is nothing to arrange (`build_columns` returns early on empty).
-		if (b.columns.length > 0) {
+		if (b.tracks.length > 0) {
 			const target: SpaceLayoutTarget = {
 				kind: b.kind,
-				columns: b.columns,
-				...b.splits,
+				tracks: b.tracks,
+				...(b.weights == null ? {} : { weights: b.weights }),
 			};
 			ops.push({ op: "realizeLayout", space: b.homeSpace, target });
 		}

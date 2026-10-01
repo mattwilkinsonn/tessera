@@ -373,10 +373,7 @@ export class FakeDriver implements WmDriver {
 		if (sp == null) {
 			return;
 		}
-		// Move the resolved column windows onto the space and unfloat them; set the
-		// observable layout. The park→insert-east→ratio→stack recipe and its settle
-		// cadence are YabaiDriver detail with no id-level effect.
-		for (const wid of target.columns.flat()) {
+		for (const wid of target.tracks.flat()) {
 			const w = this.#winById(wid);
 			if (w != null) {
 				w.spaceStableId = sp.stableId;

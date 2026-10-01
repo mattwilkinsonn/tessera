@@ -65,22 +65,22 @@ describe("profile port fidelity", () => {
 		expect(windows.arc?.title).toBeUndefined();
 	});
 
-	test("COL3 ratios for 30/40/30", () => {
-		expect(profile.ratios).toEqual({ col3Root: 0.3, col3Inner: 0.5714 });
+	test("weights encode 30/40/30", () => {
+		expect(profile.weights).toEqual({ columns: { 3: [3, 4, 3] } });
 	});
 
 	test("desk labels + kinds per display", () => {
 		const byDisplay = Object.fromEntries(
 			profile.desk.map((d) => [d.display, d]),
 		);
-		expect(byDisplay.g9).toMatchObject({ label: "main", kind: "3col" });
-		expect(byDisplay.aw).toMatchObject({ label: "plan", kind: "2col" });
+		expect(byDisplay.g9).toMatchObject({ label: "main", kind: "columns" });
+		expect(byDisplay.aw).toMatchObject({ label: "plan", kind: "columns" });
 		expect(byDisplay.laptop).toMatchObject({ label: "laptop", kind: "stack" });
 	});
 
 	test("G9 left stacks Arc + Obsidian", () => {
 		const g9 = profile.desk.find((d) => d.display === "g9");
-		expect(g9?.columns).toEqual([
+		expect(g9?.tracks).toEqual([
 			["arc", "obsidian"],
 			["ghostty-wave"],
 			["ghostty-mbp", "vscode"],
@@ -92,12 +92,11 @@ describe("profile port fidelity", () => {
 			profile.desk.map((d) => [d.display, d]),
 		);
 		// AW_LEFT=(linear arc), AW_RIGHT=(arc akiflow).
-		expect(byDisplay.aw?.columns).toEqual([
+		expect(byDisplay.aw?.tracks).toEqual([
 			["linear", "arc"],
 			["arc", "akiflow"],
 		]);
-		// MBP_STACK=(arc spotify discord qalculate) — one stacked column.
-		expect(byDisplay.laptop?.columns).toEqual([
+		expect(byDisplay.laptop?.tracks).toEqual([
 			["arc", "spotify", "discord", "qalculate"],
 		]);
 	});

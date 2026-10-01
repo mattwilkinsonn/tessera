@@ -60,17 +60,13 @@ export type StackSel =
 export type DisplaySel = number | "next" | "prev" | "first" | "last";
 
 /**
- * The declarative layout target (D2): backend-neutral intent the driver
- * realizes with its own imperative recipe + settle cadence. `columns` hold
- * resolved window ids; `col[0]` is the anchor, the rest stack.
+ * The driver realizes tracks of resolved window ids; `track[0]` is the anchor.
  */
 export interface SpaceLayoutTarget {
-	kind: "3col" | "2col" | "stack";
-	columns: ReadonlyArray<ReadonlyArray<number>>;
-	/** 3col split ratios (`{ root, inner }`). */
-	ratios?: { root: number; inner: number };
-	/** 2col left-column share. */
-	split?: number;
+	kind: "columns" | "rows" | "stack";
+	tracks: ReadonlyArray<ReadonlyArray<number>>;
+	/** One relative weight per track; absent for `stack`. */
+	weights?: ReadonlyArray<number>;
 }
 
 /** Arrival-routing rules — yabai-specific shape, optional per backend. */
@@ -148,24 +144,14 @@ export interface WmDriver {
 	moveSpaceToIndex(id: SpaceId, toIdx: number): Promise<void>;
 	balanceSpace(id?: SpaceId): Promise<void>;
 
-	// ── Layout realization (D2) ──
 	/**
-	 * Realize the engine's declarative target end to end with the driver's own
-	 * imperative recipe + settle cadence (yabai): build the
-	 * column tree (3col/2col) or set the whole space to `stack` from the space's
-	 * windows AS-IS. The full resolved window set is in `target`.
+	 * Realize the engine's tracks with a backend recipe. Yabai builds a chain for
+	 * columns/rows or sets the whole space to stack.
 	 *
-	 * The driver does NOT clear the space first: the ENGINE owns evacuation.
-	 * `deskPlan` chooses ONE stable park up front and emits the
-	 * `moveWindow` ops that clear every rebuild space of ALL its tiled windows —
-	 * targets included — before any realize. Targets are evacuated too because
-	 * this driver's recipe arms an insert then re-adds each target with a
-	 * cross-space move, and yabai only consumes an armed insert on a REAL move; a
-	 * target left on-space would no-op the move and strand the insert unstacked.
-	 * A single stable park cannot ping-pong, whereas a per-display park chosen
-	 * inside the driver dumped the last display's windows back onto an
-	 * already-built earlier display. A driver on a backend without the yabai-Tahoe
-	 * build-from-empty requirement can ignore the pre-cleared state entirely.
+	 * The driver does NOT clear the space first: `deskPlan` moves every tiled
+	 * window, targets included, to one stable park before any realize. yabai only
+	 * consumes an armed insert on a real cross-space move, so a target left on the
+	 * space would strand the insert. One park chosen up front cannot ping-pong.
 	 */
 	realizeSpaceLayout(id: SpaceId, target: SpaceLayoutTarget): Promise<void>;
 
