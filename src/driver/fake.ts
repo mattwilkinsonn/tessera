@@ -360,7 +360,7 @@ export class FakeDriver implements WmDriver {
 	}
 
 	async balanceSpace(_id?: SpaceId): Promise<void> {
-		// id-level model tracks no pixel ratios — balance has no observable effect.
+		// Frames are modeled only by realizeSpaceLayout; balance does not adjust them.
 	}
 
 	// ── Layout realization (D2) ──
@@ -388,41 +388,45 @@ export class FakeDriver implements WmDriver {
 		if (display == null) {
 			return;
 		}
-		const weights = target.weights ?? target.tracks.map(() => 1);
+		// Mirror bspSteps: drop empty tracks, then index weights over the rest.
+		const tracks = target.tracks.filter((track) => track.length > 0);
+		const weights = target.weights ?? tracks.map(() => 1);
+		if (weights.length !== tracks.length) {
+			throw new Error(
+				`realizeSpaceLayout: ${weights.length} weights for ${tracks.length} non-empty tracks`,
+			);
+		}
 		const total = weights.reduce((sum, weight) => sum + weight, 0);
-		let offset = 0;
-		for (const [i, track] of target.tracks.entries()) {
-			const share = (weights[i] ?? 0) / total;
+		let before = 0;
+		for (const [i, track] of tracks.entries()) {
+			const weight = weights[i] ?? 0;
+			const d = display.frame;
 			const frame =
 				target.kind === "columns"
 					? {
-							x: display.frame.x + display.frame.w * offset,
-							y: display.frame.y,
-							w: display.frame.w * share,
-							h: display.frame.h,
+							x: d.x + (d.w * before) / total,
+							y: d.y,
+							w: (d.w * weight) / total,
+							h: d.h,
 						}
 					: {
-							x: display.frame.x,
-							y: display.frame.y + display.frame.h * offset,
-							w: display.frame.w,
-							h: display.frame.h * share,
+							x: d.x,
+							y: d.y + (d.h * before) / total,
+							w: d.w,
+							h: (d.h * weight) / total,
 						};
-			const anchorId = track[0];
-			if (anchorId == null) {
-				offset += share;
+			before += weight;
+			const anchor = track[0] == null ? undefined : this.#winById(track[0]);
+			if (anchor == null) {
 				continue;
 			}
-			const anchor = this.#winById(anchorId);
-			if (anchor != null) {
-				anchor.frame = { ...frame };
-				for (const wid of track.slice(1)) {
-					const extra = this.#winById(wid);
-					if (extra != null) {
-						extra.frame = { ...anchor.frame };
-					}
+			anchor.frame = { ...frame };
+			for (const wid of track.slice(1)) {
+				const extra = this.#winById(wid);
+				if (extra != null) {
+					extra.frame = { ...frame };
 				}
 			}
-			offset += share;
 		}
 	}
 
@@ -455,7 +459,7 @@ export class FakeDriver implements WmDriver {
 	}
 
 	async setSplitRatio(_winId: number, _absRatio: number): Promise<void> {
-		// No pixel model — nothing to record.
+		// Frames are modeled only by realizeSpaceLayout; split ratios do not adjust them.
 	}
 
 	async toggleSplit(winId: number): Promise<void> {

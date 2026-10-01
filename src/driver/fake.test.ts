@@ -221,7 +221,7 @@ describe("FakeDriver window placement + queries", () => {
 		expect(windows.find((window) => window.id === 4)?.frame?.w).toBe(300);
 	});
 
-	test("realizeSpaceLayout cuts rows along height and stack preserves frames", async () => {
+	test("realizeSpaceLayout stack preserves frames and weighted rows cut height", async () => {
 		const d = new FakeDriver({
 			displays: [{ idx: 1, frame: { x: 10, y: 20, w: 1000, h: 800 } }],
 			spaces: [{ displayIdx: 1, label: "grid" }],
@@ -232,34 +232,58 @@ describe("FakeDriver window placement + queries", () => {
 		});
 		const space = (await d.querySpaces())[0];
 		if (space == null) throw new Error("missing seeded space");
-		await d.realizeSpaceLayout(space.id, { kind: "rows", tracks: [[1], [2]] });
+		await d.realizeSpaceLayout(space.id, { kind: "stack", tracks: [[1, 2]] });
 		let windows = await d.queryWindows();
 		expect(windows.find((window) => window.id === 1)?.frame).toEqual({
-			x: 10,
-			y: 20,
-			w: 1000,
-			h: 400,
+			x: 1,
+			y: 2,
+			w: 3,
+			h: 4,
 		});
 		expect(windows.find((window) => window.id === 2)?.frame).toEqual({
-			x: 10,
-			y: 420,
-			w: 1000,
-			h: 400,
+			x: 5,
+			y: 6,
+			w: 7,
+			h: 8,
 		});
-		await d.realizeSpaceLayout(space.id, { kind: "stack", tracks: [[1, 2]] });
+		await d.realizeSpaceLayout(space.id, {
+			kind: "rows",
+			tracks: [[1], [2]],
+			weights: [1, 3],
+		});
 		windows = await d.queryWindows();
 		expect(windows.find((window) => window.id === 1)?.frame).toEqual({
 			x: 10,
 			y: 20,
 			w: 1000,
-			h: 400,
+			h: 200,
 		});
 		expect(windows.find((window) => window.id === 2)?.frame).toEqual({
 			x: 10,
-			y: 420,
+			y: 220,
 			w: 1000,
-			h: 400,
+			h: 600,
 		});
+	});
+
+	test("realizeSpaceLayout drops empty tracks and cuts exact offsets", async () => {
+		const d = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 1728, h: 1000 } }],
+			spaces: [{ displayIdx: 1, label: "grid" }],
+			windows: [1, 2, 3, 4].map((id) => ({ id, app: "A", spaceIndex: 1 })),
+		});
+		const space = (await d.querySpaces())[0];
+		if (space == null) throw new Error("missing seeded space");
+		await d.realizeSpaceLayout(space.id, {
+			kind: "columns",
+			tracks: [[1], [], [2], [3], [4]],
+			weights: [3, 4, 3, 2],
+		});
+		const xs = (await d.queryWindows())
+			.filter((window) => [1, 2, 3, 4].includes(window.id))
+			.sort((a, b) => a.id - b.id)
+			.map((window) => window.frame?.x);
+		expect(xs).toEqual([0, 432, 1008, 1440]);
 	});
 
 	test("realizeSpaceLayout moves extras from every track", async () => {
