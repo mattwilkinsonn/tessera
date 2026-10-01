@@ -46,7 +46,7 @@
 
             package = lib.mkOption {
               type = lib.types.package;
-              default = self.packages.${pkgs.system}.default;
+              default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
               defaultText = lib.literalExpression "tessera.packages.\${system}.default";
               description = "The tessera package providing the `tess` binary.";
             };
