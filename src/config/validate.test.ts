@@ -179,6 +179,14 @@ describe("validateProfile", () => {
 		).not.toThrow();
 	});
 
+	test("an overflowing 1:9 boundary vector is accepted like a small one", () => {
+		const x = 1.797803617755409e307;
+		expect(x + 9 * x).toBe(Number.POSITIVE_INFINITY);
+		expect(() =>
+			validateProfile({ ...base, weights: { columns: { 2: [x, 9 * x] } } }),
+		).not.toThrow();
+	});
+
 	test("chain ratios outside the bound are rejected in full vectors and subsequences", () => {
 		expect(() =>
 			validateProfile({ ...base, weights: { columns: { 2: [9.01, 1] } } }),

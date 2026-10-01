@@ -1,12 +1,13 @@
 /** The bsp chain ratios for a weight vector: r[i] = w[i] / sum(w[i..]). */
 export function chainRatios(weights: ReadonlyArray<number>): number[] {
-	// Huge finite weights can sum to Infinity; scale only then, since scaling
-	// perturbs exact boundary ratios like 1/(1+9).
+	// Huge finite weights can sum to Infinity; scale by a power of two then,
+	// which is exact and so keeps boundary ratios like 1/(1+9) bit-identical.
 	const sum = weights.reduce((total, weight) => total + weight, 0);
-	const max = Math.max(...weights);
-	const scaled = Number.isFinite(sum)
-		? weights
-		: weights.map((weight) => weight / max);
+	const scale = Number.isFinite(sum)
+		? 1
+		: 2 ** -Math.ceil(Math.log2(Math.max(...weights)));
+	const scaled =
+		scale === 1 ? weights : weights.map((weight) => weight * scale);
 	const ratios: number[] = [];
 	let remainder = Number.isFinite(sum)
 		? sum

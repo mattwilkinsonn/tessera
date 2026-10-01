@@ -148,8 +148,9 @@ export interface WmDriver {
 	 * Realize the engine's tracks with a backend recipe. Yabai builds a chain for
 	 * columns/rows or sets the whole space to stack.
 	 *
-	 * The driver does NOT clear the space first: `deskPlan` moves every tiled
-	 * window, targets included, to one stable park before any realize. yabai only
+	 * The driver does NOT clear the space first: with two or more desk displays,
+	 * `deskPlan` moves every tiled window on a rebuild home, targets included, to
+	 * one stable park before any realize. yabai only
 	 * consumes an armed insert on a real cross-space move, so a target left on the
 	 * space would strand the insert. One park chosen up front cannot ping-pong.
 	 */
