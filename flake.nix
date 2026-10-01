@@ -22,7 +22,7 @@
       # live outside eachSystem; the overlay resolves the package for whatever
       # system the consumer's pkgs set targets.
       overlay = final: prev: {
-        tess = self.packages.${prev.system}.default;
+        tess = self.packages.${prev.stdenv.hostPlatform.system}.default;
       };
 
       # home-manager module — R1's consumption contract. Option names are load
