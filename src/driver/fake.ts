@@ -12,10 +12,9 @@
 // Scope: it faithfully models the space lifecycle + window placement + query
 // surface the desk/snap plans and the laptop converger exercise. The
 // interaction verbs (directional focus/swap/warp/resize, split/insert arming)
-// are observable-minimal — the Fake tracks no pixel geometry, so a
-// balance/resize/ratio has no id-level effect and a directional op resolves
-// truthfully without a spatial model. This is an id/space-level test double,
-// not a pixel-accurate yabai simulator.
+// remain observable-minimal. Layout realization models implied track frames,
+// but not yabai's tree, balance, or resize behavior; it is not a pixel-accurate
+// yabai simulator.
 
 import type {
 	DirSel,
@@ -361,7 +360,7 @@ export class FakeDriver implements WmDriver {
 	}
 
 	async balanceSpace(_id?: SpaceId): Promise<void> {
-		// id-level model tracks no pixel ratios — balance has no observable effect.
+		// Frames are modeled only by realizeSpaceLayout; balance does not adjust them.
 	}
 
 	// ── Layout realization (D2) ──
@@ -382,6 +381,53 @@ export class FakeDriver implements WmDriver {
 			}
 		}
 		sp.layout = target.kind === "stack" ? "stack" : "bsp";
+		if (target.kind === "stack") {
+			return;
+		}
+		const display = this.#displays.find((d) => d.idx === sp.displayIdx);
+		if (display == null) {
+			return;
+		}
+		// Mirror bspSteps: drop empty tracks, then index weights over the rest.
+		const tracks = target.tracks.filter((track) => track.length > 0);
+		const weights = target.weights ?? tracks.map(() => 1);
+		if (weights.length !== tracks.length) {
+			throw new Error(
+				`realizeSpaceLayout: ${weights.length} weights for ${tracks.length} non-empty tracks`,
+			);
+		}
+		const total = weights.reduce((sum, weight) => sum + weight, 0);
+		let before = 0;
+		for (const [i, track] of tracks.entries()) {
+			const weight = weights[i] ?? 0;
+			const d = display.frame;
+			const frame =
+				target.kind === "columns"
+					? {
+							x: d.x + (d.w * before) / total,
+							y: d.y,
+							w: (d.w * weight) / total,
+							h: d.h,
+						}
+					: {
+							x: d.x,
+							y: d.y + (d.h * before) / total,
+							w: d.w,
+							h: (d.h * weight) / total,
+						};
+			before += weight;
+			const anchor = track[0] == null ? undefined : this.#winById(track[0]);
+			if (anchor == null) {
+				continue;
+			}
+			anchor.frame = { ...frame };
+			for (const wid of track.slice(1)) {
+				const extra = this.#winById(wid);
+				if (extra != null) {
+					extra.frame = { ...frame };
+				}
+			}
+		}
 	}
 
 	// ── Window placement ──
@@ -413,7 +459,7 @@ export class FakeDriver implements WmDriver {
 	}
 
 	async setSplitRatio(_winId: number, _absRatio: number): Promise<void> {
-		// No pixel model — nothing to record.
+		// Frames are modeled only by realizeSpaceLayout; split ratios do not adjust them.
 	}
 
 	async toggleSplit(winId: number): Promise<void> {
