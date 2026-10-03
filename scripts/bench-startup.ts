@@ -31,13 +31,13 @@ const rows: { binary: string; command: string; p50: number; p90: number; min: nu
 
 try {
 	mkdirSync(home, { recursive: true });
-	writeFileSync(shim, `#!/bin/sh\nprintf x > '${marker}'\nexit 1\n`);
+	writeFileSync(shim, '#!/bin/sh\nprintf x > "$TESS_BENCH_MARKER"\nexit 1\n');
 	chmodSync(shim, 0o755);
 
 	// A base that ignores TESS_YABAI would benchmark the host's live window manager.
 	const probe = spawnSync(base, ["snap", "3col"], {
 		cwd: temp,
-		env: { ...process.env, HOME: home, TESS_YABAI: shim },
+		env: { ...process.env, HOME: home, TESS_YABAI: shim, TESS_BENCH_MARKER: marker },
 		encoding: "utf8",
 	});
 	if (probe.error) throw probe.error;
@@ -57,7 +57,7 @@ try {
 				const start = performance.now();
 				const result = spawnSync(binary, [...args], {
 					cwd: temp,
-					env: { ...process.env, HOME: home, TESS_YABAI: shim },
+					env: { ...process.env, HOME: home, TESS_YABAI: shim, TESS_BENCH_MARKER: marker },
 					encoding: "utf8",
 				});
 				const elapsed = performance.now() - start;

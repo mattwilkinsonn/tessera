@@ -21,9 +21,11 @@ import * as Terminal from "effect/Terminal";
 import { profile } from "../config/profile.fixture.ts";
 import { FakeDriver } from "../driver/fake.ts";
 import type { WmDriver } from "../driver/types.ts";
+import type { Command, RunOpts } from "../index.ts";
+import { run } from "../index.ts";
 import { RunDeps, withDeps } from "./commands.ts";
 import { DriverError, ProfileLoadError } from "./errors.ts";
-import { SUBCOMMANDS } from "./grammar.ts";
+import type { SUBCOMMANDS } from "./grammar.ts";
 
 let testRoot = "";
 afterEach(() => {
@@ -77,7 +79,7 @@ const cliServices = Layer.mergeAll(
 	CliConfig.layer({ builtIns: [GlobalFlag.Help, GlobalFlag.Version] }),
 );
 
-const driverWith = (driver: WmDriver, opts = makeOpts()) =>
+const driverWith = (driver: WmDriver, opts: RunOpts = makeOpts()) =>
 	Layer.succeed(RunDeps, { driver, loadProfile: async () => profile, opts });
 
 const runWith = (
@@ -92,35 +94,123 @@ const runWith = (
 	);
 
 describe("Effect CLI commands", () => {
-	test.each(
-		Object.entries(SUBCOMMANDS).map(
-			([name, spec]) =>
-				[name, spec.choices?.[0] ?? (spec.int ? "1" : undefined)] as const,
-		),
-	)("dispatches %s through the shared router", async (name, value) => {
-		const driver = new FakeDriver({
-			spaces: [{ displayIdx: 1 }],
-			windows: [{ id: 7, app: "Arc", spaceIndex: 1 }],
-		});
-		const opts = makeOpts();
-		if (name === "display-event" || name === "flex-event") {
-			mkdirSync(opts.displayWaiter.waiterLock);
-			writeFileSync(
-				join(opts.displayWaiter.waiterLock, "pid"),
-				`${process.pid}\n`,
-			);
-			mkdirSync(opts.flexWaiter.waiterLock);
-			writeFileSync(
-				join(opts.flexWaiter.waiterLock, "pid"),
-				`${process.pid}\n`,
-			);
-		}
-		const exit = await runWith(
-			value === undefined ? [name] : [name, value],
-			driverWith(driver, opts),
+	type CliSubcommand = keyof typeof SUBCOMMANDS;
+	const dispatchCases: ReadonlyArray<{
+		name: CliSubcommand;
+		args: string | undefined;
+		command: Command;
+	}> = [
+		{ name: "apply", args: undefined, command: { kind: "apply" } },
+		{ name: "laptop", args: undefined, command: { kind: "laptop" } },
+		{
+			name: "display-event",
+			args: undefined,
+			command: { kind: "display-event" },
+		},
+		{ name: "flex-event", args: undefined, command: { kind: "flex-event" } },
+		{ name: "rules", args: undefined, command: { kind: "rules" } },
+		{
+			name: "display-setup",
+			args: undefined,
+			command: { kind: "display-setup" },
+		},
+		{ name: "focus-slot", args: "1", command: { kind: "focus-slot", n: 1 } },
+		{ name: "snap", args: "3col", command: { kind: "snap", mode: "3col" } },
+		{
+			name: "stack-cycle",
+			args: "next",
+			command: { kind: "stack-cycle", dir: "next" },
+		},
+		{ name: "resize", args: "grow", command: { kind: "resize", dir: "grow" } },
+		{
+			name: "move-display",
+			args: "g9",
+			command: { kind: "move-display", name: "g9" },
+		},
+		{
+			name: "cycle-display",
+			args: "next",
+			command: { kind: "cycle-display", dir: "next" },
+		},
+		{
+			name: "reset-splits",
+			args: undefined,
+			command: { kind: "reset-splits" },
+		},
+		{ name: "columns", args: undefined, command: { kind: "columns" } },
+		{ name: "focus", args: "west", command: { kind: "focus", dir: "west" } },
+		{ name: "swap", args: "west", command: { kind: "swap", dir: "west" } },
+		{ name: "warp", args: "west", command: { kind: "warp", dir: "west" } },
+		{ name: "insert", args: "east", command: { kind: "insert", dir: "east" } },
+		{
+			name: "toggle-float",
+			args: undefined,
+			command: { kind: "toggle-float" },
+		},
+		{ name: "balance", args: undefined, command: { kind: "balance" } },
+		{ name: "space", args: "bsp", command: { kind: "space", layout: "bsp" } },
+	];
+
+	const makeObservedDriver = () => {
+		const calls: string[] = [];
+		const driver = new Proxy(
+			new FakeDriver({
+				spaces: [{ displayIdx: 1 }],
+				windows: [{ id: 7, app: "Arc", spaceIndex: 1 }],
+			}),
+			{
+				get(target, property, receiver) {
+					const member = Reflect.get(target, property, receiver) as unknown;
+					if (typeof member !== "function") return member;
+					return (...args: unknown[]) => {
+						calls.push(`${String(property)}(${args.map(String).join(",")})`);
+						return Reflect.apply(member, target, args);
+					};
+				},
+			},
 		);
-		expect(Exit.isSuccess(exit)).toBe(true);
-	});
+		return { driver, calls };
+	};
+
+	for (const { name, args, command } of dispatchCases) {
+		test(`dispatches ${name} through the shared router`, async () => {
+			const { driver: driverA, calls: callsA } = makeObservedDriver();
+			const { driver: driverB, calls: callsB } = makeObservedDriver();
+			const optsA = makeOpts();
+			const optsB = makeOpts();
+			for (const opts of [optsA, optsB]) {
+				if (name === "display-event" || name === "flex-event") {
+					mkdirSync(opts.displayWaiter.waiterLock);
+					writeFileSync(
+						join(opts.displayWaiter.waiterLock, "pid"),
+						`${process.pid}\n`,
+					);
+					mkdirSync(opts.flexWaiter.waiterLock);
+					writeFileSync(
+						join(opts.flexWaiter.waiterLock, "pid"),
+						`${process.pid}\n`,
+					);
+				}
+			}
+			await Promise.all([driverA.focusWindow(7), driverB.focusWindow(7)]);
+			callsA.length = 0;
+			callsB.length = 0;
+			const argv = args === undefined ? [name] : [name, args];
+			const exit = await runWith(argv, driverWith(driverA, optsA));
+			expect(Exit.isSuccess(exit)).toBe(true);
+			const referenceExit = await run(profile, command, driverB, optsB);
+			expect(referenceExit).toBe(0);
+			expect(callsA).toEqual(callsB);
+			if (name === "display-event") {
+				expect(Bun.file(optsA.displayStamp).size > 0).toBe(true);
+				expect(Bun.file(optsB.displayStamp).size > 0).toBe(true);
+			}
+			if (name === "flex-event") {
+				expect(Bun.file(optsA.flexStamp).size > 0).toBe(true);
+				expect(Bun.file(optsB.flexStamp).size > 0).toBe(true);
+			}
+		});
+	}
 
 	test("valid simple command changes the FakeDriver world", async () => {
 		const driver = new FakeDriver({
