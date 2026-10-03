@@ -15,6 +15,7 @@
 // else exits 0.
 
 import { homedir } from "node:os";
+import { liveDriver } from "./cli/driver.ts";
 import {
 	apply,
 	type CycleDir,
@@ -43,7 +44,6 @@ import { profile as defaultProfile } from "./config/profile.ts";
 import type { DisplayName, Profile } from "./config/types.ts";
 import { validateProfile } from "./config/validate.ts";
 import type { DirSel, WmDriver } from "./driver/types.ts";
-import { liveDriver } from "./cli/driver.ts";
 import { DISPLAY_STAMP, FLEX_STAMP } from "./effects/constants.ts";
 import {
 	recordEvent,
