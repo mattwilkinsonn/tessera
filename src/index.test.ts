@@ -320,10 +320,7 @@ describe("run — exhaustiveness", () => {
 // ─── run → init: the --self path reaches the registered signal action ────────
 // The crux of the /$bunfs bugfix: whatever path the caller passes as
 // `--self` is what init() registers with each yabai signal, so events
-// re-invoke tess by a real, usable path. parseArgs carrying the token into
-// command.self is covered above; this closes the OTHER half — that run's init
-// arm threads command.self through to the registered action (both are
-// `string`, so tsc alone cannot catch a regression that drops it).
+// re-invoke tess by a real, usable path. This verifies run() threads command.self through to each registered action.
 
 /** Records signal registrations so the router's init wiring is observable. */
 class EventRecorder implements NonNullable<WmDriver["events"]> {

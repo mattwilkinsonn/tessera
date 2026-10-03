@@ -161,9 +161,9 @@
             test "$rc" -eq 1
             grep -q "Unknown subcommand" err
             HOME="$TMPDIR" "$out/bin/tess" --help >out
-            grep -q "USAGE" out
+            grep -q "SUBCOMMANDS" out
             HOME="$TMPDIR" "$out/bin/tess" --version >out
-            grep -q "tess v${version}" out
+            grep -q "tess v$version" out
             HOME="$TMPDIR" "$out/bin/tess" snap --help >out
             grep -q "tess snap" out
             runHook postInstallCheck

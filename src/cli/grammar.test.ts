@@ -1,16 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { parseArgs } from "../index.ts";
 import { isIntToken, SUBCOMMANDS } from "./grammar.ts";
 
 describe("SUBCOMMANDS grammar", () => {
-	test("literal choices match the existing parser", () => {
-		for (const [name, spec] of Object.entries(SUBCOMMANDS)) {
-			if (spec.choices === null) continue;
-			for (const choice of spec.choices) {
-				const parsed = parseArgs([name, choice]);
-				expect(parsed.ok).toBe(true);
-			}
-		}
+	test("literal choices match the declared CLI grammar", () => {
+		const choices = Object.fromEntries(
+			Object.entries(SUBCOMMANDS)
+				.filter(([, spec]) => spec.choices !== null)
+				.map(([name, spec]) => [name, spec.choices]),
+		);
+		expect(choices).toEqual({
+			snap: ["3col", "50-50", "columns"],
+			"stack-cycle": ["next", "prev"],
+			resize: ["grow", "shrink"],
+			"move-display": ["g9", "aw", "laptop"],
+			"cycle-display": ["next", "prev"],
+			focus: ["west", "south", "north", "east"],
+			swap: ["west", "south", "north", "east"],
+			warp: ["west", "south", "north", "east"],
+			insert: ["east", "west", "north", "south", "stack"],
+			space: ["bsp", "stack"],
+		});
 	});
 
 	test("integer tokens match the Effect CLI accepted numeric forms", () => {
