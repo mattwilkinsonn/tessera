@@ -8,6 +8,7 @@
 
 {
   packages = with pkgs; [
+    bun2nix
     # VCS — jj (Matt's review tool) works colocated with git here.
     jujutsu
 

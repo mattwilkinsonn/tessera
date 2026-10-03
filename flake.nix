@@ -9,6 +9,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    bun2nix = {
+      url = "github:nix-community/bun2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -16,6 +20,7 @@
       self,
       nixpkgs,
       flake-utils,
+      bun2nix,
     }:
     let
       # homeManagerModules.default and overlays.default are system-agnostic and
@@ -83,17 +88,27 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ bun2nix.overlays.default ];
+        };
 
         # The darwin `bun build --compile` recipe, moved verbatim from orion's
         # darwin/wm.nix (renamed wm → tess). Every attr here is load-bearing;
         # see the comments for what each one prevents.
+        bunLockCheck = pkgs.runCommand "tessera-bun-lock-check" { nativeBuildInputs = [ pkgs.bun2nix ]; } ''
+          bun2nix -l ${./bun.lock} -o bun.nix
+          diff -u ${./nix/bun.nix} bun.nix
+          touch "$out"
+        '';
         tess = pkgs.stdenvNoCC.mkDerivation {
+          bunDeps = pkgs.bun2nix.fetchBunDeps { bunNix = ./nix/bun.nix; };
           pname = "tess";
           inherit (pkgs.lib.importJSON ./package.json) version;
           src = ./.;
 
           nativeBuildInputs = [
+            pkgs.bun2nix.hook
             pkgs.bun
           ]
           ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
@@ -102,6 +117,9 @@
             # to sign, and this fixup hook ad-hoc-signs the emitted binary.
             pkgs.darwin.autoSignDarwinBinariesHook
           ];
+          bunInstallFlags = [ "--linker=isolated" "--backend=copyfile" ];
+          dontUseBunBuild = true;
+          dontRunLifecycleScripts = true;
 
           env =
             pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
@@ -154,6 +172,7 @@
       in
       {
         packages.default = tess;
+        checks.bun-lock = bunLockCheck;
 
         # Guard the home-manager module's cross-repo contract: evaluate it with
         # stub home.* options and assert the exported TESSERA_PROFILE is an

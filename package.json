@@ -1,6 +1,6 @@
 {
 	"name": "tessera-wm",
-	"version": "0.1.2",
+    "version": "0.2.0",
 	"type": "module",
 	"description": "Tessera — a portable TypeScript/Bun window-manager config: a backend-agnostic layout engine behind a swappable driver (yabai today; Hyprland/others later). CLI: tess.",
 	"license": "MIT",
@@ -19,6 +19,10 @@
 		"check": "biome check src/",
 		"build": "bun build --compile src/index.ts --outfile tess"
 	},
+    "dependencies": {
+        "effect": "4.0.0",
+        "@effect/platform-bun": "4.0.0"
+    },
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",
 		"@types/bun": "^1.4.0",
