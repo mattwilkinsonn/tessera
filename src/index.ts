@@ -16,6 +16,8 @@
 
 import { homedir } from "node:os";
 import { liveDriver } from "./cli/driver.ts";
+import { formatDriverError } from "./cli/errors.ts";
+import { commandFor, isIntToken, SUBCOMMANDS } from "./cli/grammar.ts";
 import {
 	apply,
 	type CycleDir,
@@ -120,6 +122,40 @@ const SPACE_LAYOUTS: Readonly<Record<string, SpaceLayout>> = {
 	bsp: "bsp",
 	stack: "stack",
 };
+
+/** Settle a keybind argv without the Effect graph; null defers to the CLI. Pure. */
+export function fastMatch(argv: ReadonlyArray<string>): Command | null {
+	if (argv.length === 0 || argv.some((token) => token.startsWith("-")))
+		return null;
+	const [name, value] = argv;
+	if (name === undefined || !Object.hasOwn(SUBCOMMANDS, name)) return null;
+	const spec = SUBCOMMANDS[name as keyof typeof SUBCOMMANDS];
+	if (!spec.fastPath) return null;
+	const hasArgument = spec.choices !== null || spec.int;
+	if (argv.length !== 1 + Number(hasArgument)) return null;
+	if (
+		spec.choices !== null &&
+		!(spec.choices as ReadonlyArray<string>).includes(value ?? "")
+	)
+		return null;
+	if (spec.int && (value === undefined || !isIntToken(value))) return null;
+	if (name === "focus-slot") return commandFor(name, Number(value));
+	if (name === "snap") return commandFor(name, value ?? "");
+	if (name === "stack-cycle") return commandFor(name, value ?? "");
+	if (name === "resize") return commandFor(name, value ?? "");
+	if (name === "move-display") return commandFor(name, value ?? "");
+	if (name === "cycle-display") return commandFor(name, value ?? "");
+	if (name === "reset-splits") return commandFor(name);
+	if (name === "columns") return commandFor(name);
+	if (name === "focus") return commandFor(name, value ?? "");
+	if (name === "swap") return commandFor(name, value ?? "");
+	if (name === "warp") return commandFor(name, value ?? "");
+	if (name === "insert") return commandFor(name, value ?? "");
+	if (name === "toggle-float") return commandFor(name);
+	if (name === "balance") return commandFor(name);
+	if (name === "space") return commandFor(name, value ?? "");
+	return null;
+}
 
 /**
  * Pure arg parse: `argv` is `process.argv.slice(2)`. Returns the closed
@@ -476,11 +512,19 @@ async function importProfile(path: string): Promise<Profile> {
 }
 
 if (import.meta.main) {
-	const parsed = parseArgs(process.argv.slice(2));
-	if (!parsed.ok) {
-		process.stderr.write(`${parsed.msg ?? USAGE}\n`);
-		process.exit(2);
+	const argv = process.argv.slice(2);
+	const fast = fastMatch(argv);
+	if (fast) {
+		try {
+			const profile = await loadProfile();
+			process.exit(await run(profile, fast, liveDriver()));
+		} catch (cause) {
+			process.stderr.write(`${formatDriverError(cause)}\n`);
+			process.exit(1);
+		}
 	}
-	const profile = await loadProfile();
-	process.exit(await run(profile, parsed.command, liveDriver()));
+	// Effect CLI owns help, version, malformed input and non-fast commands (effect4-cli.md § T3).
+	// Dynamic import keeps the Effect graph off keybind startup.
+	const { main } = await import("./cli/main.ts");
+	main();
 }

@@ -152,14 +152,20 @@
             runHook postInstall
           '';
 
-          # Enforce the parse-failure smoke in-build so it is reproducible on
-          # every rebuild: the entry guard exits 2 on a bad subcommand.
+          # Enforce parser errors and generated help/version in-build.
           doInstallCheck = true;
           installCheckPhase = ''
             runHook preInstallCheck
             rc=0
-            HOME="$TMPDIR" "$out/bin/tess" bogus-subcommand || rc=$?
-            test "$rc" -eq 2
+            HOME="$TMPDIR" "$out/bin/tess" bogus-subcommand >out 2>err || rc=$?
+            test "$rc" -eq 1
+            grep -q "Unknown subcommand" err
+            HOME="$TMPDIR" "$out/bin/tess" --help >out
+            grep -q "USAGE" out
+            HOME="$TMPDIR" "$out/bin/tess" --version >out
+            grep -q "tess v${version}" out
+            HOME="$TMPDIR" "$out/bin/tess" snap --help >out
+            grep -q "tess snap" out
             runHook postInstallCheck
           '';
 
