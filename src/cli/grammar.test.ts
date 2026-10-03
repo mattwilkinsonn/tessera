@@ -26,7 +26,15 @@ describe("SUBCOMMANDS grammar", () => {
 		for (const token of ["7", "007", "+1", "1.0", "1e2"]) {
 			expect(isIntToken(token)).toBe(true);
 		}
-		for (const token of ["0x10", "", " 1", "1.5", "abc"]) {
+		for (const token of [
+			"0x10",
+			"",
+			" 1",
+			"1.5",
+			"abc",
+			"9007199254740992",
+			"1e16",
+		]) {
 			expect(isIntToken(token)).toBe(false);
 		}
 	});

@@ -149,11 +149,11 @@ export const SUBCOMMANDS = {
 
 export type SubcommandName = keyof typeof SUBCOMMANDS;
 
-/** Matches Effect CLI's integer parser while excluding hex and whitespace forms. */
+/** Matches Effect CLI's safe integer parser while excluding hex and whitespace forms. */
 export function isIntToken(s: string): boolean {
 	return (
 		/^[+-]?\d+(?:\.0+)?(?:[eE][+-]?\d+)?$/.test(s) &&
-		Number.isInteger(Number(s))
+		Number.isSafeInteger(Number(s))
 	);
 }
 

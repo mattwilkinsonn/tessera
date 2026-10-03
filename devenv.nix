@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, inputs, ... }:
 
 # Tessera dev shell — the single source of the dev + CI toolchain for this
 # single-tool repo. Deliberately minimal: Tessera is one zero-dependency

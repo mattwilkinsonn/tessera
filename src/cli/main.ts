@@ -5,8 +5,8 @@ import * as Layer from "effect/Layer";
 import pkg from "../../package.json" with { type: "json" };
 import { loadProfile } from "../index.ts";
 import { RunDeps, withDeps } from "./commands.ts";
-import { liveDriver } from "./driver.ts";
-import { DriverError, formatDriverError, ProfileLoadError } from "./errors.ts";
+import { formatDriverError, liveDriver } from "./driver.ts";
+import { DriverError, ProfileLoadError } from "./errors.ts";
 
 const printOneLine = (cause: unknown): Effect.Effect<void> =>
 	Effect.sync(() => {

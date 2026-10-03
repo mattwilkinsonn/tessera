@@ -9,8 +9,7 @@
 // The Effect CLI owns argv parsing and generated help; run dispatches typed commands.
 
 import { homedir } from "node:os";
-import { liveDriver } from "./cli/driver.ts";
-import { formatDriverError } from "./cli/errors.ts";
+import { formatDriverError, liveDriver } from "./cli/driver.ts";
 import { commandFor, isIntToken, SUBCOMMANDS } from "./cli/grammar.ts";
 import {
 	apply,

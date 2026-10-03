@@ -117,7 +117,7 @@
             # to sign, and this fixup hook ad-hoc-signs the emitted binary.
             pkgs.darwin.autoSignDarwinBinariesHook
           ];
-          bunInstallFlags = [ "--linker=isolated" "--backend=copyfile" ];
+          bunInstallFlags = [ "--linker=isolated" "--backend=copyfile" "--frozen-lockfile" ];
           dontUseBunBuild = true;
           dontRunLifecycleScripts = true;
 

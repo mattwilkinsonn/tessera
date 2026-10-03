@@ -34,16 +34,18 @@ try {
 	writeFileSync(shim, '#!/bin/sh\nprintf x > "$TESS_BENCH_MARKER"\nexit 1\n');
 	chmodSync(shim, 0o755);
 
-	// A base that ignores TESS_YABAI would benchmark the host's live window manager.
-	const probe = spawnSync(base, ["snap", "3col"], {
-		cwd: temp,
-		env: { ...process.env, HOME: home, TESS_YABAI: shim, TESS_BENCH_MARKER: marker },
-		encoding: "utf8",
-	});
-	if (probe.error) throw probe.error;
-	if (probe.status !== 0) throw new Error(`base shim probe exited ${probe.status}: ${probe.stderr.trim()}`);
-	if (!Bun.file(marker).size) {
-		throw new Error("base binary did not invoke TESS_YABAI; refusing an invalid comparison");
+	for (const [binary, name] of [[base, "base"], [current, "new"]] as const) {
+		writeFileSync(marker, "");
+		const probe = spawnSync(binary, ["snap", "3col"], {
+			cwd: temp,
+			env: { ...process.env, HOME: home, TESS_YABAI: shim, TESS_BENCH_MARKER: marker },
+			encoding: "utf8",
+		});
+		if (probe.error) throw probe.error;
+		if (probe.status !== 0) throw new Error(`${name} shim probe exited ${probe.status}: ${probe.stderr.trim()}`);
+		if (!Bun.file(marker).size) {
+			throw new Error(`${name} binary did not invoke TESS_YABAI; refusing an invalid comparison`);
+		}
 	}
 
 	for (const [binary, name, commands] of [
@@ -65,8 +67,8 @@ try {
 				if (result.status !== 0) {
 					throw new Error(`${name} ${args.join(" ")} exited ${result.status}: ${result.stderr.trim()}`);
 				}
-				if (name === "base" && args[0] === "snap" && args[1] === "3col" && !Bun.file(marker).size) {
-					throw new Error("base binary stopped invoking TESS_YABAI; refusing an invalid measurement");
+				if (args[0] === "snap" && args[1] === "3col" && !Bun.file(marker).size) {
+					throw new Error(`${name} binary stopped invoking TESS_YABAI; refusing an invalid measurement`);
 				}
 				times.push(elapsed);
 			}

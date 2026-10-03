@@ -14,7 +14,3 @@ export class DriverError extends Data.TaggedError("DriverError")<{
 	readonly [Runtime.errorExitCode] = 1;
 	readonly [Runtime.errorReported] = false;
 }
-
-export function formatDriverError(cause: unknown): string {
-	return cause instanceof Error ? cause.message : String(cause);
-}

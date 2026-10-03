@@ -27,16 +27,17 @@ import { RunDeps, withDeps } from "./commands.ts";
 import { DriverError, ProfileLoadError } from "./errors.ts";
 import type { SUBCOMMANDS } from "./grammar.ts";
 
-let testRoot = "";
+const testRoots: Array<string> = [];
 afterEach(() => {
-	if (testRoot !== "") rmSync(testRoot, { recursive: true, force: true });
-	testRoot = "";
+	for (const root of testRoots) rmSync(root, { recursive: true, force: true });
+	testRoots.length = 0;
 	process.exitCode = 0;
 });
 
 function makeTestRoot(): string {
-	testRoot = mkdtempSync(join(tmpdir(), "tess-cli-"));
-	return testRoot;
+	const root = mkdtempSync(join(tmpdir(), "tess-cli-"));
+	testRoots.push(root);
+	return root;
 }
 
 const makeOpts = (root = makeTestRoot()) => ({
@@ -46,6 +47,7 @@ const makeOpts = (root = makeTestRoot()) => ({
 	flexPath: join(root, "flex"),
 	displayStamp: join(root, "display-stamp"),
 	flexStamp: join(root, "flex-stamp"),
+	nudge: async () => {},
 	displayWaiter: {
 		waiterLock: join(root, "display-waiter-lock"),
 		nudge: async () => {},
