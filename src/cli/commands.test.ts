@@ -23,9 +23,9 @@ import { FakeDriver } from "../driver/fake.ts";
 import type { WmDriver } from "../driver/types.ts";
 import type { Command, RunOpts } from "../index.ts";
 import { run } from "../index.ts";
-import { RunDeps, withDeps } from "./commands.ts";
+import { RunDeps, rootCommand, withDeps } from "./commands.ts";
 import { DriverError, ProfileLoadError } from "./errors.ts";
-import type { SUBCOMMANDS } from "./grammar.ts";
+import { SUBCOMMANDS } from "./grammar.ts";
 
 const testRoots: Array<string> = [];
 afterEach(() => {
@@ -152,6 +152,23 @@ describe("Effect CLI commands", () => {
 		{ name: "balance", args: undefined, command: { kind: "balance" } },
 		{ name: "space", args: "bsp", command: { kind: "space", layout: "bsp" } },
 	];
+	test("dispatch cases cover every grammar subcommand", () => {
+		expect(
+			dispatchCases
+				.map(({ name }) => name)
+				.sort()
+				.join("\n"),
+		).toBe(Object.keys(SUBCOMMANDS).sort().join("\n"));
+	});
+
+	test("root command registers every grammar subcommand and init", () => {
+		const names = rootCommand.subcommands.flatMap(({ commands }) =>
+			commands.map(({ name }) => name),
+		);
+		expect(names.sort().join("\n")).toBe(
+			[...Object.keys(SUBCOMMANDS), "init"].sort().join("\n"),
+		);
+	});
 
 	const makeObservedDriver = () => {
 		const calls: string[] = [];
@@ -274,6 +291,27 @@ describe("Effect CLI commands", () => {
 		}
 	});
 
+	test("malformed argv fails before calling the driver", async () => {
+		for (const argv of [
+			["bogus"],
+			["snap"],
+			["focus-slot"],
+			["snap", "3col", "extra"],
+			["focus", "west", "east"],
+			["focus-slot", "x"],
+		]) {
+			const { driver, calls } = makeObservedDriver();
+			const exit = await runWith(argv, driverWith(driver));
+			expect(Exit.isFailure(exit), argv.join(" ")).toBe(true);
+			if (Exit.isFailure(exit)) {
+				const error = Cause.squash(exit.cause);
+				expect(error).toBeInstanceOf(CliError.ShowHelp);
+				expect(Runtime.getErrorExitCode(error)).toBe(1);
+			}
+			expect(calls, argv.join(" ")).toEqual([]);
+		}
+	});
+
 	test("missing and throwing handlers use typed one-line error wrappers", async () => {
 		const missing = Layer.succeed(RunDeps, {
 			driver: new FakeDriver(),
@@ -325,12 +363,33 @@ describe("Effect CLI commands", () => {
 		expect(process.exitCode).toBe(1);
 	});
 
-	test("init accepts --self and creates a registered command", async () => {
-		const driver = new FakeDriver();
+	test("init passes --self to registered signal actions through the CLI", async () => {
+		const registered: Array<{ event: string; command: string[] }> = [];
+		const driver = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 5120, h: 1440 } }],
+			spaces: [{ displayIdx: 1 }],
+		});
+		Object.defineProperty(driver, "events", {
+			value: {
+				register: async (event: string, command: string[]) => {
+					registered.push({ event, command });
+				},
+			},
+		});
 		const exit = await runWith(
-			["init", "--self", "/usr/local/bin/tess"],
+			["init", "--self", "/tmp/x/tess"],
 			driverWith(driver),
 		);
 		expect(Exit.isSuccess(exit)).toBe(true);
+		expect(registered.length).toBeGreaterThan(0);
+		const signalCommands = registered
+			.filter(
+				({ command }) =>
+					command[1] === "display-event" || command[1] === "flex-event",
+			)
+			.map(({ command }) => command);
+		expect(signalCommands.length).toBeGreaterThan(0);
+		for (const command of signalCommands)
+			expect(command[0]).toBe("/tmp/x/tess");
 	});
 });
