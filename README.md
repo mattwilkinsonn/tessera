@@ -44,7 +44,15 @@ tess move-display N   move the focused window to a display
 tess space LAYOUT     apply a named space layout
 ```
 
-Run `tess` with no arguments for the full subcommand list.
+Run `tess --help` (or `tess -h`) for the generated subcommand help. Run
+`tess --version` (or `tess -v`) for the version. Bare `tess` also prints the
+help.
+
+### Exit codes
+
+- `0` — success, help/version output, or bare `tess` displaying help.
+- `1` — invalid command or arguments (with help and an error), profile or
+  driver error, or a contended `laptop` command.
 
 ## Architecture
 
@@ -94,9 +102,8 @@ broken profile surfaces its error rather than being silently ignored.
 
 ## Development
 
-Tessera is a single zero-dependency Bun project. The toolchain is Bun for the
-runtime, test runner, and bundler; [Biome](https://biomejs.dev/) for lint and
-format; `tsc` for type checking.
+Tessera uses Bun for the runtime, test runner, and bundler; [Biome](https://biomejs.dev/)
+for lint and format; `tsc` for type checking.
 
 ```sh
 bun install
@@ -105,6 +112,9 @@ bun run check       # biome check src/
 bun test            # the full suite
 bun run build       # compile the tess binary
 ```
+
+After changing dependencies, regenerate the Nix dependency manifest with
+`bun2nix -l bun.lock -o nix/bun.nix`.
 
 A [devenv](https://devenv.sh/) shell (`devenv.nix`) provides Bun and the
 linters; with [direnv](https://direnv.net/) installed, `direnv allow` loads it

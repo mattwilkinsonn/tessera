@@ -2,186 +2,140 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SUBCOMMANDS } from "./cli/grammar.ts";
 import { profile } from "./config/profile.fixture.ts";
 import { FakeDriver } from "./driver/fake.ts";
 import type { WmDriver, WmEvent } from "./driver/types.ts";
-import { type Command, parseArgs, run } from "./index.ts";
+import { type Command, fastMatch, run } from "./index.ts";
 
-// ─── parseArgs — the pure arg grammar ────────────────────────────────────────
-
-describe("parseArgs — no-arg subcommands", () => {
-	test.each([
-		"apply",
-		"laptop",
-		"display-event",
-		"flex-event",
-		"rules",
-		"display-setup",
-		"reset-splits",
-		"columns",
-		"toggle-float",
-		"balance",
-	])("%s parses with no argument", (sub) => {
-		const r = parseArgs([sub]);
-		expect(r.ok).toBe(true);
-		expect(r.ok && r.command.kind).toBe(sub);
-	});
+const fastPathCases = Object.entries(SUBCOMMANDS).flatMap(([name, spec]) => {
+	if (!spec.fastPath) return [];
+	const values = spec.choices ?? [spec.int ? "1" : undefined];
+	return values.map((value) => ({
+		argv: value === undefined ? [name] : [name, value],
+		expected: expectedFastCommand(name, value),
+	}));
 });
 
-describe("parseArgs — unknown / empty", () => {
-	test("empty argv → not ok, no message (bare usage)", () => {
-		const r = parseArgs([]);
-		expect(r.ok).toBe(false);
-		expect(r.ok === false && r.msg).toBeUndefined();
-	});
+function expectedFastCommand(name: string, value: string | undefined): Command {
+	switch (name) {
+		case "focus-slot":
+			return { kind: name, n: Number(value) };
+		case "snap":
+			return {
+				kind: name,
+				mode: value as Extract<Command, { kind: "snap" }>["mode"],
+			};
+		case "stack-cycle":
+		case "cycle-display":
+			return { kind: name, dir: value as "next" | "prev" };
+		case "resize":
+			return { kind: name, dir: value as "grow" | "shrink" };
+		case "move-display":
+			return { kind: name, name: value as "g9" | "aw" | "laptop" };
+		case "reset-splits":
+		case "columns":
+		case "toggle-float":
+		case "balance":
+			return { kind: name };
+		case "focus":
+		case "swap":
+		case "warp":
+			return { kind: name, dir: value as "west" | "south" | "north" | "east" };
+		case "insert":
+			return {
+				kind: name,
+				dir: value as "east" | "west" | "north" | "south" | "stack",
+			};
+		case "space":
+			return { kind: name, layout: value as "bsp" | "stack" };
+		default:
+			throw new Error(`Unexpected fastPath subcommand: ${name}`);
+	}
+}
 
-	test("unknown subcommand → not ok, no message", () => {
-		const r = parseArgs(["frobnicate"]);
-		expect(r.ok).toBe(false);
-		expect(r.ok === false && r.msg).toBeUndefined();
-	});
+let fastPathRoot = "";
+afterEach(() => {
+	if (fastPathRoot !== "") {
+		rmSync(fastPathRoot, { recursive: true, force: true });
+		fastPathRoot = "";
+	}
 });
 
-describe("parseArgs — enum-arg subcommands", () => {
-	test("snap accepts each mode", () => {
-		expect(parseArgs(["snap", "3col"])).toEqual({
-			ok: true,
-			command: { kind: "snap", mode: "3col" },
+describe("fastMatch", () => {
+	const deferredArgv: ReadonlyArray<ReadonlyArray<string>> = [
+		[],
+		["--help"],
+		["snap", "--help"],
+		["snap", "bogus"],
+		["snap"],
+		["snap", "3col", "extra"],
+		["apply"],
+		["laptop"],
+		["init", "--self", "x"],
+		["focus-slot", "x"],
+		["focus-slot", "-1"],
+		["focus-slot", "0x10"],
+	];
+
+	test("matches every fastPath command choice", () => {
+		for (const { argv, expected } of fastPathCases)
+			expect(fastMatch(argv)).toEqual(expected);
+	});
+
+	test("dispatches every fastPath command through the FakeDriver", async () => {
+		fastPathRoot = mkdtempSync(join(tmpdir(), "tess-fast-dispatch-"));
+		const driver = new FakeDriver({
+			displays: [{ idx: 1, frame: { x: 0, y: 0, w: 5120, h: 1440 } }],
+			spaces: [{ displayIdx: 1 }],
+			windows: [
+				{ id: 42, app: "Ghostty", title: "pc", spaceIndex: 1 },
+				{ id: 7, app: "Arc", title: "x", spaceIndex: 1 },
+			],
 		});
-		expect(parseArgs(["snap", "50-50"])).toEqual({
-			ok: true,
-			command: { kind: "snap", mode: "50-50" },
-		});
-		expect(parseArgs(["snap", "columns"])).toEqual({
-			ok: true,
-			command: { kind: "snap", mode: "columns" },
-		});
+		await driver.focusWindow(7);
+		const tmpOpts = {
+			applyLock: join(fastPathRoot, "apply.lock"),
+			laptopLock: join(fastPathRoot, "laptop.lock"),
+			guardPath: join(fastPathRoot, "guard"),
+			flexPath: join(fastPathRoot, "flex"),
+			displayStamp: join(fastPathRoot, "display.stamp"),
+			flexStamp: join(fastPathRoot, "flex.stamp"),
+			displayWaiter: { waiterLock: join(fastPathRoot, "display.waiter") },
+			flexWaiter: { waiterLock: join(fastPathRoot, "flex.waiter") },
+		};
+		for (const { argv } of fastPathCases) {
+			const command = fastMatch(argv);
+			expect(command).not.toBeNull();
+			if (command === null) throw new Error(`Expected fast match for ${argv}`);
+			const code = await run(profile, command, driver, tmpOpts);
+			expect(code).toBe(0);
+			if (command.kind === "focus-slot")
+				expect((await driver.queryFocusedWindow())?.id).toBe(42);
+			if (command.kind === "toggle-float")
+				expect((await driver.queryFocusedWindow())?.floating).toBe(true);
+			if (command.kind === "space")
+				expect((await driver.queryFocusedSpace())?.layout).toBe(command.layout);
+		}
 	});
 
-	test("snap with a bad mode → not ok, names the choices", () => {
-		const r = parseArgs(["snap", "quad"]);
-		expect(r.ok).toBe(false);
-		expect(r.ok === false && r.msg).toContain("3col|50-50|columns");
+	test("falls back to the Effect CLI for subcommand help", () => {
+		const root = mkdtempSync(join(tmpdir(), "tess-fast-help-"));
+		try {
+			const shim = join(root, "yabai");
+			writeFileSync(shim, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+			const result = Bun.spawnSync(["bun", "src/index.ts", "snap", "--help"], {
+				env: { PATH: process.env.PATH, HOME: root, TESS_YABAI: shim },
+			});
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout.toString()).toContain("tess snap");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
-	test("snap with no mode → not ok", () => {
-		expect(parseArgs(["snap"]).ok).toBe(false);
-	});
-
-	test("stack-cycle / cycle-display take next|prev", () => {
-		expect(parseArgs(["stack-cycle", "next"])).toEqual({
-			ok: true,
-			command: { kind: "stack-cycle", dir: "next" },
-		});
-		expect(parseArgs(["cycle-display", "prev"])).toEqual({
-			ok: true,
-			command: { kind: "cycle-display", dir: "prev" },
-		});
-		expect(parseArgs(["stack-cycle", "sideways"]).ok).toBe(false);
-	});
-
-	test("resize takes grow|shrink", () => {
-		expect(parseArgs(["resize", "grow"])).toEqual({
-			ok: true,
-			command: { kind: "resize", dir: "grow" },
-		});
-		expect(parseArgs(["resize", "bigger"]).ok).toBe(false);
-	});
-
-	test("move-display takes a display name", () => {
-		expect(parseArgs(["move-display", "g9"])).toEqual({
-			ok: true,
-			command: { kind: "move-display", name: "g9" },
-		});
-		expect(parseArgs(["move-display", "tv"]).ok).toBe(false);
-	});
-
-	test("focus / swap / warp take a direction", () => {
-		expect(parseArgs(["focus", "west"])).toEqual({
-			ok: true,
-			command: { kind: "focus", dir: "west" },
-		});
-		expect(parseArgs(["swap", "east"])).toEqual({
-			ok: true,
-			command: { kind: "swap", dir: "east" },
-		});
-		expect(parseArgs(["warp", "north"])).toEqual({
-			ok: true,
-			command: { kind: "warp", dir: "north" },
-		});
-		expect(parseArgs(["focus", "up"]).ok).toBe(false);
-	});
-
-	test("insert takes a direction incl. stack", () => {
-		expect(parseArgs(["insert", "stack"])).toEqual({
-			ok: true,
-			command: { kind: "insert", dir: "stack" },
-		});
-		expect(parseArgs(["insert", "east"])).toEqual({
-			ok: true,
-			command: { kind: "insert", dir: "east" },
-		});
-		expect(parseArgs(["insert", "sideways"]).ok).toBe(false);
-	});
-
-	test("space takes bsp|stack", () => {
-		expect(parseArgs(["space", "bsp"])).toEqual({
-			ok: true,
-			command: { kind: "space", layout: "bsp" },
-		});
-		expect(parseArgs(["space", "float"]).ok).toBe(false);
-	});
-});
-
-describe("parseArgs — init --self", () => {
-	test("init --self <path> carries the path", () => {
-		expect(parseArgs(["init", "--self", "/etc/profiles/x/bin/tess"])).toEqual({
-			ok: true,
-			command: { kind: "init", self: "/etc/profiles/x/bin/tess" },
-		});
-	});
-
-	test("init without --self → not ok, names the flag", () => {
-		const r = parseArgs(["init"]);
-		expect(r.ok).toBe(false);
-		expect(r.ok === false && r.msg).toContain("--self");
-	});
-
-	test("init --self with no path → not ok", () => {
-		const r = parseArgs(["init", "--self"]);
-		expect(r.ok).toBe(false);
-		expect(r.ok === false && r.msg).toContain("--self");
-	});
-
-	test("init --self with an empty path → not ok", () => {
-		const r = parseArgs(["init", "--self", ""]);
-		expect(r.ok).toBe(false);
-		expect(r.ok === false && r.msg).toContain("--self");
-	});
-
-	test("init --self with a flag-like value → not ok (dropped-arg guard)", () => {
-		const r = parseArgs(["init", "--self", "--apply"]);
-		expect(r.ok).toBe(false);
-		expect(r.ok === false && r.msg).toContain("--self");
-	});
-});
-
-describe("parseArgs — focus-slot number", () => {
-	test("a slot integer parses", () => {
-		expect(parseArgs(["focus-slot", "5"])).toEqual({
-			ok: true,
-			command: { kind: "focus-slot", n: 5 },
-		});
-	});
-
-	test("no slot → not ok", () => {
-		expect(parseArgs(["focus-slot"]).ok).toBe(false);
-	});
-
-	test("a non-integer slot → not ok", () => {
-		const r = parseArgs(["focus-slot", "two"]);
-		expect(r.ok).toBe(false);
-		expect(r.ok === false && r.msg).toContain("not an integer");
+	test("defers malformed and non-fast argv to the Effect CLI", () => {
+		for (const argv of deferredArgv) expect(fastMatch(argv)).toBeNull();
 	});
 });
 
@@ -366,10 +320,7 @@ describe("run — exhaustiveness", () => {
 // ─── run → init: the --self path reaches the registered signal action ────────
 // The crux of the /$bunfs bugfix: whatever path the caller passes as
 // `--self` is what init() registers with each yabai signal, so events
-// re-invoke tess by a real, usable path. parseArgs carrying the token into
-// command.self is covered above; this closes the OTHER half — that run's init
-// arm threads command.self through to the registered action (both are
-// `string`, so tsc alone cannot catch a regression that drops it).
+// re-invoke tess by a real, usable path. This verifies run() threads command.self through to each registered action.
 
 /** Records signal registrations so the router's init wiring is observable. */
 class EventRecorder implements NonNullable<WmDriver["events"]> {

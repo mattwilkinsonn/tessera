@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, inputs, ... }:
 
 # Tessera dev shell — the single source of the dev + CI toolchain for this
 # single-tool repo. Deliberately minimal: Tessera is one zero-dependency
@@ -8,6 +8,7 @@
 
 {
   packages = with pkgs; [
+    bun2nix
     # VCS — jj (Matt's review tool) works colocated with git here.
     jujutsu
 

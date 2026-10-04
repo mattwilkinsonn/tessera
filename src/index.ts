@@ -6,15 +6,11 @@
 // raw-yabai keybinds, Q6). All planning lives in `engine/`, all effects in
 // `effects/`, all yabai contact in `driver/`; nothing here reaches past those seams.
 //
-// `parseArgs` is pure (the house pattern: a discriminated `ok` result, no I/O,
-// no process exit) so the arg grammar is
-// unit-tested without spawning. `run` wires the real `YabaiDriver` + `profile`
-// and maps the parsed command to its effect. Exit codes: `tess laptop` /
-// `tess flex-event` exit nonzero ONLY on live-lock contention — the bash callers
-// re-loop on that; everything
-// else exits 0.
+// The Effect CLI owns argv parsing and generated help; run dispatches typed commands.
 
 import { homedir } from "node:os";
+import { formatDriverError, liveDriver } from "./cli/driver.ts";
+import { commandFor, isIntToken, SUBCOMMANDS } from "./cli/grammar.ts";
 import {
 	apply,
 	type CycleDir,
@@ -43,7 +39,6 @@ import { profile as defaultProfile } from "./config/profile.ts";
 import type { DisplayName, Profile } from "./config/types.ts";
 import { validateProfile } from "./config/validate.ts";
 import type { DirSel, WmDriver } from "./driver/types.ts";
-import { YabaiDriver } from "./driver/yabai.ts";
 import { DISPLAY_STAMP, FLEX_STAMP } from "./effects/constants.ts";
 import {
 	recordEvent,
@@ -81,202 +76,39 @@ export type Command =
 	| { kind: "balance" }
 	| { kind: "space"; layout: SpaceLayout };
 
-export type ParseResult =
-	| { ok: true; command: Command }
-	| { ok: false; msg?: string };
-
-const CYCLE_DIRS: Readonly<Record<string, CycleDir>> = {
-	next: "next",
-	prev: "prev",
-};
-const RESIZE_DIRS: Readonly<Record<string, ResizeDir>> = {
-	grow: "grow",
-	shrink: "shrink",
-};
-const SNAP_MODES: Readonly<Record<string, SnapMode>> = {
-	"3col": "3col",
-	"50-50": "50-50",
-	columns: "columns",
-};
-const DISPLAY_NAMES: Readonly<Record<string, DisplayName>> = {
-	g9: "g9",
-	aw: "aw",
-	laptop: "laptop",
-};
-const DIR_SELS: Readonly<Record<string, DirSel>> = {
-	west: "west",
-	south: "south",
-	north: "north",
-	east: "east",
-};
-const INSERT_DIRS: Readonly<Record<string, InsertDir>> = {
-	east: "east",
-	west: "west",
-	north: "north",
-	south: "south",
-	stack: "stack",
-};
-const SPACE_LAYOUTS: Readonly<Record<string, SpaceLayout>> = {
-	bsp: "bsp",
-	stack: "stack",
-};
-
-/**
- * Pure arg parse: `argv` is `process.argv.slice(2)`. Returns the closed
- * {@link Command} union or a not-ok result with an optional usage message. No
- * I/O, no exit — the entry guard maps the result to a process exit.
- */
-export function parseArgs(argv: string[]): ParseResult {
-	const sub = argv[0] ?? "";
-	const arg = argv[1];
-	switch (sub) {
-		case "apply":
-			return { ok: true, command: { kind: "apply" } };
-		case "laptop":
-			return { ok: true, command: { kind: "laptop" } };
-		case "display-event":
-			return { ok: true, command: { kind: "display-event" } };
-		case "flex-event":
-			return { ok: true, command: { kind: "flex-event" } };
-		case "rules":
-			return { ok: true, command: { kind: "rules" } };
-		case "display-setup":
-			return { ok: true, command: { kind: "display-setup" } };
-		case "init": {
-			// `init` registers the tess binary's own path with each yabai signal,
-			// so the caller MUST pass it explicitly via `--self <path>`. There is no
-			// runtime self-detection: a compiled Bun binary's process.argv[1] is the
-			// internal /$bunfs/root/tess entrypoint, unusable as a real path. yabairc
-			// already invokes tess by an absolute, PATH-independent path — it passes
-			// that same path through here.
-			if (arg !== "--self") {
-				return { ok: false, msg: "init requires --self <path>" };
-			}
-			// A path is required; reject a `-`-prefixed value too — that is a
-			// dropped-argument mistake (`--self --apply`), not a real path, and
-			// registering it would resurrect the broken-action failure this guards.
-			const self = argv[2];
-			if (self == null || self === "" || self.startsWith("-")) {
-				return { ok: false, msg: "init --self needs a path" };
-			}
-			return { ok: true, command: { kind: "init", self } };
-		}
-		case "reset-splits":
-			return { ok: true, command: { kind: "reset-splits" } };
-		case "columns":
-			return { ok: true, command: { kind: "columns" } };
-		case "toggle-float":
-			return { ok: true, command: { kind: "toggle-float" } };
-		case "balance":
-			return { ok: true, command: { kind: "balance" } };
-		case "focus-slot": {
-			if (arg == null) {
-				return { ok: false, msg: "focus-slot needs a slot number (1-9)" };
-			}
-			const n = Number(arg);
-			if (!Number.isInteger(n)) {
-				return { ok: false, msg: `focus-slot: not an integer: ${arg}` };
-			}
-			return { ok: true, command: { kind: "focus-slot", n } };
-		}
-		case "snap": {
-			const mode = arg == null ? undefined : SNAP_MODES[arg];
-			if (mode == null) {
-				return { ok: false, msg: "snap needs a mode (3col|50-50|columns)" };
-			}
-			return { ok: true, command: { kind: "snap", mode } };
-		}
-		case "stack-cycle": {
-			const dir = arg == null ? undefined : CYCLE_DIRS[arg];
-			if (dir == null) {
-				return { ok: false, msg: "stack-cycle needs a direction (next|prev)" };
-			}
-			return { ok: true, command: { kind: "stack-cycle", dir } };
-		}
-		case "resize": {
-			const dir = arg == null ? undefined : RESIZE_DIRS[arg];
-			if (dir == null) {
-				return { ok: false, msg: "resize needs a direction (grow|shrink)" };
-			}
-			return { ok: true, command: { kind: "resize", dir } };
-		}
-		case "move-display": {
-			const name = arg == null ? undefined : DISPLAY_NAMES[arg];
-			if (name == null) {
-				return {
-					ok: false,
-					msg: "move-display needs a display (g9|aw|laptop)",
-				};
-			}
-			return { ok: true, command: { kind: "move-display", name } };
-		}
-		case "cycle-display": {
-			const dir = arg == null ? undefined : CYCLE_DIRS[arg];
-			if (dir == null) {
-				return {
-					ok: false,
-					msg: "cycle-display needs a direction (next|prev)",
-				};
-			}
-			return { ok: true, command: { kind: "cycle-display", dir } };
-		}
-		case "focus": {
-			const dir = arg == null ? undefined : DIR_SELS[arg];
-			if (dir == null) {
-				return {
-					ok: false,
-					msg: "focus needs a direction (west|south|north|east)",
-				};
-			}
-			return { ok: true, command: { kind: "focus", dir } };
-		}
-		case "swap": {
-			const dir = arg == null ? undefined : DIR_SELS[arg];
-			if (dir == null) {
-				return {
-					ok: false,
-					msg: "swap needs a direction (west|south|north|east)",
-				};
-			}
-			return { ok: true, command: { kind: "swap", dir } };
-		}
-		case "warp": {
-			const dir = arg == null ? undefined : DIR_SELS[arg];
-			if (dir == null) {
-				return {
-					ok: false,
-					msg: "warp needs a direction (west|south|north|east)",
-				};
-			}
-			return { ok: true, command: { kind: "warp", dir } };
-		}
-		case "insert": {
-			const dir = arg == null ? undefined : INSERT_DIRS[arg];
-			if (dir == null) {
-				return {
-					ok: false,
-					msg: "insert needs a direction (east|west|north|south|stack)",
-				};
-			}
-			return { ok: true, command: { kind: "insert", dir } };
-		}
-		case "space": {
-			const layout = arg == null ? undefined : SPACE_LAYOUTS[arg];
-			if (layout == null) {
-				return { ok: false, msg: "space needs a layout (bsp|stack)" };
-			}
-			return { ok: true, command: { kind: "space", layout } };
-		}
-		default:
-			return { ok: false };
-	}
+/** Settle a keybind argv without the Effect graph; null defers to the CLI. Pure. */
+export function fastMatch(argv: ReadonlyArray<string>): Command | null {
+	if (argv.length === 0 || argv.some((token) => token.startsWith("-")))
+		return null;
+	const [name, value] = argv;
+	if (name === undefined || !Object.hasOwn(SUBCOMMANDS, name)) return null;
+	const spec = SUBCOMMANDS[name as keyof typeof SUBCOMMANDS];
+	if (!spec.fastPath) return null;
+	const hasArgument = spec.choices !== null || spec.int;
+	if (argv.length !== 1 + Number(hasArgument)) return null;
+	if (
+		spec.choices !== null &&
+		!(spec.choices as ReadonlyArray<string>).includes(value ?? "")
+	)
+		return null;
+	if (spec.int && (value === undefined || !isIntToken(value))) return null;
+	if (name === "focus-slot") return commandFor(name, Number(value));
+	if (name === "snap") return commandFor(name, value ?? "");
+	if (name === "stack-cycle") return commandFor(name, value ?? "");
+	if (name === "resize") return commandFor(name, value ?? "");
+	if (name === "move-display") return commandFor(name, value ?? "");
+	if (name === "cycle-display") return commandFor(name, value ?? "");
+	if (name === "reset-splits") return commandFor(name);
+	if (name === "columns") return commandFor(name);
+	if (name === "focus") return commandFor(name, value ?? "");
+	if (name === "swap") return commandFor(name, value ?? "");
+	if (name === "warp") return commandFor(name, value ?? "");
+	if (name === "insert") return commandFor(name, value ?? "");
+	if (name === "toggle-float") return commandFor(name);
+	if (name === "balance") return commandFor(name);
+	if (name === "space") return commandFor(name, value ?? "");
+	return null;
 }
-
-const USAGE =
-	"usage: tess <apply|laptop|display-event|flex-event|rules|display-setup|" +
-	"init --self PATH|focus-slot N|snap MODE|stack-cycle DIR|resize DIR|" +
-	"move-display NAME|cycle-display DIR|reset-splits|columns|focus DIR|" +
-	"swap DIR|warp DIR|insert DIR|toggle-float|balance|space LAYOUT>";
 
 /**
  * Injectable effect surfaces for the commands that touch locks / stamps /
@@ -476,11 +308,19 @@ async function importProfile(path: string): Promise<Profile> {
 }
 
 if (import.meta.main) {
-	const parsed = parseArgs(process.argv.slice(2));
-	if (!parsed.ok) {
-		process.stderr.write(`${parsed.msg ?? USAGE}\n`);
-		process.exit(2);
+	const argv = process.argv.slice(2);
+	const fast = fastMatch(argv);
+	if (fast) {
+		try {
+			const profile = await loadProfile();
+			process.exit(await run(profile, fast, liveDriver()));
+		} catch (cause) {
+			process.stderr.write(`${formatDriverError(cause)}\n`);
+			process.exit(1);
+		}
 	}
-	const profile = await loadProfile();
-	process.exit(await run(profile, parsed.command, new YabaiDriver()));
+	// Effect CLI owns help, version, malformed input and non-fast commands (effect4-cli.md § T3).
+	// Dynamic import keeps the Effect graph off keybind startup.
+	const { main } = await import("./cli/main.ts");
+	main();
 }
