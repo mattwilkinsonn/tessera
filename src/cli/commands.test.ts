@@ -381,14 +381,13 @@ describe("Effect CLI commands", () => {
 			driverWith(driver),
 		);
 		expect(Exit.isSuccess(exit)).toBe(true);
-		expect(registered.length).toBeGreaterThan(0);
 		const signalCommands = registered
 			.filter(
 				({ command }) =>
 					command[1] === "display-event" || command[1] === "flex-event",
 			)
 			.map(({ command }) => command);
-		expect(signalCommands.length).toBeGreaterThan(0);
+		expect(signalCommands).toHaveLength(7);
 		for (const command of signalCommands)
 			expect(command[0]).toBe("/tmp/x/tess");
 	});
