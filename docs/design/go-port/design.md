@@ -134,14 +134,24 @@ The profile is YAML, and the Go loader is its only validator (Open Question
   sees `$TESSERA_PROFILE`. Without this guard it would silently fall back to
   the placeholder default.
 - **Decoding.** `go.yaml.in/yaml/v3` decodes with `KnownFields(true)`. A
-  missing field decodes to its zero value, so `config.Validate` also
-  requires the six required `Profile` fields and all three display slots,
-  which replaces `satisfies Profile`. The `validateProfile` rules then run
-  unchanged. Consumers check a profile by running the real loader.
-- **Schema.** The schema exists for the editor only. It is generated from
-  the Go types with `invopop/jsonschema`, checked in, and installed at
-  `share/tessera/profile.schema.json`. A negative corpus must fail both the
-  loader and the schema.
+  missing field decodes to its zero value, so `config.Validate` checks
+  presence. The rule: every field that is required (has no `?`) in
+  `src/config/types.ts` must be present, at every depth. That means the six
+  top-level fields and all three display slots, plus `displays.*.width`,
+  `windows.*.app`, the desk layout fields (`display`, `label`, `kind`,
+  `tracks`), `deskSlots[*].name`, and topology `name`, `displays` and `desk`.
+  A nil required regexp is a load error, never a nil that reaches
+  `matchesSpec`. This replaces `satisfies Profile`. The `validateProfile`
+  rules then run unchanged. Consumers check a profile by running the real
+  loader.
+- **Schema.** The schema exists for the editor only. It is generated with
+  `invopop/jsonschema`, using `Reflector{FieldNameTag: "yaml"}`, so schema
+  keys and required-ness follow the yaml tags: a field without `omitempty`
+  is required. A `Reflector.Mapper` maps `*regexp.Regexp` to `{type:
+  string, format: regex}`. The schema is checked in and installed at
+  `share/tessera/profile.schema.json`. The bundled default and every
+  fixture profile must pass it, and the negative corpus must fail both it
+  and the loader.
 
 ### Parity proof
 
@@ -308,7 +318,11 @@ Interfaces:
 - Gate:
   - Ported tests are green.
   - Both YAML files decode to their `profile` goldens.
-  - The negative corpus fails both the loader and the schema.
+  - The bundled default and every fixture profile pass the generated
+    schema. The negative corpus fails both the loader and the schema.
+  - Loader regression cases fail with a named-field error, not a nil:
+    `windows: { arc: {} }` (missing `app`), and a desk layout missing each
+    of `display`, `label`, `kind` and `tracks`.
   - A well-known `profile.ts` with no `profile.yaml` fails loudly.
   - `go generate` leaves no diff.
 
