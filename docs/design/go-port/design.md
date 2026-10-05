@@ -147,8 +147,8 @@ The profile is YAML, and the Go loader is its only validator (Open Question
 - **Schema.** The schema exists for the editor only. It is generated with
   `invopop/jsonschema`, using `Reflector{FieldNameTag: "yaml"}`, so schema
   keys and required-ness follow the yaml tags: a field without `omitempty`
-  is required. A `Reflector.Mapper` maps `*regexp.Regexp` to `{type:
-  string, format: regex}`. The schema is checked in and installed at
+  is required. A `Reflector.Mapper` matches `regexp.Regexp` (the reflector
+  dereferences pointers first) and maps it to `{type: string, format: regex}`. The schema is checked in and installed at
   `share/tessera/profile.schema.json`. The bundled default and every
   fixture profile must pass it, and the negative corpus must fail both it
   and the loader.
