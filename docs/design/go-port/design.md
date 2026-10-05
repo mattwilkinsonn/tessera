@@ -1,559 +1,625 @@
-# Design — Port `tess` from Bun/TypeScript to Go
+# Design — Rewrite `tess` in Go, with the resident daemon
 
-*Design record for RIG-4487. Adds to the frozen records in `docs/design/` and
-supersedes `effect4-cli.md`. Only the language, the CLI front end, the profile
-format and the build change. The parity contract and the superseded text of
-each frozen record are in [`parity-contract.md`](parity-contract.md).*
+*Design record for RIG-4487, revised by Matt's rulings on RIG-4526. It
+supersedes `effect4-cli.md`, builds `resident-daemon.md` in Go, and replaces
+the TS profile with a typed CUE profile.*
 
 ## Problem / Intent
 
-Every skhd keybind spawns `tess`. A `bun build --compile` binary spends about
-19 ms starting the runtime before `main` runs (the base row in
-`effect4-cli.md` § "Startup-latency budget"). Matt chose to port `tess` to Go,
-so the keybind path becomes a static binary that starts in a few
-milliseconds. Rust is rejected, and Effect is dropped. This record says how
-to port with no change a caller can see.
+Every skhd keybind spawns `tess`, and a `bun build --compile` binary spends
+about 19 ms starting its runtime (the base row in `effect4-cli.md` §
+"Startup-latency budget"). Matt chose Go. This record rewrites `tess` as
+idiomatic Go and does not keep byte-level compatibility with the TS build.
+In the same change it moves event handling into the resident daemon from
+`resident-daemon.md`, and gives the profile a typed language.
 
 ## Approach
 
-**Re-realize, not port.** The TS source is the spec, not the template. Tests
-are transcribed exactly; the code is native Go. Constructs that exist only to
-mirror the TS shape are deleted: the two-front-end CLI (`fastMatch` plus the
-Effect tree), the per-waiter injection objects in `RunOpts`, and the
-`bun build --compile` packaging. The engine, effects, executor and driver keep
-their behaviour and their layering.
+**Re-realize, not port.** The TS source states the behaviour. The Go code
+is native, and the behaviour tests are ported case for case. Anything that
+exists only to mirror the TS shape is deleted: the two CLI front ends, the
+Effect error classes, `RunOpts` injection, and the file-stamp waiter
+protocol, which the daemon replaces.
 
 ### Module layout
 
 The module path is `github.com/mattwilkinsonn/tessera`. The layering law in
-`architecture.md` § "Global Constraints" becomes the import rules below:
+`architecture.md` § "Global Constraints" becomes these import rules:
 
 - `config`, `wm` and `effects` import no internal package.
 - `engine` imports `config` and `wm`.
 - `executor` imports `engine` and `wm`.
 - `commands` imports all of the above.
-- `cli` imports `commands`.
+- `daemon` imports `commands`, `effects` and `wm`.
+- `cli` imports `commands` and `daemon`.
 - Only `cmd/tess` imports `wm/yabai`.
 
 | TS source | Go package |
 | --- | --- |
-| `src/config/*.ts`; `loadProfile` in `src/index.ts` | `internal/config` (`default.yaml` embedded) |
+| `src/config/*.ts`, `loadProfile` | `internal/config` (embeds `schema.cue`, `default.cue`) |
 | `src/config/profile.fixture.ts` | `internal/config/configtest` |
 | `src/driver/types.ts`, `src/engine/world.ts` | `internal/wm` |
 | `src/driver/yabai.ts`, `src/driver/fake.ts` | `internal/wm/yabai`, `internal/wm/fake` |
-| `src/engine/*.ts` except `world.ts` (13 modules) | `internal/engine`, one file each |
+| `src/engine/*.ts` except `world.ts` | `internal/engine` |
 | `src/exec.ts` | `internal/executor` |
 | `src/effects/*.ts` | `internal/effects` |
-| `src/commands.ts`; `Command`, `RunOpts`, `run` in `src/index.ts` | `internal/commands` |
-| `src/cli/*.ts`; the entry guard in `src/index.ts` | `internal/cli`, `cmd/tess` |
+| `src/commands.ts`, `run` in `src/index.ts` | `internal/commands` |
+| new | `internal/daemon` |
+| `src/cli/*.ts`, the entry guard | `internal/cli`, `cmd/tess` |
 
-`internal/engine` stays one package. Its modules call each other freely, and
-splitting it would add import edges the TS tree does not have.
-
-Every TS union becomes a sealed interface. Each one is marked
-`//sumtype:decl`, has an unexported marker method, and is checked by
-`gochecksumtype`:
-
-- `engine.Op` covers the `PlanOp` variants (`src/engine/plan.ts`).
-- `engine.ConvergeAction` is nested inside `Op` (`interface{ Op;
-  convergeAction() }`) and covers the `ConvergeAction` variants
-  (`src/engine/laptop.ts`). The converger can therefore only emit converge
-  actions.
-- `commands.Command` has one typed struct for each of the 22 kinds in the TS
-  `Command` union (the 21 `SUBCOMMANDS` plus `init`). Its payload types
-  (`DirSel`, `CycleDir`, `InsertDir`, `ResizeDir`, `SnapMode`, `SpaceLayout`)
-  stay distinct.
+Every TS union becomes a sealed interface marked `//sumtype:decl` and
+checked by `gochecksumtype`. `engine.Op` covers the `PlanOp` variants.
+`engine.ConvergeAction` nests inside it (`interface{ Op; convergeAction() }`)
+so the converger can only emit converge actions. `commands.Command` has one
+struct per kind.
 
 ### Driver contract in Go
 
-`wm.Driver` matches `WmDriver` (`src/driver/types.ts`) method for method,
-with three changes:
+`wm.Driver` matches `WmDriver` (`src/driver/types.ts`) method for method:
 
-- **Context and errors.** Every method takes `ctx` first and returns an
-  error, so a `Promise<boolean>` becomes `(bool, error)`. A method fails in
-  exactly the cases where the TS method throws. The two focus queries keep
-  the `#jsonOrNull` rule: a nonzero exit or empty output means "none".
-- **Optional capabilities.** The optional `rules` and `events` capabilities
-  become the interfaces `wm.RuleOps` and `wm.EventSource`. Callers find them
-  by type assertion.
-- **Settle unit.** `settleMs` becomes `SettleUnit() time.Duration`.
+- **Context and errors.** Each method takes `ctx` first and returns an
+  error, so `Promise<boolean>` becomes `(bool, error)`.
+- **Capabilities.** The optional `rules` and `events` become `wm.RuleOps`
+  and `wm.EventSource`, found by type assertion.
+- **Settle.** `settleMs` becomes `SettleUnit() time.Duration`.
 
-`wm.Snapshot` runs its three queries under errgroup, as `Promise.all` does in
-`worldSnapshot`. The yabai runner is `exec.CommandContext`, so cancelling the
-root context stops a running yabai child.
+`wm.Snapshot` runs its three queries under errgroup. The yabai runner uses
+`exec.CommandContext`, so a cancelled context stops a running yabai child.
 
-### CLI front
+**Labelled signals.** `EventSource.AddSignal` takes a label and a shell
+action string. yabai already replaces a signal that has the same label:
+`event_signal_add` in yabai's `src/event_signal.c` runs
+`if (signal->label) event_signal_remove(signal->label);` before
+`buf_push`. One labelled add is therefore idempotent. The frozen record's
+remove-then-add step is not needed.
 
-`internal/cli` holds one table: `SUBCOMMANDS` from `src/cli/grammar.ts`
-without the `fastPath` field, plus `init`. One parser handles every argv;
-there is no fast path because there is no runtime graph to skip. The parser
-keeps today's grammar:
+### CLI
 
-- **Help and version.** `--help`/`-h` and `--version`/`-v` may appear
-  anywhere in argv. Help is scoped to the named subcommand.
-- **Positionals.** Each subcommand takes zero or one positional: a literal
-  from its choice list, or an `isIntToken` integer (`-1` is accepted).
-- **`init` flag.** `init` takes `--self PATH` or `--self=PATH`.
-- **Parse failure.** Any other argv prints help on stdout and `\nERROR\n
-  <message>` on stderr, then exits 1.
+The CLI uses only the standard library. It is a table-driven dispatcher,
+with one `flag.FlagSet` per subcommand. **Why no library:** after `--self`
+goes, the only flag left is `daemon --no-bootstrap`, and each subcommand
+takes at most one positional. cobra, urfave/cli and kong would buy no
+abstraction this table lacks, which the house "stdlib-first" rule forbids.
 
-The output bytes depend on Open Question 2. In every option, the CLI corpus
-covers these edge argv: `--help snap`, a repeated `--self`, `--`, `--foo`,
-`focus-slot -1`, and every parse failure in `src/cli/commands.test.ts`.
-
-### Parity contract
-
-[`parity-contract.md`](parity-contract.md) holds the full contract. Two
-items in it are new to the port:
-
-- **Signals.** SIGINT and SIGTERM release locks and exit 130, as under the
-  Effect `runMain` today. `cmd/tess` uses `signal.NotifyContext`, so
-  deferred releases run. Without this, a signalled `apply` would leave its
-  no-reclaim lock behind forever.
-- **JS formatting.** `toFixed` tie rounding is reproduced in `jsFixed` and
-  `jsString`, and the `parseInt` prefix rule is reproduced for stamp and PID
-  files.
-
-Everything else in it is unchanged: exit codes, stderr and argv text, the
-`/tmp` protocol, `init --self` and RE2 matching. Output order never depends
-on map iteration, and the display slots stay fixed on purpose.
+- **Kinds.** 21 in total:
+  - the 19 manual and keybind kinds of today's `SUBCOMMANDS` (all of them
+    except `display-event` and `flex-event`);
+  - `daemon`;
+  - `wake`.
+- **Help.** `tess --help` lists the table. `tess <cmd> --help` prints that
+  command's usage and choices. Both exit 0.
+- **Errors.** A parse failure prints `tess: <message>` and one usage line
+  on stderr. The program writes its output to an injected `io.Writer`.
+  Diagnostics go through `log/slog`.
 
 ### Profile format
 
-The profile is YAML, and the Go loader is its only validator (Open Question
-1).
+The profile is **CUE**, loaded in-process by `cuelang.org/go` v0.17.1. It
+gives the types Matt asked for: required fields, closed structs, enums, RE2
+regex validity from the engine Go matches with, and most cross-field rules.
+It needs no runtime binary and no cgo.
 
-- **Shape.** Fields keep their TS names. A `RegExp` becomes a pattern
-  string, `laptopStackApps` becomes a list, and a TS const that a track list
-  reuses becomes a YAML anchor.
-- **Resolution.** The order is the same as `loadProfile`'s; only the file
-  name changes, to `tessera/profile.yaml`.
-- **Switch-over guard.** If the well-known `profile.ts` exists and
-  `profile.yaml` does not, the load fails with `profile.ts is no longer
-  read; convert it to profile.yaml`. skhd is started by launchd and never
-  sees `$TESSERA_PROFILE`. Without this guard it would silently fall back to
-  the placeholder default.
-- **Decoding.** `go.yaml.in/yaml/v3` decodes with `KnownFields(true)`. A
-  missing field decodes to its zero value, so `config.Validate` checks
-  presence. The rule: every field that is required (has no `?`) in
-  `src/config/types.ts` must be present, at every depth. That means the six
-  top-level fields and all three display slots, plus `displays.*.width`,
-  `windows.*.app`, the desk layout fields (`display`, `label`, `kind`,
-  `tracks`), `deskSlots[*].name`, and topology `name`, `displays` and `desk`.
-  A nil required regexp is a load error, never a nil that reaches
-  `matchesSpec`. This replaces `satisfies Profile`. The `validateProfile`
-  rules then run unchanged. Consumers check a profile by running the real
-  loader.
-- **Schema.** The schema exists for the editor only. It is generated with
-  `invopop/jsonschema`, using `Reflector{FieldNameTag: "yaml"}`, so schema
-  keys and required-ness follow the yaml tags: a field without `omitempty`
-  is required. A `Reflector.Mapper` matches `regexp.Regexp` (the reflector
-  dereferences pointers first) and maps it to `{type: string, format: regex}`. The schema is checked in and installed at
-  `share/tessera/profile.schema.json`. The bundled default and every
-  fixture profile must pass it, and the negative corpus must fail both it
-  and the loader.
+**Schema.** `internal/config/schema.cue` is `package tessera`. It defines
+`#Profile` and embeds it at file level, so any `package tessera` file that is
+vetted beside it is checked as a profile. Its shape follows
+`src/config/types.ts`:
 
-### Parity proof
+- `displays!: {g9!, aw!, laptop!: #Display}`, where `#Display` is
+  `{width!: int & >0, weights?: #WeightDefaults}`.
+- `windows!: [string]: #WindowSpec`. A `#WindowSpec` is:
+  - `app!: #Pattern`
+  - `title?: #Pattern`
+  - `titleInvert?: bool`
+  - `spawn?: [string, ...string]`
 
-1. **Tests ported case for case.** Each of the 268 `test(` calls, plus the
-   loop-generated cases, becomes a Go test named after its TS title.
-2. **Goldens captured from the shipping TS.** `scripts/capture-goldens.ts`
-   writes each golden family in the slice that consumes it:
-   - `profile` (T2): the TS profiles as data.
-   - `trace` (T7): for each scenario, the driver calls, the final world, the
-     exit code and stderr. Arguments are recorded with `JSON.stringify`.
-     Mutators compare in order; runs of consecutive queries compare as
-     multisets.
-   - `cli` (T8): stdout, stderr and the exit code from the `nix build` TS
-     binary, for the argv corpus.
-   - `proc` (T8): the yabai argv each binary sends when `TESS_YABAI` points
-     at a recording stub serving `windows.live.json` queries. One case per
-     keybind subcommand and choice. This checks the real process boundary.
+  Here `#Pattern` is `string & regexp.Valid`.
+- `desk!: [...#DeskLayout]` and `topologies?: [...#Topology]`.
+- `weights?: #WeightDefaults`, plus `deskSlots!`, `laptopPinned!` and
+  `laptopStackApps!` (a list).
+- The cross-field rules move into the schema, in the form probed (below):
+  - `weights?: #Weights & list.MinItems(len(tracks)) & list.MaxItems(len(tracks))`;
+  - `if kind == "stack" { tracks!: [_]; weights?: _|_ }`;
+  - weight-table keys must match `^([2-9]|[1-9][0-9]+)$`, and the vector
+    length must equal the key;
+  - a topology's `desk` displays must be unique, and must equal its
+    `displays` set.
 
-   While `src/` exists, a CI step re-runs the capture and fails on any diff,
-   so no golden goes stale.
-3. **Reused fixtures.** `windows.live.json` and the argv tables in
-   `src/driver/yabai.test.ts` move over unchanged.
+**What stays in Go.** `config.Validate` keeps the one rule CUE expresses
+badly: chain ratios between 0.1 and 0.9, over every subsequence
+(`chainRatios`, `src/config/validate.ts`). It adds one typed-reference rule:
+every name in `tracks`, `deskSlots` and `laptopPinned` must be a key of
+`windows`. A typo there silently claims nothing today.
+
+**Loader.**
+
+```go
+func Load(ctx context.Context, env func(string) string, home string) (*Profile, error)
+```
+
+1. `Load` resolves `$TESSERA_PROFILE`, then
+   `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.cue`, then the embedded
+   `default.cue`. A missing well-known file falls through. A broken one is
+   an error. If `profile.ts` exists there and `profile.cue` does not, `Load`
+   fails loudly. skhd and the daemon run under launchd and never see
+   `$TESSERA_PROFILE`, so falling back silently would hide the problem.
+2. It compiles the user file with `cue.Scope(schema)`, so a file with or
+   without `package tessera` loads.
+3. It unifies the file with `#Profile` and calls `Validate(cue.Concrete(true))`.
+4. It decodes into Go types. `Decode` fills `*regexp.Regexp` and
+   `map[int][]float64` directly (probed).
+5. It runs `config.Validate`. Errors read `profile <path>:` followed by
+   `errors.Details`, which gives the CUE position.
+
+**Editor and consumer checks.** The schema installs at
+`share/tessera/schema.cue`. A user runs `cue vet -c profile.cue <schema>`;
+no `cue.mod` is needed (probed). `cue lsp` gives completion. JSON is valid
+CUE input, so a Nix-rendered profile also loads.
+
+**Evidence** is in [`profile-evidence.md`](profile-evidence.md): 12 of 12
+schema cases correct, the loader and `cue vet` outputs, and the start-time
+bench. CUE adds about 5.5 ms of package init (p50 8.79 ms against 2.65 ms
+for an empty `main`), still about twice as fast as the 18.8 ms Bun base.
+
+### Resident daemon
+
+This section builds `resident-daemon.md` (D-T1, D-T2, D-S1) in Go. Manual
+and skhd commands stay short-lived processes, and none of them goes through
+the daemon.
+
+**Transport.** `tess daemon` binds a unix socket at
+`os.TempDir()/tessera-daemon.sock`. A shell and a launchd agent see the
+same `$TMPDIR` (probed), and the path is under the 104-byte limit. Each
+placement event is registered with:
+
+```text
+label=tessera-<event> action=echo <event> | /usr/bin/nc -U -w 1 <abs socket path>
+```
+
+yabai runs the action as `/usr/bin/env sh -c <command>` (`event_signal.c`).
+The daemon writes the resolved absolute path into the action, so no
+environment variable is read at event time. No action holds a tess path.
+`init`, `display-event`, `flex-event` and `--self` are deleted. The
+sketchybar pair stays registered directly. yabairc's tessera line becomes
+`tess wake`.
+
+**Bind is the lock.** `daemon.Listen` binds the socket. On `EADDRINUSE` it
+dials the socket and sends `wake`:
+
+- If a daemon answers, `Listen` returns `ErrRunning`, and `tess daemon`
+  exits 0.
+- If the dial is refused, the file is stale. `Listen` unlinks it and binds
+  again.
+
+There is no pidfile. A clean shutdown unlinks the socket.
+
+**Protocol.** Each connection carries one line, `<event>\n` or `wake\n`.
+The daemon reads the line under a one-second deadline and closes the
+connection at once, because BSD `nc` stays open until the peer closes. It
+logs and drops any unknown line.
+
+**In-memory debounce.** `daemon.Hub` holds one stamp (`time.Time`) and one
+`running` flag per channel:
+
+- the display channel: `display_added`, `display_removed`, `display_moved`;
+- the flex channel: the four application and window events.
+
+`Notify` stamps the channel with the current time and starts its waiter if
+none is running. That flag replaces `DISPLAY_WAITER_LOCK` and
+`FLEX_WAITER_LOCK`.
+
+The waiter:
+
+1. Sleeps until the computed quiet deadline. There is no fixed 1 s poll.
+2. Re-checks `effects.IsQuiet` or `effects.IsFlexQuiet`. These are the H7
+   predicates, over `time.Time` and `time.Duration`; the 3 s display and 2 s
+   flex windows are kept.
+3. **Captures `actedOn` inside that check**, then runs its work.
+
+The waiter exits only when, under the hub mutex, the stamp still equals
+`actedOn`. It clears `running` under that same lock, so an event that
+arrives during the work always re-arms the channel.
+
+**H2 stays on disk.** The flex work reads the 8 s TTL guard
+(`effects.SignalsSuppressed`) at its `/tmp` path. A held guard, or a
+contended converge, returns `Restamp`, and the waiter writes "now" and waits
+again. The apply and laptop mkdir locks also stay on disk, because a manual
+`tess apply` is still a separate process. The display work is
+`commands.RunDisplayCascade`. sketchybar is nudged once, after the channel
+settles.
+
+**Wake.** The daemon runs the wake routine at startup and on each `wake`
+message:
+
+1. Register every signal with its label.
+2. Run the startup reclaim cascade (`displaySetup`, then `rules`, then
+   `laptop` or `apply`), which is today's `init` body without the signal
+   wiring.
+
+`tess wake` dials the socket, sends `wake`, and exits 0. If the daemon is
+down, it prints `tess: daemon not running` and exits 1. There is no
+fallback that runs the cascade in-process. The frozen record has none:
+launchd restarts the daemon, and its startup does the same work. Events
+fired while the daemon is down are dropped after `nc -w 1` (the frozen
+record's Open Question 1, accepted).
+
+**Wedge guard.** Each work call runs under
+`context.WithTimeout(ctx, CascadeTimeout)` (60 s), derived from the serve
+context. A deadline error ends `Serve` with that error, and `tess daemon`
+exits 1. `KeepAlive` then restarts it, so a hidden wedge becomes a crash
+that launchd can see.
+
+**launchd bootstrap (D-T2).** At startup the daemon brings up yabai and skhd
+under their upstream labels, `com.asmvik.yabai` and `com.asmvik.skhd`, from
+`~/Library/LaunchAgents/<label>.plist`. These are the labels that each
+tool's own `--install-service` uses (`src/misc/service.h` in yabai,
+`src/service.h` in skhd). The bring-up follows those tools' own logic:
+
+- run `launchctl print gui/<uid>/<label>`;
+- if the service is not loaded, run `launchctl bootstrap gui/<uid> <plist>`;
+- if it is already loaded, leave it alone.
+
+On SIGTERM the daemon runs `launchctl bootout` for both. `--no-bootstrap`
+skips both steps for the dev smoke. tess never runs `sudo`; the
+`--load-sa` line stays in yabairc.
+
+### Runtime contract
+
+This section holds only what callers depend on.
+
+- **Exit codes.** These are a contract for the CLI and scripts:
+  - 0: success, help, bare `tess`, and a daemon that is already running.
+  - 1: a parse failure, a profile error, a driver error, a contended
+    `laptop` (silent), `wake` with no daemon, or a daemon wedge or serve
+    error.
+  - 130: SIGINT or SIGTERM on a short-lived command, after its locks are
+    released. A clean daemon shutdown exits 0.
+
+  skhd and yabai never read these codes. skhd sets
+  `signal(SIGCHLD, SIG_IGN)` (`src/skhd.c`). yabai forks per action and
+  calls `exit(execvp(...))` in the child, with no wait (`event_signal.c`).
+- **Locks and SIGTERM.** `cmd/tess` builds the process root context with
+  `signal.NotifyContext(context.Background(), os.Interrupt,
+  syscall.SIGTERM)`. That is the one `Background()` call, at the top of
+  `main`. A Go process that has no handler skips its defers on SIGTERM
+  (probed), so the handler is required.
+
+  On cancellation:
+  - the yabai child stops;
+  - the deferred `Release` calls and the guard removal run;
+  - `cli.Main` returns 130.
+
+  Lock rules:
+  - `AcquireLockOrSkip` (apply) never reclaims, so a lock left behind
+    would block every later `apply`.
+  - `AcquireLock` (laptop) reclaims a stale PID and treats EPERM as alive.
+    A PID file that is missing or does not parse counts as stale.
+  - The lock and guard paths stay as in `src/effects/constants.ts`.
+- **yabai argv.** The argv each command sends is the contract with yabai.
+  It is pinned two ways:
+  - the argv tables ported from `src/driver/yabai.test.ts`;
+  - the stub-yabai corpus (§ Tests).
+
+  Ratios print with `strconv.FormatFloat(x, 'f', 4, 64)`. No argv or error
+  order depends on map iteration.
+
+### Tests
+
+- **Ported behaviour tests.** Each TS `test(` becomes a Go test named after
+  its TS title. The PR body carries a ledger mapping every TS title to a Go
+  test or a drop reason. A test may be dropped only for one of two
+  reasons:
+  - it tests deleted machinery: `fastMatch`, `RunDeps`, the Effect errors,
+    `init --self`, file event stamps, or waiter locks;
+  - it tests a TS type.
+- **Stub-yabai argv corpus.** `TESS_YABAI` points at a recording stub,
+  built in `TestMain` from `internal/wm/yabai/testdata/stubyabai`, which
+  serves `windows.live.json`. There is one case per keybind subcommand and
+  choice. Expected argv files live in `testdata/argv/` and are refreshed
+  with `go test -update`, then reviewed.
+- **Time.** No test calls `time.Sleep`. Every daemon and waiter test runs
+  inside `synctest.Test` and uses event gates (channels, `synctest.Wait`).
+  Socket I/O does not block durably inside a bubble, so `Serve` takes a
+  `net.Listener`. Bubble tests feed it `net.Pipe` connections. One test
+  outside the bubble binds a real socket under `os.MkdirTemp("/tmp", …)`, to
+  stay under the path limit, and covers `ErrRunning` and stale reclaim
+  through channel gates.
+- **launchctl** sits behind a `Launchctl` interface. Tests assert the argv.
 
 ### Build and the startup bar
 
-`packages.default` becomes `buildGoModule`; the builder sets `-trimpath`
-and `disallowedReferences = [ go ]`. The bun attrs, `bun2nix` and
-`checks.bun-lock` are removed. `installCheckPhase` adds two checks: `init`
-without `--self` exits 1, and a loader smoke exits 0. The startup bar is
-`effect4-cli.md` § "Startup-latency budget", unchanged. Its protocol moves
-to `scripts/benchstartup`, and the base is the TS build at T9's parent.
+`packages.default` becomes `buildGoModule` with `CGO_ENABLED=0`,
+`-trimpath` and `disallowedReferences = [ go ]`. The bun attrs, `bun2nix`
+and `checks.bun-lock` go. `installCheckPhase` checks four things:
+
+- a bogus subcommand exits 1;
+- `--help` exits 0;
+- a loader smoke exits 0;
+- the installed schema vets `default.cue`.
+
+The home-manager `profilePath` default becomes `.../tessera/profile.cue`,
+and the `TESSERA_PROFILE` absolute-path check follows it. The startup bar is
+`effect4-cli.md`'s, unchanged:
+
+- hot-path p50 at most 2.0× base;
+- hot-path p90 at most 45 ms;
+- help p50 at most 60 ms.
+
+`tools/benchstartup` runs it against the TS build at the PR's parent.
+`effect4-cli.md` notes that the daemon removes the cold start for signals
+but not for keybinds, so the bar still applies.
 
 ### Frozen records
 
-`effect4-cli.md` is superseded in full. In the other four records, this
-record supersedes the Runtime/tooling constraints, the Bun build text and
-the "config is a TS module" line. Everything else stands. The per-record
-list is in [`parity-contract.md`](parity-contract.md). The daemon is Open
-Question 4.
+No frozen record is edited. This record supersedes:
+
+| Record | Superseded | Still stands |
+| --- | --- | --- |
+| `effect4-cli.md` | All of it | Its startup bar |
+| `architecture.md` | Global Constraints "Runtime/tooling" and "Deploy"; Layer 1 "`profile.ts`, typed data"; Open Question 2 (now CUE); Open Question 3 (now the daemon); the Bun mechanics; § "Build + deploy"; T7 | Layers, layering law, D1, D2, driver contract, engine |
+| `grid-layouts.md` | "Runtime/tooling"; `bun test` cycles; the `profile.ts` name | Tracks, weights, chain formula, resolution order |
+| `laptop-flex-spaces.md` | "ports to TypeScript" | The converger model |
+| `resident-daemon.md` | "Runtime/tooling"; `Bun.listen`; the TS `Interfaces:` of its Plan; remove-then-add; the 1 s poll; "Bun exposes no `launch_activate_socket`"; "one PR per task slice" | D-T1, D-T2, D-S1; H2/H7; bind-as-lock; the wedge default; its downstream T5 |
 
 ### Migration
 
-Slices T1 to T9 form one linear stack. The flake switches once, in T9, which
-also deletes the TS tree. Open Question 3 decides how the stack lands.
+One PR, with its slices as commits (§ Plan). Every commit builds and passes
+its own tests, so the stack stays bisectable. The last commit switches the
+flake and deletes `src/`. After that PR merges, one atomic orion PR follows.
+It:
 
-After T9, one atomic orion PR bumps the input, converts the profile, and
-replaces the consumer typecheck with a loader check. To roll back, revert
-that PR, not just the pin.
+- bumps the input;
+- converts the profile to `profile.cue`;
+- points `profilePath` at it;
+- changes yabairc's `tess init --self …` to `tess wake`;
+- adds the `tess daemon` launchd agent and the yabai and skhd definitions;
+- retires brew services;
+- swaps the consumer typecheck for `cue vet` plus a loader smoke.
+
+To roll back, revert that PR.
 
 ## Alternatives considered
 
-One line per rejected option. The four open forks are under § Open
-Questions.
+One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 
-- **Profile (b): keep `profile.ts`, evaluated to JSON by bun at build time.**
-  Bun and the TS type package would stay in the consumer's build after the
-  TS tree is gone, and the runtime format would be JSON anyway.
-- **Profile (c): a Go profile compiled into the binary.** A private layout
-  must load at runtime and never enter the public build. A layout edit would
-  also need a rebuild.
-- **Profile as TOML.** `desk` and `topologies` are nested arrays of tables,
-  and TOML has no anchors.
-- **Profile as JSON only.** The bundled default is a teaching file, and JSON
-  has no comments. YAML loads JSON anyway.
-- **Ordered `displays` list instead of fixed slots.** It would change the
-  `move-display` choices, which is a behaviour change.
-- **stdlib `flag`.** It has no subcommands and stops at the first
-  non-flag. It also accepts `-self` and prints its own usage.
-- **cobra, urfave/cli, kong.** Each brings its own help layout, error
-  wording and exit codes. One positional and one flag across 22 kinds does
-  not earn a dependency.
-- **Keep a fast path.** The fast path existed only to skip Effect's import
-  graph. Go has no such graph.
-- **Flat `Command` struct.** One `Dir string` would carry four TS types.
-- **Ship Go beside TS and switch per subcommand.** This is a long-lived dual
-  implementation.
-- **One unsliced PR.** About 5,800 lines of TS and 268 tests would have no
-  per-slice review gate.
+- **Pkl.** pkl-go runs an external JVM `pkl` (355 MiB closure, ~861 ms per eval).
+- **KCL.** kcl-go needs a local `replace` and a native `libkcl` at runtime.
+- **Nickel.** go-nickel has no release and needs cgo.
+- **Dhall.** dhall-golang has not released since 2021-10-09.
+- **YAML plus JSON Schema.** The types sit outside the loader and can drift.
+- **Typed home-manager option.** It types Nix users only. A later
+  `builtins.toJSON` render needs no new code, because CUE loads JSON.
+- **cobra, urfave/cli, kong.** No abstraction over a 21-row table (§ CLI).
+- **launchd socket activation.** The only cgo-free binding is
+  `bored-engineer/go-launchd`, with 7 stars and a last push on 2024-12-20.
+  Bind-as-lock covers single-instance without it.
+- **Thin-client fallback in `wake`.** It runs the cascade in two places;
+  launchd's restart already covers that case.
+- **Routing keybinds through the daemon.** It couples every keybind to a
+  live daemon. `architecture.md` Q5 keeps skhd separate.
 
 ## Global Constraints
 
-Every task inherits these constraints.
-
-- **Toolchain.** `go.mod` declares `go 1.26`, the pinned nixpkgs Go (1.26.7).
-  The devenv shell uses that nixpkgs Go and its `golangci-lint` (2.13.2).
-  The CI `go` job also uses that Go and runs on `ubuntu-latest`.
-- **Dependencies.** The allow-list is:
-  - runtime: `go.yaml.in/yaml/v3` v3.0.5, `golang.org/x/sync`,
-    `github.com/samber/oops`, and `github.com/samber/mo` (`Option` only);
-  - generator: `github.com/invopop/jsonschema` v0.14.0;
-  - tests only: `github.com/santhosh-tekuri/jsonschema/v6` v6.0.3 and
-    `github.com/google/go-cmp` v0.7.0.
-
-  Anything else needs the reviewer's sign-off.
-- **House Go slate.** Matt's Go idioms record ("re-realize, not port") and
-  its five write-time rules apply as written. Lint is golangci-lint with
-  `default: all` and a reasoned disable-list, and `exhaustive` and
-  `gochecksumtype` are on.
-- **Time is injected.** `effects.Clock` replaces `WaiterDeps` and the
-  `Sleep` parameters. Tests use a fake clock or `testing/synctest`.
-- **Parity contract binds the port.** Every item in `parity-contract.md` is
-  a constant or a golden, and stays fixed from T1 to T9. After T9 the goldens
-  are ordinary regression tests: a deliberate change edits its golden in its
-  own PR.
-- **Ported-test ledger.** Each PR body maps every TS test title in its scope
-  to the Go test that ports it. Only two kinds of TS test may be dropped:
-  - tests of deleted machinery (`fastMatch`, `RunDeps`, the Effect error
-    classes);
-  - tests of a TS type ("app matcher is a RegExp").
-
-  The ledger names each dropped test and the reason.
-- **Tessera is public.** Code, comments, fixtures and records name no
-  private-repo path and hold no private layout data.
+- **Toolchain.** `go.mod` declares `go 1.26` (nixpkgs Go 1.26.7). devenv
+  supplies that Go and `golangci-lint` 2.13.2. CI runs on `ubuntu-latest`.
+  `nix build` runs on `macos-latest`.
+- **Dependencies.** Runtime: `cuelang.org/go` v0.17.1, `golang.org/x/sync`,
+  `github.com/samber/oops`, and `github.com/samber/mo` (`Option` only).
+  Tests: `github.com/google/go-cmp` v0.7.0. Anything else needs reviewer
+  sign-off.
+- **House slate.** The Go idioms record applies as written:
+  - golangci-lint `default: all`, with `exhaustive` and `gochecksumtype` on;
+  - no `panic` in library code;
+  - errors are returned, wrapped with `%w`, or joined with `errors.Join`;
+  - diagnostics go to `slog`, and output to an explicit `io.Writer`;
+  - `ctx` is the first parameter and is threaded down.
+    `context.Background()` appears only in `main` and in tests.
+- **Time.** Code uses `time` directly. Tests use `testing/synctest` and
+  event gates, never `time.Sleep`.
+- **Public repo.** No private path or layout data. orion is named only as
+  the downstream consumer.
 
 ## Plan
 
-The slices form one linear jj-vine stack, T1 → T9. Each slice is one PR
-carrying its ported tests. Open Question 3 decides when they merge.
+There is one PR. Each item below is one commit with its ported tests, and is
+reviewed in order.
 
 **Signature rule.** Each exported TS function becomes an exported Go
 function:
 
-- it has the same parameters, in the same order;
+- the parameters stay the same and in the same order;
 - `Profile` becomes `*config.Profile`;
-- `ctx context.Context` comes first, but only if the function does I/O;
+- `ctx` comes first when the function does I/O;
 - a function that can fail returns `(T, error)`;
 - `T | null` becomes `(T, bool)`.
 
-The tasks below list only the signatures this rule cannot derive.
+The `Interfaces:` lines below list only what this rule cannot derive.
 
-### T1 — Skeleton and CI
+### C1 — Skeleton and CI
 
-Add `go.mod`, `.golangci.yml`, the devenv Go toolchain and a `go` job in
-`ci.yml`. The job runs `go vet`, `golangci-lint run` and `go test -race
-./...` on `ubuntu-latest`. Add `scripts/capture-goldens.ts` with a
-`--check` mode, and a CI step that runs it while `src/` exists.
+`go.mod`, `.golangci.yml`, the devenv Go, and a `go` CI job running
+`go vet`, `golangci-lint run` and `go test -race ./...`.
 
-Interfaces:
+Interfaces: produces the module. Gate: CI is green.
 
-- Produces: the module, the lint config, the CI job and the capture script.
-- Gate: CI is green, and `capture-goldens --check` passes on an empty
-  corpus.
+### C2 — `internal/config`
 
-### T2 — `internal/config`
-
-Port the types, `ChainRatios`, `Validate` (with the required-field and slot
-checks), the YAML loader, the switch-over rule, the embedded default,
-`configtest`, the schema generator and `profile` goldens. Port
-`validate.test.ts`, `profile.test.ts` and `loader.test.ts`.
+The schema, `default.cue`, the loader, `Validate`, and `configtest`. Ports
+`validate.test.ts` and `profile.test.ts`.
 
 Interfaces:
 
-- Produces:
-  - `type Profile struct`. Its `Displays` field is
-    `struct{ G9, Aw, Laptop *DisplaySpec }`, and its `LaptopStackApps` field
-    is `[]string`.
-  - `type WindowSpec struct { App, Title *regexp.Regexp; TitleInvert bool; Spawn []string }`
-  - `func Validate(p *Profile) error`. Violations are joined with `; `, in
-    TS order.
-  - `func Load(env func(string) string, home string) (*Profile, error)`
-  - `func Parse(path string, data []byte) (*Profile, error)`
-  - `configtest.Fixture(tb testing.TB) *Profile`
-  - `schema/profile.schema.json`, built by `go generate`
-- Gate:
-  - Ported tests are green.
-  - Both YAML files decode to their `profile` goldens.
-  - The bundled default and every fixture profile pass the generated
-    schema. The negative corpus fails both the loader and the schema.
-  - Loader regression cases fail with a named-field error, not a nil:
-    `windows: { arc: {} }` (missing `app`), and a desk layout missing each
-    of `display`, `label`, `kind` and `tracks`.
-  - A well-known `profile.ts` with no `profile.yaml` fails loudly.
-  - `go generate` leaves no diff.
+- `Load(ctx context.Context, env func(string) string, home string) (*Profile, error)`
+- `Parse(ctx context.Context, path string, src []byte) (*Profile, error)`
+- `Validate(p *Profile) error`
+- `type WindowSpec struct { App, Title *regexp.Regexp; TitleInvert bool; Spawn []string }`
+- `Profile.Displays` is `struct{ G9, Aw, Laptop DisplaySpec }`.
 
-### T3 — `internal/wm` and `internal/wm/fake`
+Gate:
 
-Port the driver contract, `WorldSnapshot` and `FakeDriver`, plus a call
-recorder. Port `fake.test.ts`.
+- the probe cases above pass as Go tests, through `Parse`;
+- an unknown name in `tracks` fails;
+- a `profile.ts` with no `profile.cue` fails loudly;
+- `cue vet` accepts `default.cue`.
+
+### C3 — `internal/wm` and `internal/wm/fake`
 
 Interfaces:
 
-- Produces:
-  - `type Driver interface`: every `WmDriver` method, with `ctx` first and
-    an error, plus `SettleUnit() time.Duration`.
-  - `type RuleOps interface { ListRules(ctx) ([]string, error); RemoveRule(ctx, label string) error; AddRule(ctx, Rule) error; ApplyRules(ctx) error }`
-  - `type EventSource interface { RegisterSignal(ctx, Event, []string) error }`
-  - `func Snapshot(ctx context.Context, d Driver) (World, error)`
-  - `fake.New(seed fake.Seed) *fake.Driver`
-  - `fake.Record(d wm.Driver) (wm.Driver, *fake.Calls)`. It records
-    `name(args)` with each argument JSON-encoded, which matches the capture
-    script.
-- Gate: green under `-race`.
+- `Driver`
+- `RuleOps`
+- `EventSource { AddSignal(ctx, ev Event, label, action string) error }`
+- `Snapshot(ctx, d Driver) (World, error)`
+- `fake.New(fake.Seed) *fake.Driver`
 
-### T4 — `internal/engine`
+Gate: `fake.test.ts` ported, green under `-race`.
 
-Port the 13 modules and their tests.
+### C4 — `internal/engine`
+
+The 13 modules.
 
 Interfaces:
 
-- Produces:
-  - `type Op interface` (sealed). Its variants are `DestroySpace`,
-    `RealizeLayout` and `BalanceSpace`, plus every `ConvergeAction` variant.
-  - `type ConvergeAction interface{ Op; convergeAction() }`. Its variants
-    are `RelabelHome`, `CreateSpace`, `MoveWindow`, `RehomeAndDestroy`,
-    `MoveSpace`, `SetLayout` and `DestroySpace`.
-  - `func LaptopConvergeStep(p *config.Profile, w wm.World, s ConvergeState) (ConvergeAction, ConvergeState, bool)`.
-    The bool is false when the converger is done.
-  - `func WeightsFor(p *config.Profile, kind config.TrackKind, count int, display mo.Option[config.DisplayName], override []float64) []float64`
-  - `func DisplayOfSpace(p *config.Profile, w wm.World, space wm.SpaceID) (config.DisplayName, bool)`
-  - `func NewClaimSet(p *config.Profile) *ClaimSet`, with these methods:
-    - `Claim(ws []wm.Window, name string, preferDisplay mo.Option[int]) (int, bool)`
-    - `ClaimMany(ws []wm.Window, names []string, preferDisplay mo.Option[int]) []int`
-    - `Reset()`
-- Gate: every engine test is green, including the `windows.live.json`
-  matcher cases.
+- the sealed `Op` and `ConvergeAction`;
+- `LaptopConvergeStep(p, w, s) (ConvergeAction, ConvergeState, bool)`;
+- `NewClaimSet(p) *ClaimSet`, whose methods take
+  `preferDisplay mo.Option[int]`.
 
-### T5 — `internal/effects` and `internal/executor`
+Gate: the engine tests, including the `windows.live.json` cases.
 
-Port the locks, stamps, guard, flex-order state, nudge, paths, the waiter,
-`runPlan` and `runConverge`, with their tests.
+### C5 — `internal/wm/yabai`
 
-Interfaces:
+The argv builders, the normalizers, `bspSteps`, labelled `AddSignal`, the
+runner, and the stub yabai.
 
-- Produces:
-  - `func AcquireLock(dir string) (*Lock, error)`. It returns nil on live
-    contention, reclaims a stale PID and treats EPERM as alive.
-  - `func AcquireLockOrSkip(dir string) (*Lock, error)`. It does no reclaim.
-  - `func (l *Lock) Release() error`. Release is idempotent.
-  - `type Clock interface { Now() int64; Sleep(ctx context.Context, d time.Duration) error }`
-  - `func RunWaiter(ctx context.Context, cfg WaiterConfig, clock Clock) (bool, error)`
-  - `type Paths struct` holding the eight lock, stamp, guard and flex paths.
-    `DefaultPaths(env func(string) string, home string) Paths` returns the
-    defaults.
-  - `type Nudger func(ctx context.Context, event string) error`
-  - `func RunConverge[S any](ctx context.Context, d wm.Driver, step StepFunc[S], initial S) (S, error)`
-- Gate:
-  - Ported tests are green, and they wait on events, not sleeps.
-  - A child process killed with SIGKILL leaves a lock that `AcquireLock`
-    reclaims.
-  - A cancelled context makes `RunWaiter` release its lock.
+Interfaces: `New(yabaiPath string) *Driver`, which implements all three
+interfaces.
 
-### T6 — `internal/wm/yabai`
+Gate:
 
-Port the argv builders, the normalizers, `bspSteps`, `ratioArg`, the runner
-and `Driver`. Port `yabai.test.ts`.
+- the argv tables;
+- a labelled add renders `label=tessera-display_added`;
+- the stub records argv.
+
+### C6 — `internal/effects` and `internal/executor`
+
+The locks, guard, flex-order state, nudge, paths and predicates, plus
+`RunPlan` and `RunConverge`.
 
 Interfaces:
 
-- Produces:
-  - `func New(yabaiPath string) *Driver`. It implements `wm.Driver`,
-    `wm.RuleOps` and `wm.EventSource`.
-  - `jsFixed(x float64, digits int) string` and `jsString(x float64) string`
-- Gate:
-  - The argv tables are green.
-  - `jsFixed(5.0/32, 4)` returns `0.1563`.
-  - The `0.9473684210526315` clamp warning matches byte for byte.
-  - A missing binary gives `yabai query failed (exit 1): …`.
+- `AcquireLock(dir string) (*Lock, bool, error)`
+- `AcquireLockOrSkip(dir string) (*Lock, bool, error)`
+- `(*Lock).Release() error`
+- `IsQuiet(now, stamp time.Time, d time.Duration) bool`
+- `IsFlexQuiet(now, own, display time.Time) bool`
+- `SignalsSuppressed(path string, now time.Time) (bool, error)`
 
-### T7 — `internal/commands` and trace goldens
+Gate:
 
-Port the command functions and `Run`, `commands.test.ts`, and
-`index.test.ts` except `fastMatch`. Capture the `trace` goldens.
+- a SIGKILLed child's lock is reclaimed;
+- the predicate edge cases are green.
 
-Interfaces:
+### C7 — `internal/commands`
 
-- Produces:
-  - `type Command interface` (sealed). It has one struct per kind:
-    `Apply{}`, `Snap{Mode engine.SnapMode}`, `Focus{Dir wm.DirSel}`,
-    `Init{Self string}`, … (22 in all).
-  - `type Env struct { Paths effects.Paths; Nudge effects.Nudger; Clock effects.Clock; Stderr io.Writer }`
-  - `func Run(ctx context.Context, p *config.Profile, c Command, d wm.Driver, env Env) (int, error)`
-- Gate: every trace golden matches. The `init` registration test is green.
-
-### T8 — CLI, `cmd/tess`, process goldens
-
-Port the parser, help, version, error block and `main`. Port
-`scripts/benchstartup`. Capture the `cli` and `proc` goldens from the
-`nix build` TS binary.
+The commands, `RunDisplayCascade`, `RunFlexConverge`, `Wake` and `Run`.
 
 Interfaces:
 
-- Produces:
-  - `func Parse(argv []string) (Result, error)`
-  - `func Main(ctx context.Context, argv []string, stdout, stderr io.Writer, deps Deps) int`.
-    It returns 130 when `ctx` was cancelled by a signal.
-  - `cmd/tess/main.go`. It sets up `signal.NotifyContext(…, os.Interrupt,
-    syscall.SIGTERM)` and exits through `os.Exit(cli.Main(…))`.
-- Gate:
-  - Every `cli` golden passes, at the level Open Question 2 picks.
-  - Every `proc` golden passes against the stub yabai.
-  - A SIGTERM sent during a stub-blocked `apply` exits 130 and leaves no
-    lock dir.
+- the sealed `Command`, 21 kinds;
+- `type Env struct { Paths effects.Paths; Nudge effects.Nudger; Stderr io.Writer }`;
+- `Run(ctx, p, c Command, d wm.Driver, env Env) (int, error)`;
+- `Wake(ctx, p, d, env, sock string) error`.
 
-### T9 — Cutover
+Gate: `commands.test.ts` is green.
 
-This slice does six things:
+### C8 — `internal/daemon`
 
-- moves `packages.default` to `buildGoModule`;
-- removes the bun attrs, `bun2nix` and `checks.bun-lock`;
-- changes the home-manager default `profilePath` to `profile.yaml`;
-- moves the version file and has `release.yml` read it;
-- rewrites the README and `devenv.nix`;
-- deletes `src/`, the Bun manifests and configs, the TS scripts, and the Bun
-  and capture CI steps.
+The hub, the waiters, serving, listening, registration and launchd.
 
 Interfaces:
 
-- Produces: the Go flake package with the installed schema, and the bench
-  table in the PR body.
-- Gate:
-  - `nix flake check` and `nix build .#default` pass on `macos-latest`.
-  - The bar holds against the TS build at T9's parent.
-  - No `.ts` file remains.
+- `type Step int` (`Settled`, `Restamp`)
+- `type Work func(ctx context.Context) (Step, error)`
+- `NewHub(display, flex Work) *Hub`
+- `(*Hub).Notify(ctx context.Context, ev string)`
+- `Listen(ctx context.Context, path string) (net.Listener, error)` (`ErrRunning`)
+- `Serve(ctx context.Context, ln net.Listener, h *Hub, wake func(context.Context) error) error`
+- `RegisterSignals(ctx context.Context, src wm.EventSource, sock string) error`
+- `type Launchctl interface { Run(ctx context.Context, args ...string) error }`
+- `Bootstrap(ctx, lc Launchctl, uid int, svcs []Service) error`
+- `Bootout(ctx, lc Launchctl, uid int, svcs []Service) error`
 
-### Downstream (orion, not designed here)
+Gate, in synctest:
 
-One atomic PR follows T9. It bumps the input, converts the profile, points
-`profilePath` at `profile.yaml`, and replaces the consumer typecheck with a
-loader check (`TESSERA_PROFILE=… tess focus east` against a stub yabai).
+- a burst of N events gives one cascade;
+- an event during work re-arms the waiter;
+- H2: a held guard restamps;
+- H7: flex waits for display-quiet;
+- no action holds a tess path;
+- a timeout ends `Serve`.
+
+Outside the bubble: `ErrRunning` and stale reclaim.
+
+### C9 — `internal/cli` and `cmd/tess`
+
+The dispatcher, help, `daemon`, `wake`, `main`, and `tools/benchstartup`.
+
+Interfaces:
+
+- `Parse(argv []string) (commands.Command, error)`
+- `Main(ctx context.Context, argv []string, stdout, stderr io.Writer, deps Deps) int`
+
+Gate:
+
+- the stub-yabai corpus;
+- SIGTERM during a stub-blocked `apply` exits 130 and leaves no lock;
+- `wake` with no daemon exits 1.
+
+### C10 — Cutover
+
+This commit:
+
+- switches to `buildGoModule`;
+- removes the bun attrs;
+- sets `profilePath` to `profile.cue`;
+- installs the schema;
+- updates the README and `devenv.nix`;
+- deletes `src/`, the Bun manifests, and the TS scripts.
+
+Gate:
+
+- `nix flake check` and `nix build` pass on `macos-latest`;
+- the bar holds (bench table in the PR body);
+- no `.ts` file remains;
+- a live smoke: plug and unplug, a window-churn burst, `kill -9` the daemon,
+  and observe the reclaim.
 
 ## Tasks
 
-- [ ] T1 — module, lint, the CI `go` job on ubuntu, and the capture script
-  with its `--check` step
-- [ ] T2 — `internal/config`: required-field and slot checks, the switch-over
-  rule, the generated schema, the negative corpus, and the `profile` goldens
-- [ ] T3 — `internal/wm` and `internal/wm/fake`, with the JSON-argument
-  recorder
-- [ ] T4 — `internal/engine`, including the sealed `Op` and the nested
-  `ConvergeAction`
-- [ ] T5 — `internal/effects` and `internal/executor`, with
-  cancel-releases-lock
-- [ ] T6 — `internal/wm/yabai`, with `jsFixed` and `jsString`
-- [ ] T7 — `internal/commands`, with the sealed `Command` and the `trace`
-  goldens
-- [ ] T8 — `internal/cli` and `cmd/tess`: `NotifyContext` and exit 130, the
-  `cli` and `proc` goldens, and `benchstartup`
-- [ ] T9 — `buildGoModule` cutover and TS tree deleted; the bar holds
-- [ ] Downstream — one atomic orion PR: input bump, profile conversion and a
-  loader check
+- [ ] C1 — module, lint, CI `go` job
+- [ ] C2 — CUE schema, loader, `Validate`, name references
+- [ ] C3 — `wm` contract and fake, with labelled `AddSignal`
+- [ ] C4 — engine, with sealed `Op` and `ConvergeAction`
+- [ ] C5 — yabai driver and stub yabai
+- [ ] C6 — effects and executor, with cancel-releases-lock
+- [ ] C7 — commands, with `Wake`
+- [ ] C8 — daemon: hub, socket, registration, launchd, synctest gates
+- [ ] C9 — CLI and `main`: exit 130, argv corpus, `benchstartup`
+- [ ] C10 — flake cutover, `src/` deleted, the bar holds, live smoke
+- [ ] Downstream — one atomic orion PR (§ Migration)
 
-## Open Questions
+## Resolved decisions
 
-1. **Profile authoring surface.** There are three options:
-   - **(a)** YAML with a hand-written schema.
-   - **(a′)** YAML, with the Go loader as the only validator and a schema
-     generated from the Go types for the editor.
-   - **(d)** A typed home-manager option (`programs.tessera.profile = { … }`),
-     rendered to YAML by the module, with Nix eval type-checking it.
-     Non-Nix users would still write YAML.
+Matt ruled on RIG-4526:
 
-   **Recommend (a′).** It is the shape this record is written for. (a) lets
-   the schema and the decoder drift with no failing test. (d) is worth it
-   only if Matt wants to edit his layout in Nix, and it adds a second
-   authoring surface the Go loader must still validate. The decision needed
-   is (a′) or (d).
-2. **Help-text parity.** There are three options:
-   - **(i)** Help and errors byte-identical to Effect, including the row
-     caps in `renderTable` and the tie rules in `suggest`.
-   - **(ii)** The same exit codes and message lines, with help re-laid out
-     in Go.
-   - **(iii)** Byte-identical exit codes, stream split, `ERROR` block,
-     message lines and `Did you mean this?`, plus containment goldens for
-     help: the usage line and every subcommand name and description.
-
-   **Recommend (iii).** No caller reads the help layout; the flake smokes
-   grep only four strings. Option (i) re-implements a deleted dependency's
-   rendering for no reader. The edge-argv corpus applies under every option.
-3. **Landing shape.** There are two options:
-   - **Land T1 to T8 on `main` one at a time.** The Go tree is tested but
-     ships nothing for the length of the port. Every TS fix in that window
-     is also needed in Go. A reviewer may read the unshipped slices as
-     inert under `rule://no-inert-gating`.
-   - **Review each slice as its own PR, then merge the whole stack in order
-     after T9 is approved.** The merge is by hand; tessera has no merge
-     queue.
-
-   **Recommend merging the stack together.** `main` never holds unshipped
-   Go code, the dual-fix window shrinks to rebases, and the no-inert-gating
-   question goes away. The cost: the stack stays open for the whole port,
-   and each rebase re-runs `capture-goldens --check`.
-4. **Resident daemon.** The port changes the three forces in
-   `resident-daemon.md` § "Problem / Intent" as follows:
-   - **Force 1, the self-path, is unchanged.** `init --self` stays. Using
-     `os.Executable` instead could resolve the nix-darwin symlink to a
-     `/nix/store` path, which garbage collection deletes.
-   - **Force 2, the cold start of a ~50 MB Bun binary per signal, goes
-     away.**
-   - **Force 3, simpler concurrency, is unchanged.** T5 ports the
-     locks, stamps and waiter in full.
-
-   There are four options:
-   - **(i)** Keep the daemon, with a Go record after T9.
-   - **(ii)** Shelve it until a measurable trigger fires.
-   - **(iii)** Close it.
-   - **(iv)** Build the daemon in Go instead of porting T5's waiter, stamp
-     and lock code. This conflicts with the no-behaviour-change framing.
-
-   **Recommend (ii).** Reopen when either of these happens:
-   - the T9 bench's Go `focus east` p90 (the per-signal process cost)
-     exceeds 10 ms;
-   - one of `architecture.md`'s other conditions appears: a second event
-     consumer, or a stale lock wedging a run.
-
-   Note that (ii) partly reverses the pace D-T1 and D-T2 set.
+1. **Profile.** "want types. could think about CUE or pkl here potentially?
+   or another similar language?" The profile is CUE (§ Profile format), and
+   the other options are under § Alternatives considered.
+2. **Help and errors.** "ii, we don't care about parity, just build in the
+   best way possible". The parity contract, the captured TS goldens and
+   their CI step are gone. The help and errors are idiomatic Go (§ CLI).
+3. **Landing.** "Just one super PR is fine". There is one PR with commit
+   slices (§ Plan).
+4. **Daemon.** "Keep. daemon is best pattern for this imo, yabai and skhd
+   are already daemons/services". It is built here in Go and lands in the
+   same PR (§ Resident daemon).
