@@ -505,8 +505,6 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 - **testify v1.12.1.** 20,797 importers for `require`. `gotest.tools/v3`
   is already required for golden files and ships `assert` with go-cmp
   options, so a second assertion module adds nothing.
-- **samber/oops.** Nothing uses it; `%w` and `errors.Join` cover the error
-  rule.
 - **launchd socket activation.** The only cgo-free binding is
   `bored-engineer/go-launchd`, with 7 stars and a last push on 2024-12-20.
   The `flock` lock file covers single-instance without it.
@@ -541,6 +539,7 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
   | `github.com/samber/lo` | v1.53.0 | transforms `slices` and `maps` lack: `Map`, `Filter`, `FlatMap`, `Reduce`, `Uniq`, `GroupBy` | 12,533 |
   | `cuelang.org/go` | v0.17.1 | the profile; below the bar, kept by RIG-4526 ruling 1 | 692 |
   | `github.com/samber/mo` | v1.17.0 | `Option` only; below the bar, kept for `ClaimSet` (C4) | 434 |
+  | `github.com/samber/oops` | v1.23.2 | daemon errors that carry `slog` attributes and a stack; below the bar, kept by Matt's ruling (Resolved decision 6) | 332 |
   | `gotest.tools/v3` (tests) | v3.5.2 | `assert`, `golden` | 1,570 (`assert`) |
   | `github.com/google/go-cmp` (tests) | v0.7.0 | diff options for `assert.DeepEqual` | 5,704 |
 
@@ -548,7 +547,9 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 - **House slate.** The Go idioms record applies as written:
   - golangci-lint `default: all`, with `exhaustive` and `gochecksumtype` on;
   - no `panic` in library code;
-  - errors are returned, wrapped with `%w`, or joined with `errors.Join`;
+  - errors are returned, built or wrapped with `samber/oops` where the
+    daemon logs them (`.With` attributes, not formatted messages), and
+    otherwise wrapped with `%w` or joined with `errors.Join`;
   - diagnostics go to `slog`, and output to an explicit `io.Writer`;
   - `ctx` is the first parameter and is threaded down.
     `context.Background()` appears only in `main` and in tests.
@@ -804,6 +805,12 @@ On 2026-10-05 Matt ruled on libraries:
    The dependency bar is in § Global Constraints. Under it, the CLI moves to
    cobra, the locks move to `gofrs/flock`, slice transforms the standard
    library lacks use `samber/lo`, and the tests use `gotest.tools/v3`.
-   `samber/oops` is dropped. The debounce, the socket line protocol and the
+   `samber/oops` stays (Resolved decision 6). The debounce, the socket
+   line protocol and the
    `launchctl` calls stay as written, for the reasons under § Alternatives
    considered and § Resident daemon.
+
+On 2026-10-06 Matt ruled on errors:
+
+6. **samber/oops.** "keep oops." It is below the importer bar (332).
+   The daemon uses it so a logged error keeps its attributes and stack.

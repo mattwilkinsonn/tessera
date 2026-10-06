@@ -178,6 +178,7 @@ default branch from the GitHub API. No repository listed is archived.
 | `golang.org/x/sync/errgroup` | 30,110 | v0.23.0 | 2026-08-31 | 2026-09-23 `36f2d70` |
 | `github.com/samber/lo` | 12,533 | v1.53.0 | 2026-03-02 | 2026-10-01 `5c6ddcb` |
 | `github.com/samber/mo` | 434 | v1.17.0 | 2026-06-02 | 2026-10-01 `502998f` |
+| `github.com/samber/oops` | 332 | v1.23.2 | 2026-09-14 | 2026-10-01 `cf12269` |
 | `github.com/deckarep/golang-set/v2` | 1,842 | v2.9.0 | 2026-04-21 | 2026-10-02 `20c6d8d` |
 | `cuelang.org/go/cue` | 692 | v0.17.1 | 2026-07-16 | 2026-10-05 `0548724` |
 | `github.com/stretchr/testify/require` | 20,797 | v1.12.1 | 2026-08-17 | 2026-09-24 `87a7b9d` |
@@ -211,6 +212,7 @@ the default-branch head on 2026-10-06:
 | kong | hermit (v1.16.1), block/ftl (v1.11.0) |
 | gofrs/flock | helm, golangci-lint, docker/buildx, moby, traefik (v0.13.1); prometheus (v0.13.0); go-ethereum (v0.12.1) |
 | samber/lo | terraform, lazygit, traefik (v1.53.0) |
+| samber/oops | aquasecurity/trivy-db |
 | golang-set | go-ethereum (v2.6.0) |
 | gotest.tools/v3 | docker/cli, moby, cli/cli (v3.5.2) |
 | x/sync | kubernetes, cli/cli, hugo, helm, golangci-lint, cue (v0.23.0) |
