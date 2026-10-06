@@ -86,8 +86,9 @@ abstraction this table lacks, which the house "stdlib-first" rule forbids.
     except `display-event` and `flex-event`);
   - `daemon`;
   - `wake`.
-- **Help.** `tess --help` lists the table. `tess <cmd> --help` prints that
-  command's usage and choices. Both exit 0.
+- **Help and version.** `tess --help` lists the table. `tess <cmd> --help`
+  prints that command's usage and choices. `tess --version` prints
+  `tess v<version>`, linked in from `VERSION`. All three exit 0.
 - **Errors.** A parse failure prints `tess: <message>` and one usage line
   on stderr. The program writes its output to an injected `io.Writer`.
   Diagnostics go through `log/slog`.
@@ -157,8 +158,9 @@ CUE input, so a Nix-rendered profile also loads.
 
 **Evidence** is in [`profile-evidence.md`](profile-evidence.md): 12 of 12
 schema cases correct, the loader and `cue vet` outputs, and the start-time
-bench. CUE adds about 5.5 ms of package init (p50 8.79 ms against 2.65 ms
-for an empty `main`), still about twice as fast as the 18.8 ms Bun base.
+bench. Linking CUE adds about 5.5 ms of package init (p50 8.16 ms against
+2.65 ms for an empty `main`). A full profile load is 8.79 ms p50, still
+about twice as fast as the 18.8 ms Bun base.
 
 ### Resident daemon
 
@@ -179,18 +181,31 @@ yabai runs the action as `/usr/bin/env sh -c <command>` (`event_signal.c`).
 The daemon writes the resolved absolute path into the action, so no
 environment variable is read at event time. No action holds a tess path.
 `init`, `display-event`, `flex-event` and `--self` are deleted. The
-sketchybar pair stays registered directly. yabairc's tessera line becomes
-`tess wake`.
+sketchybar pair stays registered directly. yabai's config (`yabairc`) runs
+`tess wake` when yabai starts.
 
-**Bind is the lock.** `daemon.Listen` binds the socket. On `EADDRINUSE` it
-dials the socket and sends `wake`:
+**A lock file is the lock.** `daemon.Listen` opens `<socket>.lock` and
+takes `flock(LOCK_EX|LOCK_NB)` on it for the daemon's whole life. The
+kernel drops the lock when the process dies, even on SIGKILL, so the lock
+never goes stale. The file holds no content and is never removed.
 
-- If a daemon answers, `Listen` returns `ErrRunning`, and `tess daemon`
+- If the lock is held, `Listen` returns `ErrRunning`, and `tess daemon`
   exits 0.
-- If the dial is refused, the file is stale. `Listen` unlinks it and binds
-  again.
+- If `Listen` gets the lock, no other starter can be past this point. It
+  removes any leftover socket file without probing it, then binds.
 
-There is no pidfile. A clean shutdown unlinks the socket.
+Probe, unlink and bind therefore never race. The listener's `Close` unlinks
+the socket first and releases the lock second. Two opens of one file
+conflict under `flock` even inside one process (probed: the second call
+returns `EWOULDBLOCK`), so the race test can run in-process.
+
+**Manual starts.** The launchd agent is the normal way to run the daemon.
+Its `KeepAlive` must be `{ SuccessfulExit = false; }`, so launchd restarts
+it after a crash or a wedge (exit 1) but not after `ErrRunning` or a clean
+SIGTERM (exit 0). A manual `tess daemon` while the agent runs prints
+`tess: daemon already running` and exits 0. To run one by hand, boot the
+agent out first. If a manual daemon holds the lock when the agent starts,
+the agent exits 0 and stays down until it is kickstarted.
 
 **Protocol.** Each connection carries one line, `<event>\n` or `wake\n`.
 The daemon reads the line under a one-second deadline and closes the
@@ -242,6 +257,9 @@ launchd restarts the daemon, and its startup does the same work. Events
 fired while the daemon is down are dropped after `nc -w 1` (the frozen
 record's Open Question 1, accepted).
 
+A failed wake routine is logged and is not fatal. At startup yabai may not
+be up yet; when it starts, its `tess wake` runs the routine again.
+
 **Wedge guard.** Each work call runs under
 `context.WithTimeout(ctx, CascadeTimeout)` (60 s), derived from the serve
 context. A deadline error ends `Serve` with that error, and `tess daemon`
@@ -251,23 +269,42 @@ that launchd can see.
 **launchd bootstrap (D-T2).** At startup the daemon brings up yabai and skhd
 under their upstream labels, `com.asmvik.yabai` and `com.asmvik.skhd`, from
 `~/Library/LaunchAgents/<label>.plist`. These are the labels that each
-tool's own `--install-service` uses (`src/misc/service.h` in yabai,
-`src/service.h` in skhd). The bring-up follows those tools' own logic:
+tool's own `--install-service` uses. For each service the daemon follows
+the upstream `service_start` (`src/misc/service.h` in yabai,
+`src/service.h` in skhd):
 
-- run `launchctl print gui/<uid>/<label>`;
-- if the service is not loaded, run `launchctl bootstrap gui/<uid> <plist>`;
-- if it is already loaded, leave it alone.
+1. Run `launchctl print gui/<uid>/<label>`.
+2. If the service is not loaded:
+   - run `launchctl enable gui/<uid>/<label>`, because a disabled service
+     cannot be bootstrapped. A failure here is logged and the daemon goes
+     on, as upstream ignores this result too;
+   - run `launchctl bootstrap gui/<uid> <plist>`. On success the daemon
+     records the service as **owned**.
+3. If the service is already loaded, run `launchctl kickstart
+   gui/<uid>/<label>`, which starts it only if it is not running. It is not
+   owned.
 
-On SIGTERM the daemon runs `launchctl bootout` for both. `--no-bootstrap`
-skips both steps for the dev smoke. tess never runs `sudo`; the
-`--load-sa` line stays in yabairc.
+A bootstrap failure is logged at error level, and the service is not owned.
+The daemon still serves events, because its event job does not depend on
+who started yabai.
+
+On SIGTERM the daemon runs `launchctl bootout` for **owned services only**.
+A service it found loaded stays loaded. Ownership does not survive a
+daemon restart: after a crash, the next daemon finds both services loaded
+and owns neither. Bootout runs under
+`context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)`, because
+the root context is already cancelled at that point.
+
+`--no-bootstrap` skips all of this for the dev smoke. tess never runs
+`sudo`; the `--load-sa` line stays in `yabairc`.
 
 ### Runtime contract
 
 This section holds only what callers depend on.
 
 - **Exit codes.** These are a contract for the CLI and scripts:
-  - 0: success, help, bare `tess`, and a daemon that is already running.
+  - 0: success, help, version, bare `tess`, and a daemon that is already
+    running.
   - 1: a parse failure, a profile error, a driver error, a contended
     `laptop` (silent), `wake` with no daemon, or a daemon wedge or serve
     error.
@@ -319,20 +356,32 @@ This section holds only what callers depend on.
 - **Time.** No test calls `time.Sleep`. Every daemon and waiter test runs
   inside `synctest.Test` and uses event gates (channels, `synctest.Wait`).
   Socket I/O does not block durably inside a bubble, so `Serve` takes a
-  `net.Listener`. Bubble tests feed it `net.Pipe` connections. One test
-  outside the bubble binds a real socket under `os.MkdirTemp("/tmp", …)`, to
-  stay under the path limit, and covers `ErrRunning` and stale reclaim
-  through channel gates.
+  `net.Listener`. Bubble tests feed it `net.Pipe` connections. Listener
+  tests run outside the bubble on real sockets under
+  `os.MkdirTemp("/tmp", …)`, which keeps the path under the length limit.
+  Two starters released by one channel race on a path that holds a stale
+  socket file: exactly one gets a listener, and the other gets
+  `ErrRunning`.
 - **launchctl** sits behind a `Launchctl` interface. Tests assert the argv.
 
 ### Build and the startup bar
 
 `packages.default` becomes `buildGoModule` with `CGO_ENABLED=0`,
 `-trimpath` and `disallowedReferences = [ go ]`. The bun attrs, `bun2nix`
-and `checks.bun-lock` go. `installCheckPhase` checks four things:
+and `checks.bun-lock` go.
+
+**Version source.** A root `VERSION` file holds the bare version and
+replaces `package.json`'s `version` field:
+
+- the flake sets `version = lib.fileContents ./VERSION` and passes it as
+  `-X main.version=${version}`;
+- `release.yml` reads it with `tr -d '[:space:]' < VERSION`.
+
+`installCheckPhase` checks five things:
 
 - a bogus subcommand exits 1;
 - `--help` exits 0;
+- `--version` prints `tess v$version`;
 - a loader smoke exits 0;
 - the installed schema vets `default.cue`.
 
@@ -358,30 +407,20 @@ No frozen record is edited. This record supersedes:
 | `architecture.md` | Global Constraints "Runtime/tooling" and "Deploy"; Layer 1 "`profile.ts`, typed data"; Open Question 2 (now CUE); Open Question 3 (now the daemon); the Bun mechanics; § "Build + deploy"; T7 | Layers, layering law, D1, D2, driver contract, engine |
 | `grid-layouts.md` | "Runtime/tooling"; `bun test` cycles; the `profile.ts` name | Tracks, weights, chain formula, resolution order |
 | `laptop-flex-spaces.md` | "ports to TypeScript" | The converger model |
-| `resident-daemon.md` | "Runtime/tooling"; `Bun.listen`; the TS `Interfaces:` of its Plan; remove-then-add; the 1 s poll; "Bun exposes no `launch_activate_socket`"; "one PR per task slice" | D-T1, D-T2, D-S1; H2/H7; bind-as-lock; the wedge default; its downstream T5 |
+| `resident-daemon.md` | "Runtime/tooling"; `Bun.listen`; the TS `Interfaces:` of its Plan; remove-then-add; the 1 s poll; "Bun exposes no `launch_activate_socket`"; bind-as-lock (now a lock file); unconditional bootout; its T5; "one PR per task slice" | D-T1, D-T2, D-S1; H2/H7; the wedge default |
 
 ### Migration
 
 One PR, with its slices as commits (§ Plan). Every commit builds and passes
 its own tests, so the stack stays bisectable. The last commit switches the
-flake and deletes `src/`. After that PR merges, one atomic orion PR follows.
-It:
-
-- bumps the input;
-- converts the profile to `profile.cue`;
-- points `profilePath` at it;
-- changes yabairc's `tess init --self …` to `tess wake`;
-- adds the `tess daemon` launchd agent and the yabai and skhd definitions;
-- retires brew services;
-- swaps the consumer typecheck for `cue vet` plus a loader smoke.
-
-To roll back, revert that PR.
+flake and deletes `src/`. After that PR merges, the consumer updates its
+profile and service wiring in one change. Reverting that change rolls back.
 
 ## Alternatives considered
 
 One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 
-- **Pkl.** pkl-go runs an external JVM `pkl` (355 MiB closure, ~861 ms per eval).
+- **Pkl.** pkl-go runs an external JVM `pkl` (355 MiB closure, ~646 ms per eval).
 - **KCL.** kcl-go needs a local `replace` and a native `libkcl` at runtime.
 - **Nickel.** go-nickel has no release and needs cgo.
 - **Dhall.** dhall-golang has not released since 2021-10-09.
@@ -391,7 +430,7 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 - **cobra, urfave/cli, kong.** No abstraction over a 21-row table (§ CLI).
 - **launchd socket activation.** The only cgo-free binding is
   `bored-engineer/go-launchd`, with 7 stars and a last push on 2024-12-20.
-  Bind-as-lock covers single-instance without it.
+  The `flock` lock file covers single-instance without it.
 - **Thin-client fallback in `wake`.** It runs the cascade in two places;
   launchd's restart already covers that case.
 - **Routing keybinds through the daemon.** It couples every keybind to a
@@ -415,8 +454,8 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
     `context.Background()` appears only in `main` and in tests.
 - **Time.** Code uses `time` directly. Tests use `testing/synctest` and
   event gates, never `time.Sleep`.
-- **Public repo.** No private path or layout data. orion is named only as
-  the downstream consumer.
+- **Public repo.** No private path, layout data or consumer wiring. orion
+  is named only as the downstream consumer.
 
 ## Plan
 
@@ -542,12 +581,13 @@ Interfaces:
 - `type Work func(ctx context.Context) (Step, error)`
 - `NewHub(display, flex Work) *Hub`
 - `(*Hub).Notify(ctx context.Context, ev string)`
-- `Listen(ctx context.Context, path string) (net.Listener, error)` (`ErrRunning`)
+- `Listen(ctx context.Context, path string) (net.Listener, error)`; it
+  holds the `<path>.lock` flock and returns `ErrRunning` if it is held
 - `Serve(ctx context.Context, ln net.Listener, h *Hub, wake func(context.Context) error) error`
 - `RegisterSignals(ctx context.Context, src wm.EventSource, sock string) error`
 - `type Launchctl interface { Run(ctx context.Context, args ...string) error }`
-- `Bootstrap(ctx, lc Launchctl, uid int, svcs []Service) error`
-- `Bootout(ctx, lc Launchctl, uid int, svcs []Service) error`
+- `Bootstrap(ctx context.Context, lc Launchctl, uid int, svcs []Service) (Owned, error)`
+- `Bootout(ctx context.Context, lc Launchctl, uid int, owned Owned) error`
 
 Gate, in synctest:
 
@@ -558,7 +598,13 @@ Gate, in synctest:
 - no action holds a tess path;
 - a timeout ends `Serve`.
 
-Outside the bubble: `ErrRunning` and stale reclaim.
+Outside the bubble:
+
+- two concurrent starters on a stale socket file: one listener, one
+  `ErrRunning`;
+- a `kill -9`'d holder's lock frees, and the next `Listen` binds;
+- enable runs before bootstrap; an already-loaded service is kickstarted,
+  not owned, and never booted out; a failed bootstrap leaves it not owned.
 
 ### C9 — `internal/cli` and `cmd/tess`
 
@@ -581,14 +627,20 @@ This commit:
 
 - switches to `buildGoModule`;
 - removes the bun attrs;
+- adds `VERSION`, carrying over `package.json`'s current version, and
+  points the flake (`lib.fileContents ./VERSION`) and `release.yml`
+  (`tr -d '[:space:]' < VERSION`) at it;
 - sets `profilePath` to `profile.cue`;
 - installs the schema;
 - updates the README and `devenv.nix`;
-- deletes `src/`, the Bun manifests, and the TS scripts.
+- deletes `src/`, `package.json`, `bun.lock`, the other Bun manifests, and
+  the TS scripts.
 
 Gate:
 
 - `nix flake check` and `nix build` pass on `macos-latest`;
+- `--version` matches `VERSION`;
+- no file in the repo reads `package.json`;
 - the bar holds (bench table in the PR body);
 - no `.ts` file remains;
 - a live smoke: plug and unplug, a window-churn burst, `kill -9` the daemon,
@@ -606,7 +658,7 @@ Gate:
 - [ ] C8 — daemon: hub, socket, registration, launchd, synctest gates
 - [ ] C9 — CLI and `main`: exit 130, argv corpus, `benchstartup`
 - [ ] C10 — flake cutover, `src/` deleted, the bar holds, live smoke
-- [ ] Downstream — one atomic orion PR (§ Migration)
+- [ ] Downstream — the consumer's profile and service-wiring change (§ Migration)
 
 ## Resolved decisions
 

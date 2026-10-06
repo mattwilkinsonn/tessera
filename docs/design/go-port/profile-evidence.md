@@ -70,9 +70,87 @@ The cost is package init, not binary size. `GODEBUG=inittrace=1` lists
 
 ## Why not the others
 
-| Language | Primary-source finding |
-| --- | --- |
-| Pkl | pkl-go `getCommandAndArgStrings` returns `"pkl", []string{}` and starts it as a subprocess. The nixpkgs `pkl` is the JVM build: 355 MiB closure, about 861 ms per `pkl eval`. |
-| KCL | kcl-go `go.mod`: `replace kcl-lang.io/lib => ./kcl-lang-lib`; the lib loads a native `libkcl` at runtime. |
-| Nickel | go-nickel README: "we haven't had any releases yet"; `nickel.go` has `#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/lib/darwin_arm64/libnickel_lang.a`. |
-| Dhall | dhall-golang latest release v6.0.2, published 2021-10-09. |
+Sources were read on 2026-10-05. Commit-pinned URLs are used where the
+claim is about a file at the head of a branch.
+
+### Pkl
+
+[apple/pkl-go `pkl/evaluator_manager_exec.go` at v0.14.0](https://github.com/apple/pkl-go/blob/v0.14.0/pkl/evaluator_manager_exec.go),
+symbols `getCommandAndArgStrings` and `init`. The Go binding starts the
+`pkl` CLI as a child process:
+
+```go
+	return "pkl", []string{}
+}
+
+func (e *execEvaluator) init() error {
+	e.cmd = e.getStartCommand()
+	...
+	err = e.cmd.Start()
+```
+
+The nixpkgs `pkl` 0.31.1 is the JVM build. Commands and output:
+
+```text
+$ nix path-info -rSh nixpkgs#pkl
+/nix/store/va7s008nkmzm8bd6p5qps8f93wbjjyyj-temurin-bin-21.0.12  334.9 MiB
+/nix/store/waizglgrr08fy6mp2832k4bpmjbi2p2i-pkl-0.31.1           355.3 MiB
+
+$ nix shell nixpkgs#pkl nixpkgs#hyperfine --command \
+    hyperfine -N --warmup 3 --runs 10 'pkl eval -f json my.pkl'
+  Time (mean ± σ):     645.6 ms ±  41.2 ms    [User: 1091.9 ms, System: 75.2 ms]
+  Range (min … max):   597.1 ms … 706.3 ms    10 runs
+```
+
+`my.pkl` is a profile-sized file that amends a typed `TessSchema.pkl`.
+
+### KCL
+
+[kcl-lang/kcl-go `go.mod` at 71884e1](https://github.com/kcl-lang/kcl-go/blob/71884e186f22810ceb68bab222c11d32e393068c/go.mod):
+
+```text
+replace kcl-lang.io/lib => ./kcl-lang-lib
+```
+
+[kcl-lang/lib `go/native/loader.go` at 2761803](https://github.com/kcl-lang/lib/blob/2761803f2737d45304801b9f4ea62f9a8db7d572/go/native/loader.go)
+installs the native library, then opens it:
+
+```go
+	err = install.InstallKcl(libPath)
+	...
+	libm, err := openLibrary(libFullPath)
+```
+
+[`go/native/open_lib_unix.go`](https://github.com/kcl-lang/lib/blob/2761803f2737d45304801b9f4ea62f9a8db7d572/go/native/open_lib_unix.go),
+symbol `openLibrary`:
+
+```go
+	return purego.Dlopen(name, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+```
+
+### Nickel
+
+[nickel-lang/go-nickel `README.md` at 827dc61](https://github.com/nickel-lang/go-nickel/blob/827dc613bd42a2ec9bca0ea822e4823b63e9142e/README.md):
+
+```text
+(You need to use `main` because we haven't had any releases yet.)
+```
+
+[`nickel.go`](https://github.com/nickel-lang/go-nickel/blob/827dc613bd42a2ec9bca0ea822e4823b63e9142e/nickel.go),
+the cgo preamble:
+
+```go
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/lib/darwin_arm64/libnickel_lang.a -lm
+...
+import "C"
+```
+
+### Dhall
+
+[philandstuff/dhall-golang latest release](https://github.com/philandstuff/dhall-golang/releases/tag/v6.0.2),
+from `GET https://api.github.com/repos/philandstuff/dhall-golang/releases/latest`:
+
+```text
+"tag_name": "v6.0.2",
+"published_at": "2021-10-09T11:39:48Z",
+```
