@@ -19,7 +19,9 @@ In the same change it moves event handling into the resident daemon from
 is native, and the behaviour tests are ported case for case. Anything that
 exists only to mirror the TS shape is deleted: the two CLI front ends, the
 Effect error classes, `RunOpts` injection, and the file-stamp waiter
-protocol, which the daemon replaces.
+protocol, which the daemon replaces. Where a well-adopted library does a
+job, the port uses it instead of porting the TS code (§ Global
+Constraints).
 
 ### Module layout
 
@@ -75,23 +77,54 @@ remove-then-add step is not needed.
 
 ### CLI
 
-The CLI uses only the standard library. It is a table-driven dispatcher,
-with one `flag.FlagSet` per subcommand. **Why no library:** after `--self`
-goes, the only flag left is `daemon --no-bootstrap`, and each subcommand
-takes at most one positional. cobra, urfave/cli and kong would buy no
-abstraction this table lacks, which the house "stdlib-first" rule forbids.
+The CLI is built on `github.com/spf13/cobra` v1.10.2. `internal/cli` holds
+a 21-row table (name, one-line help, choices or an integer argument, flags)
+and builds one `cobra.Command` per row from it. cobra supplies what the TS
+build wrote by hand: argument checks, per-command help, "Did you mean"
+suggestions, and shell completion. cobra is already in the module graph at
+that version, because `cuelang.org/go` v0.17.1 requires it. Linking it adds
+about 0.9 ms to process start at p50. The comparison with urfave/cli and
+kong is in [`profile-evidence.md`](profile-evidence.md) § "CLI library".
 
 - **Kinds.** 21 in total:
   - the 19 manual and keybind kinds of today's `SUBCOMMANDS` (all of them
     except `display-event` and `flex-event`);
   - `daemon`;
   - `wake`.
-- **Help and version.** `tess --help` lists the table. `tess <cmd> --help`
-  prints that command's usage and choices. `tess --version` prints
-  `tess v<version>`, linked in from `VERSION`. All three exit 0.
-- **Errors.** A parse failure prints `tess: <message>` and one usage line
-  on stderr. The program writes its output to an injected `io.Writer`.
-  Diagnostics go through `log/slog`.
+
+  cobra adds `help` and `completion` beside them, and the hidden
+  `__complete` command that the completion scripts call.
+- **Arguments.** Each row sets `Args`:
+  - a kind with choices sets `ValidArgs` to them and uses
+    `cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs)`. Its `Use`
+    names the choices, as in `snap {3col|50-50|columns}`;
+  - `focus-slot` uses `cobra.ExactArgs(1)` plus an `Args` check that runs
+    `strconv.Atoi`. So `2.0` and `2e0`, which the TS grammar accepted, are
+    now usage errors;
+  - every other kind uses `cobra.NoArgs`.
+
+  The root sets no `Args`. cobra's default for a root with subcommands then
+  rejects an unknown name with `unknown command "bogus" for "tess"` and a
+  suggestion. The only flag is `daemon --no-bootstrap`.
+- **Help and version.** Bare `tess` and `tess --help` list the kinds.
+  `tess <cmd> --help` and `tess help <cmd>` print that command's usage,
+  which names its choices. `tess --version` prints `tess v<version>` through
+  `SetVersionTemplate`, linked in from `VERSION`. All of these exit 0.
+- **Parse, then run.** A leaf's `RunE` only records its `commands.Command`.
+  `cli.Parse` runs the tree with `ExecuteContextC(ctx)` and returns that
+  command. It returns nil when cobra itself printed help, the version or a
+  completion script. `cli.Main` then runs the command, so parsing is tested
+  without a driver.
+- **Errors.** The root sets `SilenceErrors` and `SilenceUsage`, so cobra
+  prints nothing on a failure. `Parse` returns a `*cli.UsageError` that
+  carries cobra's message and the failing command's use line. `cli.Main`
+  prints `tess: <message>` and `usage: <use line>` on stderr and exits 1.
+  Output goes to the injected writers (`SetOut`, `SetErr`). Diagnostics go
+  through `log/slog`.
+- **Completion.** `tess completion bash|zsh|fish|powershell` prints a
+  script, and choices complete from `ValidArgs`. The flake installs the
+  bash, zsh and fish scripts with `installShellCompletion`, as the nixpkgs
+  `gh` package does.
 
 ### Profile format
 
@@ -184,10 +217,12 @@ environment variable is read at event time. No action holds a tess path.
 sketchybar pair stays registered directly. The user's yabai startup config
 runs `tess wake` when yabai starts.
 
-**A lock file is the lock.** `daemon.Listen` opens `<socket>.lock` and
-takes `flock(LOCK_EX|LOCK_NB)` on it for the daemon's whole life. The
-kernel drops the lock when the process dies, even on SIGKILL, so the lock
-never goes stale. The file holds no content and is never removed.
+**A lock file is the lock.** `daemon.Listen` takes
+`flock.New(<socket>.lock).TryLock()` (`github.com/gofrs/flock` v0.13.1,
+which calls `flock(LOCK_EX|LOCK_NB)`) and holds it for the daemon's whole
+life. The kernel drops the lock when the process dies, even on SIGKILL, so
+the lock never goes stale. The file holds no content and is never removed.
+The apply and laptop locks use the same package (§ Runtime contract).
 
 - If the lock is held, `Listen` returns `ErrRunning`, and `tess daemon`
   exits 0.
@@ -195,9 +230,9 @@ never goes stale. The file holds no content and is never removed.
   removes any leftover socket file without probing it, then binds.
 
 Probe, unlink and bind therefore never race. The listener's `Close` unlinks
-the socket first and releases the lock second. Two opens of one file
-conflict under `flock` even inside one process (probed: the second call
-returns `EWOULDBLOCK`), so the race test can run in-process.
+the socket first and releases the lock second. Two `*flock.Flock` handles
+on one path conflict even inside one process (probed: the second
+`TryLock` returns `false, nil`), so the race test can run in-process.
 
 **Manual starts.** The launchd agent is the normal way to run the daemon.
 Its `KeepAlive` must be `{ SuccessfulExit = false; }`, so launchd restarts
@@ -208,12 +243,16 @@ agent out first. If a manual daemon holds the lock when the agent starts,
 the agent exits 0 and stays down until it is kickstarted.
 
 **Protocol.** Each connection carries one line, `<event>\n` or `wake\n`.
-The daemon reads the line under a one-second deadline and closes the
-connection at once, because BSD `nc` stays open until the peer closes. It
-logs and drops any unknown line.
+The daemon reads the line with `bufio.Reader.ReadString('\n')` under a
+one-second deadline and closes the connection at once, because BSD `nc`
+stays open until the peer closes. It logs and drops any unknown line. The
+standard `net` and `bufio` packages cover this exact operation, so the
+protocol takes no framing library.
 
-**In-memory debounce.** `daemon.Hub` holds one stamp (`time.Time`) and one
-`running` flag per channel:
+**In-memory debounce.** The debounce is hand-rolled, because no library
+carries the H7 display-quiet gate or the `actedOn` capture (§ Alternatives
+considered). `daemon.Hub` holds one stamp (`time.Time`) and one `running`
+flag per channel:
 
 - the display channel: `display_added`, `display_removed`, `display_moved`;
 - the flex channel: the four application and window events.
@@ -237,7 +276,7 @@ arrives during the work always re-arms the channel.
 **H2 stays on disk.** The flex work reads the 8 s TTL guard
 (`effects.SignalsSuppressed`) at its `/tmp` path. A held guard, or a
 contended converge, returns `Restamp`, and the waiter writes "now" and waits
-again. The apply and laptop mkdir locks also stay on disk, because a manual
+again. The apply and laptop locks also stay on disk, because a manual
 `tess apply` is still a separate process. The display work is
 `commands.RunDisplayCascade`. sketchybar is nudged once, after the channel
 settles.
@@ -298,6 +337,11 @@ the root context is already cancelled at that point.
 `--no-bootstrap` skips all of this for the dev smoke. tess never runs
 `sudo`; loading yabai's scripting addition stays the user's yabai config's job.
 
+tess runs `launchctl` through `os/exec` behind the `Launchctl` interface.
+It reads no plist, so it needs no plist library. The one Go service library
+that meets the dependency bar drives launchd through the legacy `load` and
+`unload` verbs, and it cannot do these steps (§ Alternatives considered).
+
 ### Runtime contract
 
 This section holds only what callers depend on.
@@ -322,15 +366,21 @@ This section holds only what callers depend on.
 
   On cancellation:
   - the yabai child stops;
-  - the deferred `Release` calls and the guard removal run;
+  - the deferred `Unlock` calls and the guard removal run;
   - `cli.Main` returns 130.
 
   Lock rules:
-  - `AcquireLockOrSkip` (apply) never reclaims, so a lock left behind
-    would block every later `apply`.
-  - `AcquireLock` (laptop) reclaims a stale PID and treats EPERM as alive.
-    A PID file that is missing or does not parse counts as stale.
-  - The lock and guard paths stay as in `src/effects/constants.ts`.
+  - The apply and laptop locks are `gofrs/flock` locks on
+    `os.TempDir()/tessera-apply.lock` and `os.TempDir()/tessera-laptop.lock`,
+    in the same `$TMPDIR` as the socket. They replace the mkdir locks of
+    `src/effects/locks.ts`.
+  - `effects.AcquireLock` gives up on contention for both. A contended
+    `apply` exits 0. A contended `laptop` exits 1 silently, or its flex
+    work returns `Restamp`.
+  - The kernel drops a `flock` lock when its holder dies, so neither lock
+    goes stale. The PID file, the stale-PID reclaim and the EPERM rule are
+    deleted.
+  - The guard path stays as in `src/effects/constants.ts`.
 - **yabai argv.** The argv each command sends is the contract with yabai.
   It is pinned two ways:
   - the argv tables ported from `src/driver/yabai.test.ts`;
@@ -351,8 +401,11 @@ This section holds only what callers depend on.
 - **Stub-yabai argv corpus.** `TESS_YABAI` points at a recording stub,
   built in `TestMain` from `internal/wm/yabai/testdata/stubyabai`, which
   serves `windows.live.json`. There is one case per keybind subcommand and
-  choice. Expected argv files live in `testdata/argv/` and are refreshed
-  with `go test -update`, then reviewed.
+  choice. Expected argv files live in `testdata/argv/` and are checked with
+  `golden.Assert` from `gotest.tools/v3/golden`. `go test -update` rewrites
+  them, and the diff is reviewed.
+- **Assertions.** Tests use `gotest.tools/v3/assert`: `assert.NilError`,
+  `assert.Equal`, and `assert.DeepEqual` with go-cmp options for structs.
 - **Time.** No test calls `time.Sleep`. Every daemon and waiter test runs
   inside `synctest.Test` and uses event gates (channels, `synctest.Wait`).
   Socket I/O does not block durably inside a bubble, so `Serve` takes a
@@ -416,6 +469,10 @@ its own tests, so the stack stays bisectable. The last commit switches the
 flake and deletes `src/`. After that PR merges, the consumer updates its
 profile and service wiring in one change. Reverting that change rolls back.
 
+The consumer's old layout scripts stop being invoked at cutover. Nothing
+else then takes the old mkdir locks, so the apply and laptop locks move to
+new `flock` paths with no shared lock protocol to keep.
+
 ## Alternatives considered
 
 One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
@@ -427,7 +484,29 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 - **YAML plus JSON Schema.** The types sit outside the loader and can drift.
 - **Typed home-manager option.** It types Nix users only. A later
   `builtins.toJSON` render needs no new code, because CUE loads JSON.
-- **cobra, urfave/cli, kong.** No abstraction over a 21-row table (§ CLI).
+- **urfave/cli v3.14.0.** An unknown command exits 3 with "No help topic",
+  and its completion offers `help` but not the choices.
+- **kong v1.16.1.** It has no built-in completion (the `kongplete` add-on
+  has 48 importers). Each command's arguments and choices are struct tags,
+  even under `kong.DynamicCommand`, so the kind table cannot set them.
+- **bep/debounce v1.2.1.** 277 importers. It is a trailing-edge timer, with
+  no H7 gate and no restamp.
+- **kardianos/service v1.3.0.** 1,591 importers, but it drives launchd with
+  `load`, `unload` and `list`, and installs its own plist. tess bootstraps
+  upstream's plists under upstream labels.
+- **howett.net/plist v1.0.1.** 543 importers, and tess reads no plist.
+- **adrg/xdg v0.5.3.** 1,197 importers, but on macOS it defaults to
+  `~/Library/Application Support` and `~/Library/Caches`. tess keeps the
+  `~/.config` and `~/.cache` defaults its users already have.
+- **deckarep/golang-set v2.9.0.** 1,842 importers, but a
+  `map[T]struct{}` with `maps.Clone` and `maps.Equal` covers every set
+  operation the engine uses. The module also requires the MongoDB driver
+  module for its BSON methods.
+- **testify v1.12.1.** 20,797 importers for `require`. `gotest.tools/v3`
+  is already required for golden files and ships `assert` with go-cmp
+  options, so a second assertion module adds nothing.
+- **samber/oops.** Nothing uses it; `%w` and `errors.Join` cover the error
+  rule.
 - **launchd socket activation.** The only cgo-free binding is
   `bored-engineer/go-launchd`, with 7 stars and a last push on 2024-12-20.
   The `flock` lock file covers single-instance without it.
@@ -441,10 +520,31 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 - **Toolchain.** `go.mod` declares `go 1.26` (nixpkgs Go 1.26.7). devenv
   supplies that Go and `golangci-lint` 2.13.2. CI runs on `ubuntu-latest`.
   `nix build` runs on `macos-latest`.
-- **Dependencies.** Runtime: `cuelang.org/go` v0.17.1, `golang.org/x/sync`,
-  `github.com/samber/oops`, and `github.com/samber/mo` (`Option` only).
-  Tests: `github.com/google/go-cmp` v0.7.0. Anything else needs reviewer
-  sign-off.
+- **Dependencies.** Prefer a well-adopted, maintained library to
+  hand-rolled code (Resolved decision 5). Keep the standard library only
+  where it already covers the exact operation. A module meets the bar
+  when:
+  - pkg.go.dev lists at least 1,000 known importers, and named projects
+    pin it. pkg.go.dev counts only non-test imports, so a test-only module
+    is measured by its most-imported package;
+  - it has a commit or a release in the last year;
+  - it needs no cgo.
+
+  The modules, with sources and dates in
+  [`profile-evidence.md`](profile-evidence.md) § "Library evidence":
+
+  | Module | Version | Use | Importers |
+  | --- | --- | --- | ---: |
+  | `github.com/spf13/cobra` | v1.10.2 | the CLI (§ CLI) | 195,884 |
+  | `github.com/gofrs/flock` | v0.13.1 | the daemon, apply and laptop locks | 1,499 |
+  | `golang.org/x/sync` | v0.23.0 | `errgroup` | 30,110 |
+  | `github.com/samber/lo` | v1.53.0 | transforms `slices` and `maps` lack: `Map`, `Filter`, `FlatMap`, `Reduce`, `Uniq`, `GroupBy` | 12,533 |
+  | `cuelang.org/go` | v0.17.1 | the profile; below the bar, kept by RIG-4526 ruling 1 | 692 |
+  | `github.com/samber/mo` | v1.17.0 | `Option` only; below the bar, kept for `ClaimSet` (C4) | 434 |
+  | `gotest.tools/v3` (tests) | v3.5.2 | `assert`, `golden` | 1,570 (`assert`) |
+  | `github.com/google/go-cmp` (tests) | v0.7.0 | diff options for `assert.DeepEqual` | 5,704 |
+
+  A module outside this table needs the same evidence in the PR body.
 - **House slate.** The Go idioms record applies as written:
   - golangci-lint `default: all`, with `exhaustive` and `gochecksumtype` on;
   - no `panic` in library code;
@@ -546,16 +646,16 @@ The locks, guard, flex-order state, nudge, paths and predicates, plus
 
 Interfaces:
 
-- `AcquireLock(dir string) (*Lock, bool, error)`
-- `AcquireLockOrSkip(dir string) (*Lock, bool, error)`
-- `(*Lock).Release() error`
+- `AcquireLock(path string) (*flock.Flock, bool, error)`, which calls
+  `TryLock`; the caller defers `Unlock`
 - `IsQuiet(now, stamp time.Time, d time.Duration) bool`
 - `IsFlexQuiet(now, own, display time.Time) bool`
 - `SignalsSuppressed(path string, now time.Time) (bool, error)`
 
 Gate:
 
-- a SIGKILLed child's lock is reclaimed;
+- a held lock makes a second `AcquireLock` return `false, nil`, in-process;
+- a SIGKILLed child's lock is free at once, with no reclaim step;
 - the predicate edge cases are green.
 
 ### C7 — `internal/commands`
@@ -611,17 +711,35 @@ Outside the bubble:
 
 ### C9 — `internal/cli` and `cmd/tess`
 
-The dispatcher, help, `daemon`, `wake`, `main`, and `tools/benchstartup`.
+The cobra command tree built from the kind table, `daemon`, `wake`, `main`,
+and `tools/benchstartup`.
 
 Interfaces:
 
-- `Parse(argv []string) (commands.Command, error)`
+- `Parse(ctx context.Context, argv []string, version string, stdout, stderr io.Writer) (commands.Command, error)`;
+  a nil command with a nil error means cobra printed help, the version or a
+  completion script. `Main` passes `deps.Version`, which `cmd/tess` sets
+  from `main.version`
+- `type UsageError struct { Msg, UseLine string }`, returned by `Parse` for
+  every cobra failure
 - `Main(ctx context.Context, argv []string, stdout, stderr io.Writer, deps Deps) int`
+
+`Parse` always passes a non-nil slice to `SetArgs`. With a nil slice, cobra
+v1.10.2 reads `os.Args[1:]` (`Command.ExecuteC`), which would make the
+tests read the test binary's flags.
 
 Gate:
 
+- each of the 21 kinds parses to its `commands.Command`;
+- `bogus` gives a `*UsageError` that names `"bogus"`, and `Main` exits 1;
+- a choice outside `ValidArgs`, an extra argument, and `focus-slot 2.0`
+  give a `*UsageError`;
+- bare `tess`, `--help`, `snap --help` and `--version` return a nil
+  command and exit 0;
+- `completion zsh` exits 0, and `__complete snap ""` lists the three
+  choices;
 - the stub-yabai corpus;
-- SIGTERM during a stub-blocked `apply` exits 130 and leaves no lock;
+- SIGTERM during a stub-blocked `apply` exits 130 and leaves the lock free;
 - `wake` with no daemon exits 1.
 
 ### C10 — Cutover
@@ -656,10 +774,10 @@ Gate:
 - [ ] C3 — `wm` contract and fake, with labelled `AddSignal`
 - [ ] C4 — engine, with sealed `Op` and `ConvergeAction`
 - [ ] C5 — yabai driver and stub yabai
-- [ ] C6 — effects and executor, with cancel-releases-lock
+- [ ] C6 — effects and executor, with `gofrs/flock` locks and cancel-releases-lock
 - [ ] C7 — commands, with `Wake`
 - [ ] C8 — daemon: hub, socket, registration, launchd, synctest gates
-- [ ] C9 — CLI and `main`: exit 130, argv corpus, `benchstartup`
+- [ ] C9 — cobra CLI and `main`: completion, exit 130, argv corpus, `benchstartup`
 - [ ] C10 — flake cutover, `src/` deleted, the bar holds, live smoke
 - [ ] Downstream — the consumer's profile and service-wiring change (§ Migration)
 
@@ -678,3 +796,14 @@ Matt ruled on RIG-4526:
 4. **Daemon.** "Keep. daemon is best pattern for this imo, yabai and skhd
    are already daemons/services". It is built here in Go and lands in the
    same PR (§ Resident daemon).
+
+On 2026-10-05 Matt ruled on libraries:
+
+5. **Libraries.** "i'd rather use libraries if they are well adopted." He
+   added that "stdlibs tend to lag behind with features most of the time."
+   The dependency bar is in § Global Constraints. Under it, the CLI moves to
+   cobra, the locks move to `gofrs/flock`, slice transforms the standard
+   library lacks use `samber/lo`, and the tests use `gotest.tools/v3`.
+   `samber/oops` is dropped. The debounce, the socket line protocol and the
+   `launchctl` calls stay as written, for the reasons under § Alternatives
+   considered and § Resident daemon.
