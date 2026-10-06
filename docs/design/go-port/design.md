@@ -181,8 +181,8 @@ yabai runs the action as `/usr/bin/env sh -c <command>` (`event_signal.c`).
 The daemon writes the resolved absolute path into the action, so no
 environment variable is read at event time. No action holds a tess path.
 `init`, `display-event`, `flex-event` and `--self` are deleted. The
-sketchybar pair stays registered directly. yabai's config (`yabairc`) runs
-`tess wake` when yabai starts.
+sketchybar pair stays registered directly. The user's yabai startup config
+runs `tess wake` when yabai starts.
 
 **A lock file is the lock.** `daemon.Listen` opens `<socket>.lock` and
 takes `flock(LOCK_EX|LOCK_NB)` on it for the daemon's whole life. The
@@ -296,7 +296,7 @@ and owns neither. Bootout runs under
 the root context is already cancelled at that point.
 
 `--no-bootstrap` skips all of this for the dev smoke. tess never runs
-`sudo`; the `--load-sa` line stays in `yabairc`.
+`sudo`; loading yabai's scripting addition stays the user's yabai config's job.
 
 ### Runtime contract
 
@@ -373,7 +373,7 @@ and `checks.bun-lock` go.
 **Version source.** A root `VERSION` file holds the bare version and
 replaces `package.json`'s `version` field:
 
-- the flake sets `version = lib.fileContents ./VERSION` and passes it as
+- the flake sets `version = pkgs.lib.fileContents ./VERSION` and passes it as
   `-X main.version=${version}`;
 - `release.yml` reads it with `tr -d '[:space:]' < VERSION`.
 
@@ -604,7 +604,10 @@ Outside the bubble:
   `ErrRunning`;
 - a `kill -9`'d holder's lock frees, and the next `Listen` binds;
 - enable runs before bootstrap; an already-loaded service is kickstarted,
-  not owned, and never booted out; a failed bootstrap leaves it not owned.
+  not owned, and never booted out; a failed bootstrap leaves it not owned;
+- with one service already loaded and the other bootstrapped successfully,
+  only the bootstrapped one is recorded as owned, and clean shutdown boots
+  out exactly that one.
 
 ### C9 — `internal/cli` and `cmd/tess`
 
@@ -628,7 +631,7 @@ This commit:
 - switches to `buildGoModule`;
 - removes the bun attrs;
 - adds `VERSION`, carrying over `package.json`'s current version, and
-  points the flake (`lib.fileContents ./VERSION`) and `release.yml`
+  points the flake (`pkgs.lib.fileContents ./VERSION`) and `release.yml`
   (`tr -d '[:space:]' < VERSION`) at it;
 - sets `profilePath` to `profile.cue`;
 - installs the schema;
