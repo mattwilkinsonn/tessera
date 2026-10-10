@@ -83,14 +83,13 @@ linters:
         linters: [depguard, gosec]
       - path: config/configtest/.*\.go
         linters: [depguard, goconst]
-      - path: config/(validate|parse)\.go
-        linters: [perfsprint]
-      - path: _test\.go
-        linters: [gosec]
-        text: "G304"
       - path: config/(parse|parse_test)\.go
         linters: [gosec]
         text: "G304"
+      # The driver execs the configured yabai and the profile's own spawn argv.
+      - path: wm/yabai/driver\.go
+        linters: [gosec]
+        text: "G204"
 
 formatters:
   enable:
