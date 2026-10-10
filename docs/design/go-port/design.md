@@ -148,6 +148,30 @@ binary, so the schema and `Validate` always match. Its shape follows
   member has exactly one track and no `weights`. The `columns` and `rows`
   members share one track shape.
 
+The source lines, from `src/config/types.ts`. `WindowSpec` holds regexes:
+
+```ts
+	app: RegExp;
+	title?: RegExp;
+```
+
+`DeskLayout` has one `kind` field for all three variants:
+
+```ts
+	kind: TrackKind | "stack";
+```
+
+`Profile` requires `desk` and `deskSlots`, and keys `laptopStackApps` by
+app name:
+
+```ts
+	desk: ReadonlyArray<DeskLayout>;
+	...
+	deskSlots: ReadonlyArray<DeskSlot>;
+	...
+	laptopStackApps: Readonly<Record<string, true>>;
+```
+
 Every object is a `z.strictObject`. `tsc` does not catch an extra, mistyped
 key in an object literal that a callback returns, so the render must reject
 unknown keys at run time. A strict object does that.
@@ -204,7 +228,8 @@ type WindowSpec struct {
 	AppRE, TitleRE *regexp.Regexp `json:"-"`
 }
 
-// Both members of the Zod desk union; Validate enforces the kind rules.
+// One struct for all three desk variants (stack, columns, rows).
+// Validate enforces the rules for each kind.
 type DeskLayout struct {
 	Display DisplayName `json:"display"`
 	Label   string      `json:"label"`
@@ -242,9 +267,15 @@ rejects the zero value of every field Go needs:
 - a window's `app`;
 - a layout's `display`, `label`, `kind` and `tracks`;
 - a topology's `name` and `displays`;
-- a desk slot's `name`.
+- a desk slot's `name`;
+- the profile's `desk`. A missing or empty `desk` fails. This rule is new:
+  `validateProfile` accepts an empty `desk`.
 
-A list or map that may be empty means the same thing when it is missing.
+`windows`, `deskSlots`, `laptopPinned` and `laptopStackApps` are required
+keys in the Zod schema, and each may be empty. `validateProfile` never
+reads them, so an empty `deskSlots` is allowed today, and Go keeps that.
+Go reads a missing one of these as empty. `topologies` and `weights` are
+optional, and a missing one means none.
 
 **Validate.** `config.Validate` then checks every rule and returns all
 violations with `errors.Join`:
@@ -253,14 +284,33 @@ violations with `errors.Join`:
   load. The result is stored in `AppRE` and `TitleRE`;
 - `display` and `onDisplay` are `g9`, `aw` or `laptop`, and `kind` is
   `stack`, `columns` or `rows`;
-- every rule of `validateProfile` (`src/config/validate.ts`): positive
-  weights; chain ratios between 0.1 and 0.9 over every subsequence
-  (`chainRatios`); weight-table keys of at least 2 that equal the vector
-  length; one track and no weights for a stack; no weights for a one-track
-  layout; weights as long as tracks; and each topology laying out exactly
-  its declared displays, once each;
+- every rule of `validateProfile` (`src/config/validate.ts`):
+  - weights are finite and greater than 0;
+  - chain ratios are between 0.1 and 0.9 over every subsequence
+    (`chainRatios`);
+  - a weight-table key is at least 2 and equals its vector length;
+  - a layout has at least one track, and each track has at least one
+    window name;
+  - a stack has exactly one track and no weights;
+  - a one-track layout sets no weights;
+  - weights are as long as tracks;
+  - a topology lays out each declared display once, and no other display;
 - every name in `tracks`, `deskSlots` and `laptopPinned` is a key of
   `windows`. A typo there silently claims nothing today.
+
+The track and stack rules, from `layoutViolations` in
+`src/config/validate.ts`:
+
+```ts
+	if (layout.tracks.length === 0) {
+		violations.push(`${at}: layout must have at least one track`);
+	}
+	for (const [index, track] of layout.tracks.entries()) {
+		if (track.length === 0) {
+	...
+	if (layout.kind === "stack") {
+		if (layout.tracks.length !== 1) {
+```
 
 **Drift test.** `schema/full.ts` is a profile that sets every optional
 field to a non-zero value. The schema package renders it to
@@ -725,6 +775,8 @@ Gate:
 - the drift test passes on `full.json`;
 - JSON with an unknown key fails `Parse`, and JSON with no `app` or no
   `width` fails `Validate`;
+- a layout with no tracks, a track with no window names, and a missing or
+  empty `desk` each fail `Validate`; an empty `deskSlots` passes;
 - the pattern `(?<=x)y` fails `Validate` with the `regexp` error;
 - each `validate.test.ts` case fails or passes through `Parse`, as in TS;
 - an unknown name in `tracks` fails;
