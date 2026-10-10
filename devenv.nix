@@ -1,10 +1,7 @@
 { pkgs, inputs, ... }:
 
-# Tessera dev shell — the single source of the dev + CI toolchain for this
-# single-tool repo. Deliberately minimal: Tessera is one zero-dependency
-# Bun/TypeScript CLI (`tess`), so the shell is just Bun + Biome + the VCS and
-# docs linters. No monorepo build system — `bun test` / `bun run typecheck` /
-# `bun run check` ARE the gate, run directly and by CI (.github/workflows/ci.yml).
+# Tessera dev shell — the single source of the Bun/TypeScript and Go toolchains.
+# CI uses the same Go version and linter release.
 
 {
   packages = with pkgs; [
@@ -15,8 +12,10 @@
     # Docs + workflow linters, matching what CI runs.
     markdownlint-cli2
     actionlint
-  ];
+    go_1_27
+    golangci-lint
 
+  ];
   languages.javascript = {
     enable = true;
     # Bun is the runtime, package manager, test runner, and bundler. Biome and

@@ -1,8 +1,7 @@
 name: ci
 
-# The gate for every PR and push to main. Tessera is a single zero-dependency
-# Bun/TypeScript tool, so CI is just Bun: install, typecheck, lint, test — the
-# same three checks the devenv shell runs locally. No monorepo build system.
+# The gate for every PR and push to main. Bun/TypeScript, Go, and Nix checks
+# run independently so failures are isolated by toolchain.
 
 "on":
   push:
@@ -40,6 +39,32 @@ jobs:
 
       - name: Test
         run: bun test
+
+  go:
+    name: Go · vet · lint · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.1"
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint
+        run: golangci-lint run
+
+      - name: Test
+        run: go test -race ./...
 
   nix:
     name: nix flake · darwin build

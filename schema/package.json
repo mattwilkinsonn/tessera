@@ -1,0 +1,25 @@
+{
+  "name": "tessera-wm",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Typed profile schema for Tessera window-manager layouts",
+  "license": "MIT",
+  "types": "./profile.ts",
+  "exports": {
+    ".": {
+      "types": "./profile.ts"
+    }
+  },
+  "peerDependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3",
+    "zod": "4.6.5"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}

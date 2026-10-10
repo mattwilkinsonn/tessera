@@ -1,0 +1,99 @@
+# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+version: "2"
+
+linters:
+  default: all
+  enable:
+    - gochecksumtype
+    - exhaustive
+    - sloglint
+  disable:
+    - wsl # formatting religion: blank-line and cuddle style is not correctness
+    - wsl_v5 # formatting religion: successor to wsl, same stylistic concern
+    - nlreturn # formatting religion: blank lines before returns are style
+    - lll # formatting religion: long names and test messages can exceed arbitrary limits
+    - whitespace # formatting religion: gofmt owns whitespace
+    - embeddedstructfieldcheck # formatting religion: blank lines between fields are cosmetic
+    - exhaustruct # fights Go idiom: partial literals and zero values are idiomatic
+    - exhaustruct_v5 # fights Go idiom: successor to exhaustruct, same zero-value concern
+    - varnamelen # fights Go idiom: short local names are idiomatic Go
+    - ireturn # fights Go idiom: returning interfaces is idiomatic Go
+    - noctx # fights Go idiom: main owns process lifetime; I/O APIs accept contexts
+    - gochecknoglobals # fights Go idiom: sentinel errors are package-level vars by design
+    - err113 # fights Go idiom: inline wrapped errors are idiomatic
+    - noinlineerr # fights Go idiom: short if-scoped errors are idiomatic Go
+    - wrapcheck # fights Go idiom: errors are wrapped at package boundaries
+    - mnd # fights Go idiom: self-describing protocol numbers can be clear in context
+    - nonamedreturns # fights Go idiom: named returns are valid for deferred cleanup
+    - godoclint # undeclared policy: descriptive package comments need no fixed template
+    - tagliatelle # undeclared policy: no struct-tag naming policy is established
+    - importas # undeclared policy: no import-alias convention is established
+    - testpackage # undeclared policy: tests may inspect package internals
+    - paralleltest # undeclared policy: not every test can run in parallel
+    - gomodguard # undeclared policy: no module allow-list is established
+    - depguard # undeclared policy: this module has no package allow-list
+    - godox # wrong workflow: tracked TODOs with issue refs are useful
+
+  settings:
+    cyclop:
+      max-complexity: 55
+    gocyclo:
+      min-complexity: 55
+    gocognit:
+      min-complexity: 110
+    funlen:
+      lines: 200
+      statements: 110
+    maintidx:
+      under: 15
+    nestif:
+      min-complexity: 8
+    goconst:
+      ignore-tests: true
+      min-occurrences: 12
+    gochecksumtype:
+      default-signifies-exhaustive: false
+    exhaustive:
+      default-signifies-exhaustive: true
+    sloglint:
+      no-mixed-args: true
+      kv-only: false
+      key-naming-case: snake
+      static-msg: false
+    forbidigo:
+      forbid:
+        - pattern: '^time\.Sleep$'
+          msg: fixed sleeps are nondeterministic; wait on observable state instead
+        - pattern: '^(fmt\.Print(|f|ln)|print|println)$'
+          msg: use log/slog instead of debug prints
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
+
+  exclusions:
+    generated: strict
+    warn-unused: true
+    rules:
+      - path: _test\.go
+        linters: [depguard, gosec]
+      - path: config/configtest/.*\.go
+        linters: [depguard, goconst]
+      - path: config/(validate|parse)\.go
+        linters: [perfsprint]
+      - path: _test\.go
+        linters: [gosec]
+        text: "G304"
+      - path: config/(parse|parse_test)\.go
+        linters: [gosec]
+        text: "G304"
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: strict
