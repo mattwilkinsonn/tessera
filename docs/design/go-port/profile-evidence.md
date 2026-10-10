@@ -1,160 +1,35 @@
-# Go port — profile language and library evidence
+# Go port — profile and library evidence
 
 *Supporting file for [`design.md`](design.md) § Profile format, § CLI and
-§ Global Constraints. All probes ran on macOS arm64 with cue v0.17.1,
-`cuelang.org/go` v0.17.1, go1.26.7, pkl 0.31.1 and hyperfine 1.20.0, from
-nixpkgs.*
+§ Global Constraints. The library probes ran on macOS arm64 with go1.26.7
+and hyperfine 1.20.0, from nixpkgs.*
 
-## CUE expresses the profile rules
+## Profile as JSON
 
-`cue vet -c` against a schema with the cross-field rules gave 12 correct
-verdicts out of 12:
+These facts were checked on 2026-10-10.
 
-```text
-ok accept: good-layout
-ok reject: weights-len :: x.weights: invalid value [1,2,3] (does not satisfy list.MaxItems(2)): len(list) > MaxItems(2) (3 > 2):
-ok reject: one-track-weights :: explicit error (_|_ literal) in source:
-ok reject: stack-weights :: explicit error (_|_ literal) in source:
-ok accept: good-table
-ok reject: key-one :: x.columns."1": field not allowed:
-ok reject: key-text :: x.rows.two: field not allowed:
-ok accept: good-topology
-ok reject: topo-missing :: x._check: incompatible list lengths (1 and 2)
-ok reject: topo-undeclared :: x._check: incompatible list lengths (1 and 2)
-ok reject: topo-duplicate :: x._laidOut: invalid value ["g9","g9"] (does not satisfy list.UniqueItems):
-ok reject: bad-regex :: x.app: invalid value "(?<=x)y" (does not satisfy regexp.Valid): error parsing regexp: invalid named capture: `(?<=x)y`:
-```
+- **Go 1.27.** `encoding/json/v2` is GA in Go 1.27. On Go 1.26 it builds
+  only with `GOEXPERIMENT=jsonv2`, so `go.mod` declares `go 1.27`.
+- **Unknown members.** The loader decodes with:
 
-The Go loader shape (`cue.Scope(schema)`, unify with `#Profile`, validate
-concrete, `Decode`) on a bad and a good file:
+  ```go
+  json.Unmarshal(data, &p, json.RejectUnknownMembers(true))
+  ```
 
-```text
-ERROR profile load failed err="profile bad.cue: #Profile.laptopStakApps.0: field not allowed:\n    bad.cue:5:18\n#Profile.windows.editor.app: invalid value \"(?<=x)\" (does not satisfy regexp.Valid): error parsing regexp: invalid named capture: `(?<=x)`:\n    bad.cue:3:16\n    schema.cue:12:10\n"
-exit=1
-loaded in 909.5µs: browser app="Browser" matches=true weights.columns[3]=[] stack=[Chat]
-exit=0
-```
+  A member with no Go field fails the decode. A Go field with no member
+  keeps its zero value, so `Validate` checks the required fields.
+- **Zod 4.** Parsed output keeps the schema's key order, so a render is
+  byte-stable. `z.toJSONSchema` emits a JSON Schema from a Zod schema.
+- **tsc and callbacks.** `tsc` does not report an extra, mistyped key in an
+  object literal that a callback returns. For example:
 
-`Decode` fills Go types directly: `columns[3]=[3 4 3] arc="^Arc$"
-matches(Arc)=true`.
+  ```ts
+  // tsc accepts the mistyped key "wieghts" in the callback's literal.
+  const desk: DeskLayout[] = names.map((name) => ({ ...stack(name), wieghts: [1] }));
+  ```
 
-`cue vet -c user/<file> schema.cue` with no `cue.mod`:
-
-```text
--- good.cue
-accepted
--- bad.cue
-laptopStackApps: field is required but not present:
-windows.arc.app: field is required but not present:
--- rendered.json
-accepted
-```
-
-A `CGO_ENABLED=0` build links only libSystem, libresolv, CoreFoundation and
-Security.
-
-## Process start
-
-hyperfine `-N --warmup 20 --runs 200`; p50 and p90 from the exported JSON.
-
-| Binary | Mean | p50 / p90 |
-| --- | --- | --- |
-| empty Go `main` | 2.7 ± 0.2 ms | 2.65 / 2.91 ms |
-| YAML decoder probe | 3.4 ± 0.5 ms | 3.36 / 3.92 ms |
-| CUE linked, no load | 8.6 ± 2.2 ms | 8.16 / 9.70 ms |
-| CUE load of a profile | 9.0 ± 0.9 ms | 8.79 / 9.54 ms |
-| empty `main` plus a 15 MB blob | 3.9 ± 2.0 ms | — |
-
-The cost is package init, not binary size. `GODEBUG=inittrace=1` lists
-`cockroachdb/apd/v3` as the largest single package. The Bun base in
-`effect4-cli.md` is 18.8 ms p50.
-
-## Why not the others
-
-Sources were read on 2026-10-05. Commit-pinned URLs are used where the
-claim is about a file at the head of a branch.
-
-### Pkl
-
-[apple/pkl-go `pkl/evaluator_manager_exec.go` at v0.14.0](https://github.com/apple/pkl-go/blob/v0.14.0/pkl/evaluator_manager_exec.go),
-symbols `getCommandAndArgStrings` and `init`. The Go binding starts the
-`pkl` CLI as a child process:
-
-```go
-	return "pkl", []string{}
-}
-
-func (e *execEvaluator) init() error {
-	e.cmd = e.getStartCommand()
-	...
-	err = e.cmd.Start()
-```
-
-The nixpkgs `pkl` 0.31.1 is the JVM build. Commands and output:
-
-```text
-$ nix path-info -rSh nixpkgs#pkl
-/nix/store/va7s008nkmzm8bd6p5qps8f93wbjjyyj-temurin-bin-21.0.12  334.9 MiB
-/nix/store/waizglgrr08fy6mp2832k4bpmjbi2p2i-pkl-0.31.1           355.3 MiB
-
-$ nix shell nixpkgs#pkl nixpkgs#hyperfine --command \
-    hyperfine -N --warmup 3 --runs 10 'pkl eval -f json my.pkl'
-  Time (mean ± σ):     645.6 ms ±  41.2 ms    [User: 1091.9 ms, System: 75.2 ms]
-  Range (min … max):   597.1 ms … 706.3 ms    10 runs
-```
-
-`my.pkl` is a profile-sized file that amends a typed `TessSchema.pkl`.
-
-### KCL
-
-[kcl-lang/kcl-go `go.mod` at 71884e1](https://github.com/kcl-lang/kcl-go/blob/71884e186f22810ceb68bab222c11d32e393068c/go.mod):
-
-```text
-replace kcl-lang.io/lib => ./kcl-lang-lib
-```
-
-[kcl-lang/lib `go/native/loader.go` at 2761803](https://github.com/kcl-lang/lib/blob/2761803f2737d45304801b9f4ea62f9a8db7d572/go/native/loader.go)
-installs the native library, then opens it:
-
-```go
-	err = install.InstallKcl(libPath)
-	...
-	libm, err := openLibrary(libFullPath)
-```
-
-[`go/native/open_lib_unix.go`](https://github.com/kcl-lang/lib/blob/2761803f2737d45304801b9f4ea62f9a8db7d572/go/native/open_lib_unix.go),
-symbol `openLibrary`:
-
-```go
-	return purego.Dlopen(name, purego.RTLD_NOW|purego.RTLD_GLOBAL)
-```
-
-### Nickel
-
-[nickel-lang/go-nickel `README.md` at 827dc61](https://github.com/nickel-lang/go-nickel/blob/827dc613bd42a2ec9bca0ea822e4823b63e9142e/README.md):
-
-```text
-(You need to use `main` because we haven't had any releases yet.)
-```
-
-[`nickel.go`](https://github.com/nickel-lang/go-nickel/blob/827dc613bd42a2ec9bca0ea822e4823b63e9142e/nickel.go),
-the cgo preamble:
-
-```go
-#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/lib/darwin_arm64/libnickel_lang.a -lm
-...
-import "C"
-```
-
-### Dhall
-
-[philandstuff/dhall-golang latest release](https://github.com/philandstuff/dhall-golang/releases/tag/v6.0.2),
-from `GET https://api.github.com/repos/philandstuff/dhall-golang/releases/latest`:
-
-```text
-"tag_name": "v6.0.2",
-"published_at": "2021-10-09T11:39:48Z",
-```
+  So the render must reject unknown keys at run time. A `z.strictObject`
+  does that.
 
 ## Library evidence
 
@@ -170,7 +45,6 @@ default branch from the GitHub API. No repository listed is archived.
 | `github.com/alecthomas/kong` | 3,079 | v1.16.1 | 2026-08-09 | 2026-08-28 `a60008c` |
 | `github.com/willabides/kongplete` | 48 | v0.4.0 | 2023-11-15 | 2023-11-15 `b59327a` |
 | `github.com/gofrs/flock` | 1,499 | v0.13.1 | 2026-08-27 | 2026-10-01 `844daec` |
-| `github.com/nightlyone/lockfile` | 414 | v1.0.0 | 2020-03-08 | 2021-11-04 `bf01bef` |
 | `github.com/bep/debounce` | 277 | v1.2.1 | 2022-05-15 | 2026-08-21 `0ed0c00` |
 | `github.com/kardianos/service` | 1,591 | v1.3.0 | 2026-07-06 | 2026-08-29 `9907089` |
 | `howett.net/plist` | 543 | v1.0.1 | 2023-10-24 | 2026-08-19 `760f9a5` |
@@ -180,12 +54,10 @@ default branch from the GitHub API. No repository listed is archived.
 | `github.com/samber/mo` | 434 | v1.17.0 | 2026-06-02 | 2026-10-01 `502998f` |
 | `github.com/samber/oops` | 332 | v1.23.2 | 2026-09-14 | 2026-10-01 `cf12269` |
 | `github.com/deckarep/golang-set/v2` | 1,842 | v2.9.0 | 2026-04-21 | 2026-10-02 `20c6d8d` |
-| `cuelang.org/go/cue` | 692 | v0.17.1 | 2026-07-16 | 2026-10-05 `0548724` |
 | `github.com/stretchr/testify/require` | 20,797 | v1.12.1 | 2026-08-17 | 2026-09-24 `87a7b9d` |
 | `github.com/google/go-cmp/cmp` | 5,704 | v0.7.0 | 2025-01-14 | 2026-06-18 `b133f1f` |
 | `gotest.tools/v3/assert` | 1,570 | v3.5.2 | 2024-09-05 | 2026-09-14 `749748e` |
 | `gotest.tools/v3/golden` | 6 | v3.5.2 | 2024-09-05 | 2026-09-14 `749748e` |
-| `github.com/sebdah/goldie/v2` | 19 | v2.8.0 | 2025-10-11 | 2025-11-22 `5baf619` |
 
 **Test imports are not counted.** pkgsite builds a package's import list
 from its documentation, and skips test files when it loads the package.
@@ -207,7 +79,7 @@ the default-branch head on 2026-10-06:
 
 | Module | Projects that pin it (version) |
 | --- | --- |
-| cobra | kubernetes, cli/cli, hugo, helm, golangci-lint, grafana, docker/buildx, cue (v1.10.2) |
+| cobra | kubernetes, cli/cli, hugo, helm, golangci-lint, grafana, docker/buildx (v1.10.2) |
 | urfave/cli | gitea (v3.13.0); go-ethereum and grafana (v2) |
 | kong | hermit (v1.16.1), block/ftl (v1.11.0) |
 | gofrs/flock | helm, golangci-lint, docker/buildx, moby, traefik (v0.13.1); prometheus (v0.13.0); go-ethereum (v0.12.1) |
@@ -215,17 +87,8 @@ the default-branch head on 2026-10-06:
 | samber/oops | aquasecurity/trivy-db |
 | golang-set | go-ethereum (v2.6.0) |
 | gotest.tools/v3 | docker/cli, moby, cli/cli (v3.5.2) |
-| x/sync | kubernetes, cli/cli, hugo, helm, golangci-lint, cue (v0.23.0) |
-| go-cmp | kubernetes, cli/cli, helm, prometheus, cue (v0.7.0) |
-
-cobra is already in tess's module graph:
-[cue-lang/cue `go.mod` at v0.17.1](https://github.com/cue-lang/cue/blob/v0.17.1/go.mod)
-requires it.
-
-```text
-	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
-```
+| x/sync | kubernetes, cli/cli, hugo, helm, golangci-lint (v0.23.0) |
+| go-cmp | kubernetes, cli/cli, helm, prometheus (v0.7.0) |
 
 ## CLI library
 
@@ -319,8 +182,7 @@ exported JSON:
 | kong `snap 3col` | 4.09 / 5.79 ms |
 | `samber/lo` linked | 3.12 / 3.52 ms |
 
-cobra adds about 0.9 ms at p50. That is small next to the CUE load
-(§ Process start).
+cobra adds about 0.9 ms at p50.
 
 ## Locks
 

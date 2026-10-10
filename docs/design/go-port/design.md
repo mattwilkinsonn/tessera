@@ -1,8 +1,9 @@
 # Design — Rewrite `tess` in Go, with the resident daemon
 
-*Design record for RIG-4487, revised by Matt's rulings on RIG-4526. It
-supersedes `effect4-cli.md`, builds `resident-daemon.md` in Go, and replaces
-the TS profile with a typed CUE profile.*
+*Design record for RIG-4487, revised by Matt's rulings on RIG-4526 and of
+2026-10-10. It supersedes `effect4-cli.md` and builds `resident-daemon.md`
+in Go. The profile becomes JSON, rendered from a TypeScript module that a
+Zod schema in this repo checks.*
 
 ## Problem / Intent
 
@@ -11,7 +12,8 @@ about 19 ms starting its runtime (the base row in `effect4-cli.md` §
 "Startup-latency budget"). Matt chose Go. This record rewrites `tess` as
 idiomatic Go and does not keep byte-level compatibility with the TS build.
 In the same change it moves event handling into the resident daemon from
-`resident-daemon.md`, and gives the profile a typed language.
+`resident-daemon.md`. It also changes the profile format: tess reads JSON
+only, and the profile's types live in a Zod schema that tessera ships.
 
 ## Approach
 
@@ -36,9 +38,11 @@ The module path is `github.com/mattwilkinsonn/tessera`. The layering law in
 - `cli` imports `commands` and `daemon`.
 - Only `cmd/tess` imports `wm/yabai`.
 
-| TS source | Go package |
+| TS source | New home |
 | --- | --- |
-| `src/config/*.ts`, `loadProfile` | `internal/config` (embeds `schema.cue`, `default.cue`) |
+| `src/config/types.ts` | `schema/profile.ts` (Zod), and the structs in `internal/config` |
+| `src/config/validate.ts`, `chain.ts`, `loadProfile` | `internal/config` (embeds `default.json`) |
+| `src/config/profile.ts` | `schema/default.ts`, rendered to `internal/config/default.json` |
 | `src/config/profile.fixture.ts` | `internal/config/configtest` |
 | `src/driver/types.ts`, `src/engine/world.ts` | `internal/wm` |
 | `src/driver/yabai.ts`, `src/driver/fake.ts` | `internal/wm/yabai`, `internal/wm/fake` |
@@ -81,10 +85,9 @@ The CLI is built on `github.com/spf13/cobra` v1.10.2. `internal/cli` holds
 a 21-row table (name, one-line help, choices or an integer argument, flags)
 and builds one `cobra.Command` per row from it. cobra supplies what the TS
 build wrote by hand: argument checks, per-command help, "Did you mean"
-suggestions, and shell completion. cobra is already in the module graph at
-that version, because `cuelang.org/go` v0.17.1 requires it. Linking it adds
-about 0.9 ms to process start at p50. The comparison with urfave/cli and
-kong is in [`profile-evidence.md`](profile-evidence.md) § "CLI library".
+suggestions, and shell completion. Linking it adds about 0.9 ms to process
+start at p50. The comparison with urfave/cli and kong is in
+[`profile-evidence.md`](profile-evidence.md) § "CLI library".
 
 - **Kinds.** 21 in total:
   - the 19 manual and keybind kinds of today's `SUBCOMMANDS` (all of them
@@ -128,41 +131,152 @@ kong is in [`profile-evidence.md`](profile-evidence.md) § "CLI library".
 
 ### Profile format
 
-The profile is **CUE**, loaded in-process by `cuelang.org/go` v0.17.1. It
-gives the types Matt asked for: required fields, closed structs, enums, RE2
-regex validity from the engine Go matches with, and most cross-field rules.
-It needs no runtime binary and no cgo.
+The profile is JSON. The downstream writes it as a TypeScript module and
+renders it to JSON at build time. tess reads only JSON and never runs TS.
 
-**Schema.** `internal/config/schema.cue` is `package tessera`. It defines
-`#Profile` and embeds it at file level, so any `package tessera` file that is
-vetted beside it is checked as a profile. Its shape follows
-`src/config/types.ts`:
+**Schema.** The source of truth is a Zod schema in tessera. It ships as a
+small TS package in `schema/`, named `tessera-wm` as the README already
+documents, with `zod` 4 as a peer dependency. `schema/profile.ts` exports
+the schema `Profile` and the type `Profile = z.infer<typeof Profile>`. The
+downstream pins the package at the same tessera revision as the `tess`
+binary, so the schema and `Validate` always match. Its shape follows
+`src/config/types.ts`, with three changes:
 
-- `displays!: {g9!, aw!, laptop!: #Display}`, where `#Display` is
-  `{width!: int & >0, weights?: #WeightDefaults}`.
-- `windows!: [string]: #WindowSpec`. A `#WindowSpec` is:
-  - `app!: #Pattern`
-  - `title?: #Pattern`
-  - `titleInvert?: bool`
-  - `spawn?: [string, ...string]`
+- a regex becomes a pattern string;
+- `laptopStackApps` becomes a list of app names;
+- a `desk` entry is a `z.discriminatedUnion("kind", …)`. The `stack`
+  member has exactly one track and no `weights`. The `columns` and `rows`
+  members share one track shape.
 
-  Here `#Pattern` is `string & regexp.Valid`.
-- `desk!: [...#DeskLayout]` and `topologies?: [...#Topology]`.
-- `weights?: #WeightDefaults`, plus `deskSlots!`, `laptopPinned!` and
-  `laptopStackApps!` (a list).
-- The cross-field rules move into the schema, in the form probed (below):
-  - `weights?: #Weights & list.MinItems(len(tracks)) & list.MaxItems(len(tracks))`;
-  - `if kind == "stack" { tracks!: [_]; weights?: _|_ }`;
-  - weight-table keys must match `^([2-9]|[1-9][0-9]+)$`, and the vector
-    length must equal the key;
-  - a topology's `desk` displays must be unique, and must equal its
-    `displays` set.
+Every object is a `z.strictObject`. `tsc` does not catch an extra, mistyped
+key in an object literal that a callback returns, so the render must reject
+unknown keys at run time. A strict object does that.
 
-**What stays in Go.** `config.Validate` keeps the one rule CUE expresses
-badly: chain ratios between 0.1 and 0.9, over every subsequence
-(`chainRatios`, `src/config/validate.ts`). It adds one typed-reference rule:
-every name in `tracks`, `deskSlots` and `laptopPinned` must be a key of
-`windows`. A typo there silently claims nothing today.
+Zod checks shape: types, required keys, closed objects, enums and the
+`desk` union. The cross-field rules live in Go `Validate` only, so there is
+one copy of each, and tess runs it on every load.
+
+**Downstream render.** The downstream's profile module imports `Profile`
+from the package. `tsc` checks it and `bun test` tests it.
+`@rigelbuild/config-render` renders it to JSON at build time (`defineConfig`,
+deterministic JSON, `render --check`). Zod 4 keeps schema key order on
+output, so a render is byte-stable.
+
+**Go types.** `internal/config` mirrors the Zod schema in plain structs.
+Go has no sum type, so `DeskLayout` stays one struct that holds the fields
+of every union member, as it is one interface in `src/config/types.ts`.
+
+```go
+type Profile struct {
+	Displays        Displays              `json:"displays"`
+	Windows         map[string]WindowSpec `json:"windows"`
+	Desk            []DeskLayout          `json:"desk"`
+	Topologies      []Topology            `json:"topologies"`
+	Weights         WeightDefaults        `json:"weights"`
+	DeskSlots       []DeskSlot            `json:"deskSlots"`
+	LaptopPinned    []string              `json:"laptopPinned"`
+	LaptopStackApps []string              `json:"laptopStackApps"`
+}
+
+type Displays struct {
+	G9     DisplaySpec `json:"g9"`
+	Aw     DisplaySpec `json:"aw"`
+	Laptop DisplaySpec `json:"laptop"`
+}
+
+type DisplaySpec struct {
+	Width   int            `json:"width"`
+	Weights WeightDefaults `json:"weights"`
+}
+
+// Keys are track counts, written as JSON strings ("3").
+type WeightDefaults struct {
+	Columns map[int][]float64 `json:"columns"`
+	Rows    map[int][]float64 `json:"rows"`
+}
+
+type WindowSpec struct {
+	App         string   `json:"app"`
+	Title       string   `json:"title"`
+	TitleInvert bool     `json:"titleInvert"`
+	Spawn       []string `json:"spawn"`
+	// Set by Validate. TitleRE is nil when Title is empty (any title).
+	AppRE, TitleRE *regexp.Regexp `json:"-"`
+}
+
+// Both members of the Zod desk union; Validate enforces the kind rules.
+type DeskLayout struct {
+	Display DisplayName `json:"display"`
+	Label   string      `json:"label"`
+	Kind    LayoutKind  `json:"kind"` // "stack", "columns" or "rows"
+	Tracks  [][]string  `json:"tracks"`
+	Weights []float64   `json:"weights"`
+}
+
+type DeskSlot struct {
+	Name      string      `json:"name"`
+	OnDisplay DisplayName `json:"onDisplay"`
+}
+
+type Topology struct {
+	Name     string        `json:"name"`
+	Displays []DisplayName `json:"displays"`
+	Desk     []DeskLayout  `json:"desk"`
+}
+```
+
+`DisplayName` and `LayoutKind` are `string` types with one constant per
+value, so `exhaustive` checks every switch on them.
+
+**Decode.** `Parse` decodes with `encoding/json/v2`:
+
+```go
+err := json.Unmarshal(src, &p, json.RejectUnknownMembers(true))
+```
+
+A member that Go does not know fails the decode. A member that Go knows
+but the JSON omits stays at its zero value and does not fail. So `Validate`
+rejects the zero value of every field Go needs:
+
+- a display's `width` (it must be greater than 0);
+- a window's `app`;
+- a layout's `display`, `label`, `kind` and `tracks`;
+- a topology's `name` and `displays`;
+- a desk slot's `name`.
+
+A list or map that may be empty means the same thing when it is missing.
+
+**Validate.** `config.Validate` then checks every rule and returns all
+violations with `errors.Join`:
+
+- each pattern compiles with `regexp` (RE2). A compile error fails the
+  load. The result is stored in `AppRE` and `TitleRE`;
+- `display` and `onDisplay` are `g9`, `aw` or `laptop`, and `kind` is
+  `stack`, `columns` or `rows`;
+- every rule of `validateProfile` (`src/config/validate.ts`): positive
+  weights; chain ratios between 0.1 and 0.9 over every subsequence
+  (`chainRatios`); weight-table keys of at least 2 that equal the vector
+  length; one track and no weights for a stack; no weights for a one-track
+  layout; weights as long as tracks; and each topology laying out exactly
+  its declared displays, once each;
+- every name in `tracks`, `deskSlots` and `laptopPinned` is a key of
+  `windows`. A typo there silently claims nothing today.
+
+**Drift test.** `schema/full.ts` is a profile that sets every optional
+field to a non-zero value. The schema package renders it to
+`internal/config/testdata/full.json`. A Go test decodes that file with
+`RejectUnknownMembers(true)` and calls `Validate`. It then compares the
+result with a Go literal of the same profile, using `assert.DeepEqual`
+and ignoring `AppRE` and `TitleRE`. A key that Zod adds or renames fails
+the decode. A required key that Zod drops fails `Validate`. An optional
+key that Zod drops fails the comparison.
+
+**Default.** `schema/default.ts` holds today's neutral default
+(`src/config/profile.ts`). The package renders it to
+`internal/config/default.json`, which `internal/config` embeds.
+`schema/profile.test.ts` renders both files with
+`JSON.stringify(Profile.parse(value), null, 2)` and fails when a committed
+file differs. `UPDATE=1 bun test` rewrites them.
 
 **Loader.**
 
@@ -171,29 +285,18 @@ func Load(ctx context.Context, env func(string) string, home string) (*Profile, 
 ```
 
 1. `Load` resolves `$TESSERA_PROFILE`, then
-   `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.cue`, then the embedded
-   `default.cue`. A missing well-known file falls through. A broken one is
-   an error. If `profile.ts` exists there and `profile.cue` does not, `Load`
-   fails loudly. skhd and the daemon run under launchd and never see
+   `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json`, then the embedded
+   `default.json`. A missing well-known file falls through. A broken one is
+   an error.
+2. A `profile.ts` with no `profile.json` beside it fails loudly. So does a
+   `$TESSERA_PROFILE` that ends in `.ts`. The error says to render the
+   profile. skhd and the daemon run under launchd and never see
    `$TESSERA_PROFILE`, so falling back silently would hide the problem.
-2. It compiles the user file with `cue.Scope(schema)`, so a file with or
-   without `package tessera` loads.
-3. It unifies the file with `#Profile` and calls `Validate(cue.Concrete(true))`.
-4. It decodes into Go types. `Decode` fills `*regexp.Regexp` and
-   `map[int][]float64` directly (probed).
-5. It runs `config.Validate`. Errors read `profile <path>:` followed by
-   `errors.Details`, which gives the CUE position.
+3. `Parse` decodes the file and runs `Validate`. Errors read
+   `profile <path>:` followed by the decode or `Validate` error.
 
-**Editor and consumer checks.** The schema installs at
-`share/tessera/schema.cue`. A user runs `cue vet -c profile.cue <schema>`;
-no `cue.mod` is needed (probed). `cue lsp` gives completion. JSON is valid
-CUE input, so a Nix-rendered profile also loads.
-
-**Evidence** is in [`profile-evidence.md`](profile-evidence.md): 12 of 12
-schema cases correct, the loader and `cue vet` outputs, and the start-time
-bench. Linking CUE adds about 5.5 ms of package init (p50 8.16 ms against
-2.65 ms for an empty `main`). A full profile load is 8.79 ms p50, still
-about twice as fast as the 18.8 ms Bun base.
+The loader uses only the standard library. The facts it rests on are in
+[`profile-evidence.md`](profile-evidence.md) § "Profile as JSON".
 
 ### Resident daemon
 
@@ -430,15 +533,14 @@ replaces `package.json`'s `version` field:
   `-X main.version=${version}`;
 - `release.yml` reads it with `tr -d '[:space:]' < VERSION`.
 
-`installCheckPhase` checks five things:
+`installCheckPhase` checks four things:
 
 - a bogus subcommand exits 1;
 - `--help` exits 0;
 - `--version` prints `tess v$version`;
-- a loader smoke exits 0;
-- the installed schema vets `default.cue`.
+- a loader smoke loads the embedded `default.json` and exits 0.
 
-The home-manager `profilePath` default becomes `.../tessera/profile.cue`,
+The home-manager `profilePath` default becomes `.../tessera/profile.json`,
 and the `TESSERA_PROFILE` absolute-path check follows it. The startup bar is
 `effect4-cli.md`'s, unchanged:
 
@@ -457,7 +559,7 @@ No frozen record is edited. This record supersedes:
 | Record | Superseded | Still stands |
 | --- | --- | --- |
 | `effect4-cli.md` | All of it | Its startup bar |
-| `architecture.md` | Global Constraints "Runtime/tooling" and "Deploy"; Layer 1 "`profile.ts`, typed data"; Open Question 2 (now CUE); Open Question 3 (now the daemon); the Bun mechanics; § "Build + deploy"; T7 | Layers, layering law, D1, D2, driver contract, engine |
+| `architecture.md` | Global Constraints "Runtime/tooling" and "Deploy"; Layer 1 "`profile.ts`, typed data"; Open Question 2 (now TS rendered to JSON); Open Question 3 (now the daemon); the Bun mechanics; § "Build + deploy"; T7 | Layers, layering law, D1, D2, driver contract, engine |
 | `grid-layouts.md` | "Runtime/tooling"; `bun test` cycles; the `profile.ts` name | Tracks, weights, chain formula, resolution order |
 | `laptop-flex-spaces.md` | "ports to TypeScript" | The converger model |
 | `resident-daemon.md` | "Runtime/tooling"; `Bun.listen`; the TS `Interfaces:` of its Plan; remove-then-add; the 1 s poll; "Bun exposes no `launch_activate_socket`"; bind-as-lock (now a lock file); unconditional bootout; its T5; "one PR per task slice" | D-T1, D-T2, D-S1; H2/H7; the wedge default |
@@ -466,8 +568,10 @@ No frozen record is edited. This record supersedes:
 
 One PR, with its slices as commits (§ Plan). Every commit builds and passes
 its own tests, so the stack stays bisectable. The last commit switches the
-flake and deletes `src/`. After that PR merges, the consumer updates its
-profile and service wiring in one change. Reverting that change rolls back.
+flake and deletes `src/`. After that PR merges, the consumer makes one
+change: its profile becomes a TS module that imports `tessera-wm`, its
+build renders that module to `profile.json`, and its service wiring
+follows. Reverting that change rolls back.
 
 The consumer's old layout scripts stop being invoked at cutover. Nothing
 else then takes the old mkdir locks, so the apply and laptop locks move to
@@ -477,13 +581,14 @@ new `flock` paths with no shared lock protocol to keep.
 
 One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 
-- **Pkl.** pkl-go runs an external JVM `pkl` (355 MiB closure, ~646 ms per eval).
-- **KCL.** kcl-go needs a local `replace` and a native `libkcl` at runtime.
-- **Nickel.** go-nickel has no release and needs cgo.
-- **Dhall.** dhall-golang has not released since 2021-10-09.
-- **YAML plus JSON Schema.** The types sit outside the loader and can drift.
-- **Typed home-manager option.** It types Nix users only. A later
-  `builtins.toJSON` render needs no new code, because CUE loads JSON.
+- **A config language (CUE, Pkl, KCL).** Matt chose a TS profile rendered
+  to JSON instead (Resolved decision 7).
+- **Running the TS profile in tess (goja).** tess would embed a JS engine
+  and run TS on every keybind. Matt rejected it (Resolved decision 7).
+- **JSON Schema generated from the Go structs.** Go has no sum type, so the
+  generated schema cannot state the `desk` union on `kind`. The Zod schema
+  states it, and `z.toJSONSchema` can emit a JSON Schema from it if one is
+  needed.
 - **urfave/cli v3.14.0.** An unknown command exits 3 with "No help topic",
   and its completion offers `help` but not the choices.
 - **kong v1.16.1.** It has no built-in completion (the `kongplete` add-on
@@ -515,9 +620,13 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
 
 ## Global Constraints
 
-- **Toolchain.** `go.mod` declares `go 1.26` (nixpkgs Go 1.26.7). devenv
-  supplies that Go and `golangci-lint` 2.13.2. CI runs on `ubuntu-latest`.
+- **Toolchain.** `go.mod` declares `go 1.27`. `encoding/json/v2` is GA in
+  Go 1.27; on Go 1.26 it needs `GOEXPERIMENT=jsonv2`. devenv supplies Go
+  1.27 and a `golangci-lint` built with it. CI runs on `ubuntu-latest`.
   `nix build` runs on `macos-latest`.
+- **Schema package.** `schema/` is TypeScript run by Bun, at the Bun
+  version CI pins today. `zod` 4 is a peer dependency and a dev dependency.
+  CI runs `tsc --noEmit` and `bun test` there. Nix does not build it.
 - **Dependencies.** Prefer a well-adopted, maintained library to
   hand-rolled code (Resolved decision 5). Keep the standard library only
   where it already covers the exact operation. A module meets the bar
@@ -537,7 +646,6 @@ One line each; sources are in [`profile-evidence.md`](profile-evidence.md).
   | `github.com/gofrs/flock` | v0.13.1 | the daemon, apply and laptop locks | 1,499 |
   | `golang.org/x/sync` | v0.23.0 | `errgroup` | 30,110 |
   | `github.com/samber/lo` | v1.53.0 | transforms `slices` and `maps` lack: `Map`, `Filter`, `FlatMap`, `Reduce`, `Uniq`, `GroupBy` | 12,533 |
-  | `cuelang.org/go` | v0.17.1 | the profile; below the bar, kept by RIG-4526 ruling 1 | 692 |
   | `github.com/samber/mo` | v1.17.0 | `Option` only; below the bar, kept for `ClaimSet` (C4) | 434 |
   | `github.com/samber/oops` | v1.23.2 | daemon errors that carry `slog` attributes and a stack; below the bar, kept by Matt's ruling (Resolved decision 6) | 332 |
   | `gotest.tools/v3` (tests) | v3.5.2 | `assert`, `golden` | 1,570 (`assert`) |
@@ -581,25 +689,48 @@ The `Interfaces:` lines below list only what this rule cannot derive.
 
 Interfaces: produces the module. Gate: CI is green.
 
-### C2 — `internal/config`
+### C2 — `schema/` and `internal/config`
 
-The schema, `default.cue`, the loader, `Validate`, and `configtest`. Ports
-`validate.test.ts` and `profile.test.ts`.
+The Zod schema package, `default.json`, the JSON loader, `Validate`, the
+drift test, and `configtest`. Ports `validate.test.ts` and
+`profile.test.ts`. Adds a `schema` CI job that runs
+`bun install --frozen-lockfile`, `tsc --noEmit` and `bun test` in
+`schema/`.
 
 Interfaces:
 
+- `schema/package.json` names the package `tessera-wm`, with `zod` 4 as a
+  peer dependency.
+- `schema/profile.ts` exports a Zod schema and its `z.infer` type under
+  each name `src/config/types.ts` exports: `DisplayName`, `TrackKind`,
+  `Weights`, `WeightDefaults`, `WindowSpec`, `DeskLayout`, `DeskSlot`,
+  `Topology` and `Profile`.
+- `schema/default.ts` and `schema/full.ts` each export
+  `const profile: Profile`.
+- `schema/profile.test.ts` writes `internal/config/default.json` and
+  `internal/config/testdata/full.json` when `UPDATE=1`, and otherwise
+  compares them.
 - `Load(ctx context.Context, env func(string) string, home string) (*Profile, error)`
-- `Parse(ctx context.Context, path string, src []byte) (*Profile, error)`
-- `Validate(p *Profile) error`
-- `type WindowSpec struct { App, Title *regexp.Regexp; TitleInvert bool; Spawn []string }`
-- `Profile.Displays` is `struct{ G9, Aw, Laptop DisplaySpec }`.
+- `Parse(path string, src []byte) (*Profile, error)`; `path` is used only
+  in errors
+- `Validate(p *Profile) error`; it also sets `AppRE` and `TitleRE`
+- the structs in § Profile format, and `DisplayName` and `LayoutKind` with
+  their constants.
 
 Gate:
 
-- the probe cases above pass as Go tests, through `Parse`;
+- `tsc --noEmit` and `bun test` pass in `schema/`;
+- in `bun test`, `Profile.parse` rejects an unknown key in an object that a
+  callback returns, a stack with two tracks, and a `kind` of `grid`;
+- the drift test passes on `full.json`;
+- JSON with an unknown key fails `Parse`, and JSON with no `app` or no
+  `width` fails `Validate`;
+- the pattern `(?<=x)y` fails `Validate` with the `regexp` error;
+- each `validate.test.ts` case fails or passes through `Parse`, as in TS;
 - an unknown name in `tracks` fails;
-- a `profile.ts` with no `profile.cue` fails loudly;
-- `cue vet` accepts `default.cue`.
+- a `profile.ts` with no `profile.json`, and a `$TESSERA_PROFILE` that
+  ends in `.ts`, fail loudly;
+- the embedded `default.json` loads.
 
 ### C3 — `internal/wm` and `internal/wm/fake`
 
@@ -748,30 +879,30 @@ Gate:
 This commit:
 
 - switches to `buildGoModule`;
-- removes the bun attrs;
+- removes the bun attrs and the root Bun CI job; the `schema` job stays;
 - adds `VERSION`, carrying over `package.json`'s current version, and
   points the flake (`pkgs.lib.fileContents ./VERSION`) and `release.yml`
   (`tr -d '[:space:]' < VERSION`) at it;
-- sets `profilePath` to `profile.cue`;
-- installs the schema;
-- updates the README and `devenv.nix`;
-- deletes `src/`, `package.json`, `bun.lock`, the other Bun manifests, and
-  the TS scripts.
+- sets `profilePath` to `profile.json`;
+- updates the README, which now says to import `Profile` from `tessera-wm`
+  and render the profile to JSON, and `devenv.nix`;
+- deletes `src/`, the root `package.json` and `bun.lock`, the other root
+  Bun manifests, and the TS scripts.
 
 Gate:
 
 - `nix flake check` and `nix build` pass on `macos-latest`;
 - `--version` matches `VERSION`;
-- no file in the repo reads `package.json`;
+- no file in the repo reads the root `package.json`;
 - the bar holds (bench table in the PR body);
-- no `.ts` file remains;
+- no `.ts` file remains outside `schema/`;
 - a live smoke: plug and unplug, a window-churn burst, `kill -9` the daemon,
   and observe the reclaim.
 
 ## Tasks
 
 - [ ] C1 — module, lint, CI `go` job
-- [ ] C2 — CUE schema, loader, `Validate`, name references
+- [ ] C2 — Zod schema package, JSON loader, `Validate`, drift test, name references
 - [ ] C3 — `wm` contract and fake, with labelled `AddSignal`
 - [ ] C4 — engine, with sealed `Op` and `ConvergeAction`
 - [ ] C5 — yabai driver and stub yabai
@@ -780,15 +911,14 @@ Gate:
 - [ ] C8 — daemon: hub, socket, registration, launchd, synctest gates
 - [ ] C9 — cobra CLI and `main`: completion, exit 130, argv corpus, `benchstartup`
 - [ ] C10 — flake cutover, `src/` deleted, the bar holds, live smoke
-- [ ] Downstream — the consumer's profile and service-wiring change (§ Migration)
+- [ ] Downstream — the consumer's TS profile, its JSON render and its service wiring (§ Migration)
 
 ## Resolved decisions
 
 Matt ruled on RIG-4526:
 
-1. **Profile.** "want types. could think about CUE or pkl here potentially?
-   or another similar language?" The profile is CUE (§ Profile format), and
-   the other options are under § Alternatives considered.
+1. **Profile.** "want types." Matt also asked about typed config
+   languages. Resolved decision 7 settles the format.
 2. **Help and errors.** "ii, we don't care about parity, just build in the
    best way possible". The parity contract, the captured TS goldens and
    their CI step are gone. The help and errors are idiomatic Go (§ CLI).
@@ -814,3 +944,13 @@ On 2026-10-06 Matt ruled on errors:
 
 6. **samber/oops.** "keep oops." It is below the importer bar (332).
    The daemon uses it so a logged error keeps its attributes and stack.
+
+On 2026-10-10 Matt ruled on the profile format:
+
+7. **TS rendered to JSON.** The profile is a TS module. `tsc` checks it,
+   `bun test` tests it, and the downstream renders it to JSON at build time
+   with `@rigelbuild/config-render`. tess reads only JSON. The schema
+   source of truth is Zod, in tessera, shipped as a small TS package beside
+   the Go structs and `Validate`. Patterns are strings that `Validate`
+   compiles with `regexp`. Config languages and an embedded JS engine are
+   rejected (§ Alternatives considered).
