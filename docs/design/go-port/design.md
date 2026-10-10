@@ -271,10 +271,12 @@ check that a required key is present, so `Validate` checks it:
   `validateProfile` accepts an empty `desk`.
 
 `windows`, `deskSlots`, `laptopPinned` and `laptopStackApps` are required
-in Zod but may be empty. JSON `[]` or `{}` decodes to a non-nil empty slice
-or map, and a missing key leaves it nil. So `Validate` rejects nil (missing)
-and accepts empty, as `validateProfile` does today. `topologies` and
-`weights` are optional, and a missing one means none.
+in Zod but may be empty. `windows` is a JSON object (a Go map); the other
+three are JSON arrays (Go slices), `laptopStackApps` included, since the
+schema turns it into a list of app names. An empty `{}` or `[]` decodes to a
+non-nil empty map or slice, and a missing key leaves it nil. So `Validate`
+rejects nil (missing) and accepts empty, as `validateProfile` does today.
+`topologies` and `weights` are optional, and a missing one means none.
 
 **Validate.** `config.Validate` then checks every rule and returns all
 violations with `errors.Join`:
