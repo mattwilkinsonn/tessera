@@ -259,23 +259,22 @@ value, so `exhaustive` checks every switch on them.
 err := json.Unmarshal(src, &p, json.RejectUnknownMembers(true))
 ```
 
-A member that Go does not know fails the decode. A member that Go knows
-but the JSON omits stays at its zero value and does not fail. So `Validate`
-rejects the zero value of every field Go needs:
+A member that Go does not know fails the decode. The decode does not
+check that a required key is present, so `Validate` checks it:
 
-- a display's `width` (it must be greater than 0);
-- a window's `app`;
-- a layout's `display`, `label`, `kind` and `tracks`;
-- a topology's `name` and `displays`;
-- a desk slot's `name`;
-- the profile's `desk`. A missing or empty `desk` fails. This rule is new:
+- a display's `width` is greater than 0;
+- a window's `app` is not empty;
+- a layout's `display`, `label`, `kind` and `tracks` are set;
+- a topology's `name` and `displays` are set;
+- a desk slot's `name` is not empty;
+- the profile's `desk` is set and not empty. This rule is new:
   `validateProfile` accepts an empty `desk`.
 
 `windows`, `deskSlots`, `laptopPinned` and `laptopStackApps` are required
-keys in the Zod schema, and each may be empty. `validateProfile` never
-reads them, so an empty `deskSlots` is allowed today, and Go keeps that.
-Go reads a missing one of these as empty. `topologies` and `weights` are
-optional, and a missing one means none.
+in Zod but may be empty. JSON `[]` or `{}` decodes to a non-nil empty slice
+or map, and a missing key leaves it nil. So `Validate` rejects nil (missing)
+and accepts empty, as `validateProfile` does today. `topologies` and
+`weights` are optional, and a missing one means none.
 
 **Validate.** `config.Validate` then checks every rule and returns all
 violations with `errors.Join`:
@@ -310,6 +309,37 @@ The track and stack rules, from `layoutViolations` in
 	...
 	if (layout.kind === "stack") {
 		if (layout.tracks.length !== 1) {
+```
+
+The weight rules, from `weightViolations` in `src/config/validate.ts`:
+
+```ts
+	if (weights.some((weight) => !Number.isFinite(weight) || weight <= 0)) {
+	...
+			chainRatios(subsequence).some(
+				(ratio) => ratio < MIN_CHAIN_RATIO || ratio > MAX_CHAIN_RATIO,
+			)
+```
+
+`MIN_CHAIN_RATIO` is `0.1` and `MAX_CHAIN_RATIO` is `0.9`. The ratio is
+`chainRatios` in `src/config/chain.ts`:
+
+```ts
+/** The bsp chain ratios for a weight vector: r[i] = w[i] / sum(w[i..]). */
+export function chainRatios(weights: ReadonlyArray<number>): number[] {
+```
+
+The topology rules, from `validateProfile` in `src/config/validate.ts`:
+
+```ts
+			if (laidOut.has(layout.display)) {
+				violations.push(`${where}: duplicate layout for ${layout.display}`);
+	...
+		for (const display of declared) {
+			if (!laidOut.has(display)) {
+	...
+		for (const display of laidOut) {
+			if (!declared.has(display)) {
 ```
 
 **Drift test.** `schema/full.ts` is a profile that sets every optional
@@ -776,7 +806,9 @@ Gate:
 - JSON with an unknown key fails `Parse`, and JSON with no `app` or no
   `width` fails `Validate`;
 - a layout with no tracks, a track with no window names, and a missing or
-  empty `desk` each fail `Validate`; an empty `deskSlots` passes;
+  empty `desk` each fail `Validate`;
+- a missing `windows`, `deskSlots`, `laptopPinned` or `laptopStackApps`
+  fails `Validate`, and an empty one (`{}` or `[]`) passes;
 - the pattern `(?<=x)y` fails `Validate` with the `regexp` error;
 - each `validate.test.ts` case fails or passes through `Parse`, as in TS;
 - an unknown name in `tracks` fails;
