@@ -183,13 +183,7 @@ func later(a, b time.Time) time.Time {
 
 // run calls work under CascadeTimeout; a deadline is fatal to Serve.
 func (h *Hub) run(ctx context.Context, work Work) (Step, error) {
-	step := Settled
-	err := h.bounded(ctx, func(ctx context.Context) error {
-		var err error
-		step, err = work(ctx)
-		return err
-	})
-	return step, err
+	return bounded(ctx, h, work)
 }
 
 func (h *Hub) reportFatal(err error) {

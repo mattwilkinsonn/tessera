@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -294,6 +295,41 @@ func TestSpawnWindow(t *testing.T) {
 		defer cancel()
 		err := driver.SpawnWindow(ctx, []string{"/bin/sleep", "2"})
 		assert.Assert(t, errors.Is(err, context.DeadlineExceeded))
+	})
+	t.Run("a launcher outliving the wait is left running and SpawnWindow returns nil", func(t *testing.T) {
+		dir := t.TempDir()
+		gate, out := filepath.Join(dir, "gate"), filepath.Join(dir, "out")
+		assert.NilError(t, syscall.Mkfifo(gate, 0o600))
+		assert.NilError(t, syscall.Mkfifo(out, 0o600))
+		driver := &Driver{path: "yabai", spawnWait: 10 * time.Millisecond}
+		// The launcher blocks on gate until the test opens it, then reports through out.
+		script := `read x < "$1"; echo alive > "$2"`
+		assert.NilError(t, driver.SpawnWindow(t.Context(), []string{"/bin/sh", "-c", script, "sh", gate, out}))
+		// A killed launcher never opens either FIFO, so bound the handshake instead of hanging.
+		alive := make(chan error, 1)
+		go func() {
+			f, err := os.OpenFile(gate, os.O_WRONLY, 0)
+			if err != nil {
+				alive <- err
+				return
+			}
+			_, err = f.WriteString("go\n")
+			if err = errors.Join(err, f.Close()); err != nil {
+				alive <- err
+				return
+			}
+			got, err := os.ReadFile(out)
+			if err == nil && string(got) != "alive\n" {
+				err = fmt.Errorf("launcher wrote %q; want %q", got, "alive\n")
+			}
+			alive <- err
+		}()
+		select {
+		case err := <-alive:
+			assert.NilError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the launcher did not survive SpawnWindow's wait")
+		}
 	})
 }
 

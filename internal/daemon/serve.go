@@ -33,7 +33,8 @@ func Serve(ctx context.Context, ln net.Listener, h *Hub, wake func(context.Conte
 			case <-ctx.Done():
 				return
 			case <-wakes:
-				if err := h.bounded(ctx, wake); err != nil && ctx.Err() == nil {
+				_, err := bounded(ctx, h, func(ctx context.Context) (struct{}, error) { return struct{}{}, wake(ctx) })
+				if err != nil && ctx.Err() == nil {
 					slog.ErrorContext(ctx, "wake routine failed", "error", err)
 				}
 			}
@@ -101,13 +102,34 @@ func readLine(conn net.Conn) (string, error) {
 	return strings.TrimSuffix(line, "\n"), nil
 }
 
-// bounded runs fn under CascadeTimeout and reports a deadline as fatal to Serve.
-func (h *Hub) bounded(ctx context.Context, fn func(context.Context) error) error {
+// bounded runs fn under CascadeTimeout and never waits past that deadline, even if fn ignores cancellation.
+// A deadline is fatal to Serve; a stray fn is left behind, since the process then exits 1.
+func bounded[T any](ctx context.Context, h *Hub, fn func(context.Context) (T, error)) (T, error) {
 	boundedCtx, cancel := context.WithTimeout(ctx, CascadeTimeout)
 	defer cancel()
-	err := fn(boundedCtx)
-	if ctx.Err() == nil && errors.Is(boundedCtx.Err(), context.DeadlineExceeded) {
-		h.reportFatal(oops.With("timeout", CascadeTimeout).Wrapf(context.DeadlineExceeded, "daemon work wedged"))
+	expired := time.NewTimer(CascadeTimeout)
+	defer expired.Stop()
+	type result struct {
+		v   T
+		err error
 	}
-	return err
+	done := make(chan result, 1)
+	go func() {
+		v, err := fn(boundedCtx)
+		done <- result{v, err}
+	}()
+	var zero T
+	select {
+	case r := <-done:
+		if ctx.Err() != nil || !errors.Is(boundedCtx.Err(), context.DeadlineExceeded) {
+			return r.v, r.err
+		}
+	case <-expired.C:
+		if ctx.Err() != nil {
+			return zero, ctx.Err()
+		}
+	}
+	err := oops.With("timeout", CascadeTimeout).Wrapf(context.DeadlineExceeded, "daemon work wedged")
+	h.reportFatal(err)
+	return zero, err
 }

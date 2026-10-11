@@ -121,6 +121,24 @@ func TestSignalsSuppressed(t *testing.T) {
 			t.Fatalf("SignalsSuppressed() = %t, %v; want false, nil", got, err)
 		}
 	})
+	t.Run("a symlink at the guard path is refused and its target untouched", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "target")
+		if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, "g")
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := SuppressSignals(path); err == nil {
+			t.Fatal("SuppressSignals() through a symlink = nil; want an error")
+		}
+		got, err := os.ReadFile(target)
+		if err != nil || string(got) != "keep\n" {
+			t.Fatalf("symlink target = %q, %v; want %q untouched", got, err, "keep\n")
+		}
+	})
 }
 
 func TestFlexOrder(t *testing.T) {

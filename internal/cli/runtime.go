@@ -65,6 +65,9 @@ func Main(ctx context.Context, argv []string, stdout, stderr io.Writer, deps Dep
 		}
 		err = daemon.Run(ctx, options)
 		if errors.Is(err, daemon.ErrRunning) {
+			if _, writeErr := fmt.Fprintln(stderr, "tess: daemon already running"); writeErr != nil {
+				slog.ErrorContext(ctx, "writing daemon status", "error", writeErr)
+			}
 			return 0
 		}
 		if err != nil {

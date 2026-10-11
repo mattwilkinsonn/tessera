@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
@@ -15,12 +16,16 @@ import (
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 )
 
+// spawnTimeout is how long SpawnWindow waits for a launcher before leaving it running.
+const spawnTimeout = 5 * time.Second
+
 type Driver struct {
-	path string
+	path      string
+	spawnWait time.Duration
 }
 
 func New(yabaiPath string) *Driver {
-	return &Driver{path: yabaiPath}
+	return &Driver{path: yabaiPath, spawnWait: spawnTimeout}
 }
 
 func (d *Driver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
@@ -293,53 +298,79 @@ func (d *Driver) ResizeWindow(ctx context.Context, edge wm.ResizeEdge, dx, dy in
 	return exitCode == 0, err
 }
 
-func (d *Driver) SpawnWindow(ctx context.Context, argv []string) (returnErr error) {
+// SpawnWindow runs the launcher and waits up to spawnWait for it. A launcher still running then is left
+// alive and reaped in the background; only caller cancellation during the wait kills it.
+func (d *Driver) SpawnWindow(ctx context.Context, argv []string) error {
 	if len(argv) == 0 {
 		return errors.New("spawning window: empty argv")
 	}
+	// A file, not a pipe: a lingering launcher must not block or SIGPIPE on stderr.
 	stderr, err := os.CreateTemp("", "tess-spawn-*.err")
 	if err != nil {
 		return fmt.Errorf("creating spawn stderr file: %w", err)
 	}
-	defer func() {
-		if removeErr := os.Remove(stderr.Name()); removeErr != nil {
-			returnErr = errors.Join(returnErr, fmt.Errorf("removing spawn stderr file: %w", removeErr))
-		}
-	}()
-	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	command := exec.CommandContext(callCtx, argv[0], argv[1:]...)
+	command := exec.Command(argv[0], argv[1:]...)
 	command.Stderr = stderr
-	runErr := command.Run()
-	if closeErr := stderr.Close(); closeErr != nil {
-		return fmt.Errorf("closing spawn stderr file: %w", closeErr)
+	if err := command.Start(); err != nil {
+		return errors.Join(fmt.Errorf("spawning window %s: %w", argv[0], err), discardSpawnStderr(stderr))
 	}
-	if runErr != nil && callCtx.Err() == nil {
-		if exitError, ok := errors.AsType[*exec.ExitError](runErr); ok {
-			content, readErr := os.ReadFile(stderr.Name())
-			if readErr != nil {
-				return fmt.Errorf("reading spawn stderr: %w", readErr)
-			}
-			message := strings.TrimSpace(string(content))
-			if message != "" {
-				runErr = fmt.Errorf("spawning window failed (exit %d): %s: %s", exitError.ExitCode(), strings.Join(argv, " "), message)
-			} else {
-				runErr = fmt.Errorf("spawning window failed (exit %d): %s", exitError.ExitCode(), strings.Join(argv, " "))
-			}
-		} else {
-			runErr = fmt.Errorf("spawning window %s: %w", argv[0], runErr)
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	timer := time.NewTimer(d.spawnWait)
+	defer timer.Stop()
+	select {
+	case waitErr := <-done:
+		return spawnResult(argv, stderr, waitErr)
+	case <-ctx.Done():
+		killErr := command.Process.Kill()
+		if errors.Is(killErr, os.ErrProcessDone) {
+			killErr = nil
 		}
-	}
-	if runErr == nil {
+		<-done
+		return errors.Join(fmt.Errorf("spawning window: %w", ctx.Err()), killErr, discardSpawnStderr(stderr))
+	case <-timer.C:
+		go func() {
+			<-done
+			if err := discardSpawnStderr(stderr); err != nil {
+				slog.Warn("cleaning up after a detached launcher", "error", err)
+			}
+		}()
 		return nil
 	}
-	if callCtx.Err() != nil {
-		if ctx.Err() != nil {
-			return fmt.Errorf("spawning window: %w", ctx.Err())
-		}
+}
+
+// spawnResult turns a finished launcher's exit into an error carrying its stderr.
+func spawnResult(argv []string, stderr *os.File, waitErr error) error {
+	content, readErr := os.ReadFile(stderr.Name())
+	if cleanupErr := discardSpawnStderr(stderr); cleanupErr != nil {
+		return errors.Join(waitErr, cleanupErr)
+	}
+	if waitErr == nil {
 		return nil
 	}
-	return runErr
+	exitError, ok := errors.AsType[*exec.ExitError](waitErr)
+	if !ok {
+		return fmt.Errorf("spawning window %s: %w", argv[0], waitErr)
+	}
+	if readErr != nil {
+		return fmt.Errorf("reading spawn stderr: %w", readErr)
+	}
+	if message := strings.TrimSpace(string(content)); message != "" {
+		return fmt.Errorf("spawning window failed (exit %d): %s: %s", exitError.ExitCode(), strings.Join(argv, " "), message)
+	}
+	return fmt.Errorf("spawning window failed (exit %d): %s", exitError.ExitCode(), strings.Join(argv, " "))
+}
+
+func discardSpawnStderr(stderr *os.File) error {
+	closeErr := stderr.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("closing spawn stderr file: %w", closeErr)
+	}
+	removeErr := os.Remove(stderr.Name())
+	if removeErr != nil {
+		removeErr = fmt.Errorf("removing spawn stderr file: %w", removeErr)
+	}
+	return errors.Join(closeErr, removeErr)
 }
 
 func (d *Driver) FocusWindow(ctx context.Context, windowID int) (bool, error) {
@@ -409,6 +440,8 @@ func waitContext(ctx context.Context, duration time.Duration) error {
 
 func (d *Driver) run(ctx context.Context, args []string) ([]byte, int, error) {
 	command := exec.CommandContext(ctx, d.path, args...)
+	// Bound Wait if a descendant keeps the output pipes open after yabai exits or is killed.
+	command.WaitDelay = 2 * time.Second
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr

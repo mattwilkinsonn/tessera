@@ -20,6 +20,8 @@ var version = "dev"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// After the first signal cancels ctx, a second one gets the default behaviour.
+	context.AfterFunc(ctx, stop)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	if code != 0 {

@@ -7,7 +7,9 @@
   "types": "./profile.ts",
   "exports": {
     ".": {
-      "types": "./profile.ts"
+      "types": "./profile.ts",
+      "import": "./profile.ts",
+      "default": "./profile.ts"
     }
   },
   "peerDependencies": {

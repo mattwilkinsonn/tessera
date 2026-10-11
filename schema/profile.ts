@@ -59,9 +59,9 @@ export type Topology = z.infer<typeof Topology>;
 
 export const Profile = z.strictObject({
   displays: z.strictObject({
-    g9: z.strictObject({ width: z.number(), weights: WeightDefaults.optional() }),
-    aw: z.strictObject({ width: z.number(), weights: WeightDefaults.optional() }),
-    laptop: z.strictObject({ width: z.number(), weights: WeightDefaults.optional() }),
+    g9: z.strictObject({ width: z.number().int().positive(), weights: WeightDefaults.optional() }),
+    aw: z.strictObject({ width: z.number().int().positive(), weights: WeightDefaults.optional() }),
+    laptop: z.strictObject({ width: z.number().int().positive(), weights: WeightDefaults.optional() }),
   }),
   windows: z.record(z.string(), WindowSpec),
   desk: z.array(DeskLayout).readonly(),

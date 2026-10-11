@@ -3,12 +3,15 @@ package effects
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -65,10 +68,23 @@ func AcquireLock(path string) (*flock.Flock, bool, error) {
 }
 
 // SuppressSignals stamps the signal guard with the current epoch second.
-func SuppressSignals(path string) error {
+// It refuses a symlink or any non-regular file at the path, since /tmp is shared.
+func SuppressSignals(path string) (err error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("opening signal guard: %w", err)
+	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat signal guard: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("signal guard %s is not a regular file", path)
+	}
 	stamp := strconv.FormatInt(time.Now().Unix(), 10) + "\n"
-	if err := os.WriteFile(path, []byte(stamp), 0o600); err != nil {
-		return err
+	if _, err := f.WriteString(stamp); err != nil {
+		return fmt.Errorf("writing signal guard: %w", err)
 	}
 	return nil
 }

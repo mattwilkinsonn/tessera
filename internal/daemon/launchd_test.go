@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"path/filepath"
@@ -14,11 +15,12 @@ import (
 	"gotest.tools/v3/assert"
 )
 
-// fakeLaunchctl records argv and fails the commands whose joined argv is listed.
+// fakeLaunchctl records argv, fails the commands whose joined argv is listed, and reports gone ones as not loaded.
 type fakeLaunchctl struct {
 	mu    sync.Mutex
 	calls []string
 	fail  map[string]bool
+	gone  map[string]bool
 }
 
 func (f *fakeLaunchctl) Run(_ context.Context, args ...string) error {
@@ -26,6 +28,9 @@ func (f *fakeLaunchctl) Run(_ context.Context, args ...string) error {
 	defer f.mu.Unlock()
 	line := strings.Join(args, " ")
 	f.calls = append(f.calls, line)
+	if f.gone[line] {
+		return fmt.Errorf("launchctl exited 113: %w", ErrNotLoaded)
+	}
 	if f.fail[line] {
 		return errors.New("launchctl failed")
 	}
@@ -100,6 +105,16 @@ func TestBootstrap(t *testing.T) {
 		assert.ErrorContains(t, err, "bootstrapping service")
 		assert.DeepEqual(t, owned, Owned{skhd})
 	})
+
+	t.Run("bootout of a service that is no longer loaded succeeds", func(t *testing.T) {
+		lc := &fakeLaunchctl{gone: map[string]bool{"bootout gui/501/com.asmvik.yabai": true}}
+		assert.NilError(t, Bootout(t.Context(), lc, 501, Owned{yabai}))
+	})
+
+	t.Run("any other bootout failure is returned", func(t *testing.T) {
+		lc := &fakeLaunchctl{fail: map[string]bool{"bootout gui/501/com.asmvik.yabai": true}}
+		assert.ErrorContains(t, Bootout(t.Context(), lc, 501, Owned{yabai}), "booting out service")
+	})
 }
 
 func TestRun(t *testing.T) {
@@ -140,6 +155,36 @@ func TestRun(t *testing.T) {
 		ln, err := Listen(t.Context(), path)
 		assert.NilError(t, err, "lock and socket released after shutdown")
 		assert.NilError(t, ln.Close())
+	})
+
+	t.Run("a failed bootout after a clean shutdown is logged and Run returns nil", func(t *testing.T) {
+		path := filepath.Join(shortDir(t), "d.sock")
+		lc := &fakeLaunchctl{fail: map[string]bool{
+			"print gui/501/com.asmvik.skhd":   true,
+			"bootout gui/501/com.asmvik.skhd": true,
+		}}
+		ctx, cancel := context.WithCancel(t.Context())
+		woke := make(chan struct{}, 1)
+		done := make(chan error, 1)
+		go func() {
+			done <- Run(ctx, Options{
+				Socket:    path,
+				Bootstrap: true,
+				Launchctl: lc,
+				UID:       501,
+				Services:  []Service{skhd},
+				Display:   idle,
+				Flex:      idle,
+				Wake: func(context.Context) error {
+					woke <- struct{}{}
+					return nil
+				},
+			})
+		}()
+		<-woke
+		cancel()
+		assert.NilError(t, <-done)
+		assert.Equal(t, lc.recorded()[len(lc.recorded())-1], "bootout gui/501/com.asmvik.skhd")
 	})
 
 	t.Run("a second start loses the lock and runs no launchctl", func(t *testing.T) {

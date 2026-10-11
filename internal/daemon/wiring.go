@@ -119,7 +119,7 @@ type Options struct {
 }
 
 // Run holds the socket lock for the daemon's life, bootstraps services, and serves until ctx ends.
-// A clean shutdown boots out only the services this run bootstrapped, then releases the lock.
+// A clean shutdown boots out only the services this run bootstrapped, logs a bootout failure, and exits 0.
 func Run(ctx context.Context, opts Options) (err error) {
 	ln, err := listen(ctx, opts.Socket)
 	if err != nil {
@@ -151,5 +151,8 @@ func Run(ctx context.Context, opts Options) (err error) {
 	}
 	bootoutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bootoutDeadline)
 	defer cancel()
-	return Bootout(bootoutCtx, opts.Launchctl, opts.UID, owned)
+	if err := Bootout(bootoutCtx, opts.Launchctl, opts.UID, owned); err != nil {
+		slog.ErrorContext(ctx, "booting out services", "error", err)
+	}
+	return nil
 }

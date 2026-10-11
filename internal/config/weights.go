@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 )
 
@@ -64,22 +65,22 @@ func violatesChainRatios(weights []float64) bool {
 	for index, weight := range weights {
 		normalized[index] = weight * scale
 	}
-	return ratioSubsets(normalized, len(normalized)-1, 0, 0)
+	return chainRatiosOutOfRange(normalized)
 }
 
-func ratioSubsets(weights []float64, index int, suffix float64, suffixLength int) bool {
-	if index < 0 {
-		return false
-	}
-	weight := weights[index]
-	if suffixLength > 0 {
-		ratio := weight / (weight + suffix)
-		if ratio < minChainRatio || ratio > maxChainRatio {
-			return true
+// chainRatiosOutOfRange checks w_i/(w_i+s) for every later subset sum s, using only its extremes:
+// the ratio falls as s grows, so the largest is at min later w and the smallest at the full later sum.
+func chainRatiosOutOfRange(weights []float64) bool {
+	suffix := 0.0
+	minLater := math.Inf(1)
+	for index, weight := range slices.Backward(weights) {
+		if index < len(weights)-1 {
+			if weight/(weight+minLater) > maxChainRatio || weight/(weight+suffix) < minChainRatio {
+				return true
+			}
 		}
+		suffix += weight
+		minLater = min(minLater, weight)
 	}
-	if ratioSubsets(weights, index-1, suffix, suffixLength) {
-		return true
-	}
-	return ratioSubsets(weights, index-1, suffix+weight, suffixLength+1)
+	return false
 }

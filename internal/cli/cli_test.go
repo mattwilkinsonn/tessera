@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -410,6 +411,69 @@ func TestSIGTERMDuringStubBlockedApplyExits130AndLeavesLockFree(t *testing.T) {
 	assert.NilError(t, lock.Unlock())
 }
 
+func TestSecondSIGTERMDuringShutdownKillsByDefault(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "tess-term2-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { assert.NilError(t, os.RemoveAll(root)) }()
+	binary := filepath.Join(root, "tess")
+	build := exec.Command("go", "build", "-o", binary, "../../cmd/tess")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building tess: %v\n%s", err, output)
+	}
+	// The orphan holds yabai's stdout, so after the first SIGTERM shutdown waits out WaitDelay.
+	orphanPID := filepath.Join(root, "orphan.pid")
+	stub := filepath.Join(root, "lingering-yabai")
+	stubCode := []byte("#!/bin/sh\n/bin/sleep 600 &\necho $! > \"$TESS_ORPHAN_PID\"\nexec /bin/sleep 600\n")
+	if err := os.WriteFile(stub, stubCode, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(binary, "apply")
+	command.Env = append(os.Environ(), "HOME="+root, "TMPDIR="+root, "XDG_CACHE_HOME="+root, "XDG_CONFIG_HOME="+root, "TESSERA_PROFILE=", "TESS_YABAI="+stub, "TESS_ORPHAN_PID="+orphanPID)
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- command.Wait() }()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var pid []byte
+	for len(pid) == 0 {
+		<-ticker.C
+		data, err := os.ReadFile(orphanPID)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		pid = data
+	}
+	orphan, err := strconv.Atoi(strings.TrimSpace(string(pid)))
+	assert.NilError(t, err)
+	defer func() {
+		if err := syscall.Kill(orphan, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			t.Error(err)
+		}
+	}()
+	// Keep signalling: the first starts shutdown, a later one must kill tess outright.
+	var waitErr error
+	for done := false; !done; {
+		select {
+		case waitErr = <-waited:
+			done = true
+		case <-ticker.C:
+			if err := command.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				t.Fatal(err)
+			}
+		}
+	}
+	exitErr, ok := errors.AsType[*exec.ExitError](waitErr)
+	assert.Assert(t, ok, "tess exit = %v", waitErr)
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	assert.Assert(t, ok && status.Signaled() && status.Signal() == syscall.SIGTERM, "tess exit = %v; want killed by SIGTERM", waitErr)
+}
+
 func TestWakeWithNoDaemonExits1(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "tess-wake-")
 	if err != nil {
@@ -463,7 +527,8 @@ func TestDaemonAlreadyRunningExits0(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { assert.NilError(t, listener.Close()) }()
-	code := Main(t.Context(), []string{"daemon", "--no-bootstrap"}, io.Discard, io.Discard, Deps{
+	var stderr bytes.Buffer
+	code := Main(t.Context(), []string{"daemon", "--no-bootstrap"}, io.Discard, &stderr, Deps{
 		Version: "test",
 		Run: func(ctx context.Context, command commands.Command) (int, error) {
 			return commands.Run(ctx, cliTestProfile(t), command, fake.New(fake.Seed{}), commands.Env{Stderr: io.Discard})
@@ -472,9 +537,8 @@ func TestDaemonAlreadyRunningExits0(t *testing.T) {
 			return daemon.Options{Socket: socket, Bootstrap: !command.NoBootstrap}, nil
 		},
 	})
-	if code != 0 {
-		t.Fatalf("Main() = %d; want 0", code)
-	}
+	assert.Equal(t, code, 0)
+	assert.Equal(t, stderr.String(), "tess: daemon already running\n")
 }
 
 func TestParseAlwaysUsesNonNilArgs(t *testing.T) {

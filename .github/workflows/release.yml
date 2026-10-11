@@ -24,6 +24,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
       - name: Cut release for new version
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"

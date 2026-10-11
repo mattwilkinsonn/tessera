@@ -15,6 +15,9 @@ import (
 
 const launchctlPath = "/bin/launchctl"
 
+// ErrNotLoaded marks a launchctl call that found no such service loaded.
+var ErrNotLoaded = errors.New("service not loaded")
+
 // Launchctl runs one launchctl invocation.
 type Launchctl interface {
 	Run(ctx context.Context, args ...string) error
@@ -23,13 +26,21 @@ type Launchctl interface {
 // ExecLaunchctl runs /bin/launchctl.
 type ExecLaunchctl struct{}
 
-// Run executes launchctl with args and returns its exit error.
+// Run executes launchctl with args and returns its exit error, marked ErrNotLoaded when the service is absent.
 func (ExecLaunchctl) Run(ctx context.Context, args ...string) error {
 	out, err := exec.CommandContext(ctx, launchctlPath, args...).CombinedOutput()
 	if err != nil {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && notLoadedExit(exitErr.ExitCode()) {
+			err = errors.Join(ErrNotLoaded, err)
+		}
 		return oops.With("args", args, "output", string(out)).Wrap(err)
 	}
 	return nil
+}
+
+// notLoadedExit reports launchctl's "no such process" (3) and "could not find service" (113) exits.
+func notLoadedExit(code int) bool {
+	return code == 3 || code == 113
 }
 
 // Service is one launchd agent the daemon brings up.
@@ -77,12 +88,12 @@ func Bootstrap(ctx context.Context, lc Launchctl, uid int, svcs []Service) (Owne
 	return owned, errors.Join(errs...)
 }
 
-// Bootout unloads only the owned services, last bootstrapped first.
+// Bootout unloads only the owned services, last bootstrapped first. A service already gone counts as booted out.
 func Bootout(ctx context.Context, lc Launchctl, uid int, owned Owned) error {
 	var errs []error
 	for _, svc := range slices.Backward(owned) {
 		target := fmt.Sprintf("gui/%d/%s", uid, svc.Label)
-		if err := lc.Run(ctx, "bootout", target); err != nil {
+		if err := lc.Run(ctx, "bootout", target); err != nil && !errors.Is(err, ErrNotLoaded) {
 			errs = append(errs, oops.With("label", svc.Label).Wrapf(err, "booting out service"))
 		}
 	}

@@ -165,6 +165,24 @@ func TestServe(t *testing.T) {
 		})
 	})
 
+	t.Run("work that ignores cancellation still ends Serve at the deadline", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ln := newPipeListener()
+			release := make(chan struct{})
+			stuck := func(context.Context) (Step, error) {
+				<-release
+				return Settled, nil
+			}
+			done := startServe(t.Context(), ln, NewHub(stuck, idle), noWake)
+			start := time.Now()
+			ln.send(t, string(wm.EventDisplayAdded))
+			err := (<-done).err
+			assert.Assert(t, errors.Is(err, context.DeadlineExceeded), "Serve() = %v", err)
+			assert.Equal(t, time.Since(start), 3*time.Second+CascadeTimeout)
+			close(release)
+		})
+	})
+
 	t.Run("cancel ends Serve cleanly while work runs", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())

@@ -73,6 +73,9 @@ func TestValidate(t *testing.T) {
 		{name: "duplicate topology display layout", mutate: func(p *config.Profile) {
 			p.Topologies = []config.Topology{{Name: "dual", Displays: []config.DisplayName{config.DisplayG9}, Desk: []config.DeskLayout{{Display: config.DisplayG9, Label: "one", Kind: config.LayoutStack, Tracks: [][]string{{"alpha"}}}, {Display: config.DisplayG9, Label: "two", Kind: config.LayoutStack, Tracks: [][]string{{"alpha"}}}}}}
 		}, want: "duplicate layout for g9"},
+		{name: "topology layout for an undeclared display", mutate: func(p *config.Profile) {
+			p.Topologies = []config.Topology{{Name: "dual", Displays: []config.DisplayName{config.DisplayG9}, Desk: []config.DeskLayout{{Display: config.DisplayG9, Label: "one", Kind: config.LayoutStack, Tracks: [][]string{{"alpha"}}}, {Display: config.DisplayAW, Label: "two", Kind: config.LayoutStack, Tracks: [][]string{{"alpha"}}}}}}
+		}, want: `topology "dual": layout for undeclared display aw`},
 		{name: "unknown desk slot window", mutate: func(p *config.Profile) { p.DeskSlots[0].Name = "missing" }, want: "unknown window"},
 		{name: "unknown pinned window", mutate: func(p *config.Profile) { p.LaptopPinned[0] = "missing" }, want: "unknown window"},
 	}

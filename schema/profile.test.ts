@@ -62,6 +62,16 @@ describe("Profile schema", () => {
     expect(() => Profile.parse({ ...defaultProfile, desk: [layout] })).toThrow();
   });
 
+  test("display widths must be positive integers", () => {
+    const withWidth = (width: number) => ({
+      ...defaultProfile,
+      displays: { ...defaultProfile.displays, g9: { width } },
+    });
+    expect(() => Profile.parse(withWidth(3440))).not.toThrow();
+    expect(() => Profile.parse(withWidth(3440.5))).toThrow();
+    expect(() => Profile.parse(withWidth(0))).toThrow();
+  });
+
   test("default and full JSON stay in sync with their TS sources", () => {
     checkOrUpdate(defaultPath, defaultProfile);
     checkOrUpdate(fullPath, fullProfile);
