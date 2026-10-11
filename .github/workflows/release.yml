@@ -1,10 +1,8 @@
 name: release
 
 # Merge-driven, version-guarded GitHub release. Every push to main reads the
-# `version` from package.json and cuts a `v<version>` release — but only if that
-# release does not already exist. A merge without a version bump is therefore a
-# no-op (the release already exists → skip), so this is safe to run on every
-# merge. Quality gating lives in ci.yml; this workflow runs no checks.
+# version from VERSION and cuts a v<version> release only if that release does
+# not already exist. Quality gating lives in ci.yml; this workflow runs no checks.
 
 "on":
   push:
@@ -26,11 +24,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Cut release for new version
         run: |
-          VERSION="$(jq -r .version package.json)"
+          VERSION="$(tr -d '[:space:]' < VERSION)"
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "Release v$VERSION already exists — skipping."
           else

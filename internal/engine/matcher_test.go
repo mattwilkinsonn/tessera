@@ -79,7 +79,7 @@ func TestSlugForWindow(t *testing.T) {
 }
 
 func TestLiveWindowFixtureClassifications(t *testing.T) {
-	path := filepath.Join("..", "..", "src", "engine", "fixtures", "windows.live.json")
+	path := filepath.Join("testdata", "windows.live.json")
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

@@ -1,11 +1,10 @@
-{ pkgs, inputs, ... }:
+{ pkgs, ... }:
 
-# Tessera dev shell — the single source of the Bun/TypeScript and Go toolchains.
+# Tessera dev shell for the Go build and the remaining TypeScript schema.
 # CI uses the same Go version and linter release.
 
 {
   packages = with pkgs; [
-    bun2nix
     # VCS — jj (Matt's review tool) works colocated with git here.
     jujutsu
 
@@ -14,24 +13,14 @@
     actionlint
     go_1_27
     golangci-lint
-
+    bun
   ];
-  languages.javascript = {
-    enable = true;
-    # Bun is the runtime, package manager, test runner, and bundler. Biome and
-    # tsc come from devDependencies (pinned in package.json), installed by the
-    # `bun install` below — kept in the lockfile so dev and CI resolve the same
-    # versions.
-    bun = {
-      enable = true;
-      install.enable = true;
-    };
-  };
 
   enterShell = ''
-    echo "tessera dev shell — bun $(bun --version)"
-    echo "  bun test          run the suite"
-    echo "  bun run typecheck  tsc --noEmit"
-    echo "  bun run check      biome check src/"
+    echo "tessera dev shell — go $(go version | awk '{print $3}')"
+    echo "  direnv exec . go vet ./..."
+    echo "  direnv exec . golangci-lint run ./..."
+    echo "  direnv exec . go test -race ./..."
+    echo "  cd schema && bunx tsc --noEmit && bun test"
   '';
 }
