@@ -1,0 +1,3 @@
+# schema/ is its own package with its own deps; its CI job runs those tests.
+[test]
+root = "src"

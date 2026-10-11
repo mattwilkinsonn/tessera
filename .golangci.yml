@@ -86,6 +86,14 @@ linters:
       - path: config/(parse|parse_test)\.go
         linters: [gosec]
         text: "G304"
+      # Effects intentionally read caller-selected cache and guard files.
+      - path: effects/effects\.go
+        linters: [gosec]
+        text: "G304"
+      # The fixed sketchybar executable receives the caller-selected event.
+      - path: effects/effects\.go
+        linters: [gosec]
+        text: "G204"
       # The driver execs the configured yabai and the profile's own spawn argv.
       - path: wm/yabai/driver\.go
         linters: [gosec]

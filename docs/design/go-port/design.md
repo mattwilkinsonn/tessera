@@ -992,7 +992,7 @@ Gate:
 - [ ] C3 — `wm` contract and fake, with labelled `AddSignal`
 - [ ] C4 — engine, with sealed `Op` and `ConvergeAction`
 - [ ] C5 — yabai driver and stub yabai
-- [ ] C6 — effects and executor, with `gofrs/flock` locks and cancel-releases-lock
+- [x] C6 — effects and executor, with `gofrs/flock` locks and cancel-releases-lock
 - [ ] C7 — commands, with `Wake`
 - [ ] C8 — daemon: hub, socket, registration, launchd, synctest gates
 - [ ] C9 — cobra CLI and `main`: completion, exit 130, argv corpus, `benchstartup`
