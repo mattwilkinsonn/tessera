@@ -73,7 +73,7 @@ func startServe(ctx context.Context, ln net.Listener, h *Hub, wake func(context.
 
 func noWake(context.Context) error { return nil }
 
-func TestServe(t *testing.T) {
+func TestServeDebouncesAndWakes(t *testing.T) {
 	t.Run("a burst of N events gives one cascade", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -111,12 +111,11 @@ func TestServe(t *testing.T) {
 			synctest.Wait()
 			assert.Equal(t, len(wakes), 0)
 			cancel()
-			// A failed wake routine is logged, not fatal.
 			assert.NilError(t, (<-done).err)
 		})
 	})
 
-	t.Run("drops an unknown line and closes a silent connection after one second", func(t *testing.T) {
+	t.Run("drops unknown lines and closes silent connections after one second", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			ln := newPipeListener()
@@ -136,7 +135,9 @@ func TestServe(t *testing.T) {
 			assert.NilError(t, (<-done).err)
 		})
 	})
+}
 
+func TestServeTimesOutAndCancelsWork(t *testing.T) {
 	t.Run("a timeout ends Serve", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ln := newPipeListener()
@@ -183,7 +184,8 @@ func TestServe(t *testing.T) {
 			close(release)
 		})
 	})
-
+}
+func TestServeCancellation(t *testing.T) {
 	t.Run("cancel ends Serve cleanly while work runs", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -223,6 +225,7 @@ func TestServe(t *testing.T) {
 			close(release)
 		})
 	})
+
 	t.Run("cancel waits for cooperative work to finish its cleanup", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -232,7 +235,6 @@ func TestServe(t *testing.T) {
 			cooperative := func(ctx context.Context) (Step, error) {
 				close(entered)
 				<-ctx.Done()
-				// Cleanup that takes virtual time, like releasing the guard via yabai.
 				<-time.After(time.Second)
 				cleaned.Store(true)
 				return Settled, ctx.Err()

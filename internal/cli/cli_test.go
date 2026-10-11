@@ -38,7 +38,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	stub := filepath.Join(dir, "stubyabai")
-	build := exec.Command("go", "build", "-o", stub, "../wm/yabai/testdata/stubyabai")
+	// TestMain has no testing context; this is the root for its setup command.
+	build := exec.CommandContext(context.Background(), "go", "build", "-o", stub, "../wm/yabai/testdata/stubyabai")
 	if output, err := build.CombinedOutput(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "building stub yabai: %v\n%s", err, output)
 		os.Exit(1)
@@ -295,6 +296,7 @@ func TestCompletionZshExits0AndCompleteSnapListsThreeChoices(t *testing.T) {
 }
 
 func TestStubYabaiCorpus(t *testing.T) {
+	//nolint:usetesting // /tmp keeps socket-related fixture paths under macOS's path limit.
 	root, err := os.MkdirTemp("/tmp", "tess-cli-corpus-")
 	if err != nil {
 		t.Fatal(err)
@@ -349,13 +351,14 @@ func canonicalArgv(log string) string {
 }
 
 func TestSIGTERMDuringStubBlockedApplyExits130AndLeavesLockFree(t *testing.T) {
+	//nolint:usetesting // /tmp keeps socket-related fixture paths under macOS's path limit.
 	root, err := os.MkdirTemp("/tmp", "tess-term-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { assert.NilError(t, os.RemoveAll(root)) }()
 	binary := filepath.Join(root, "tess")
-	build := exec.Command("go", "build", "-o", binary, "../../cmd/tess")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/tess")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building tess: %v\n%s", err, output)
 	}
@@ -366,7 +369,7 @@ func TestSIGTERMDuringStubBlockedApplyExits130AndLeavesLockFree(t *testing.T) {
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(root, "tessera-apply.lock")
-	command := exec.Command(binary, "apply")
+	command := exec.CommandContext(t.Context(), binary, "apply")
 	// TESSERA_PROFILE= overrides any host profile, so the default profile loads.
 	command.Env = append(os.Environ(), "HOME="+root, "TMPDIR="+root, "XDG_CACHE_HOME="+root, "XDG_CONFIG_HOME="+root, "TESSERA_PROFILE=", "TESS_YABAI="+stub, "TESS_BLOCK_STARTED="+started)
 	command.Stdout = io.Discard
@@ -395,13 +398,17 @@ func TestSIGTERMDuringStubBlockedApplyExits130AndLeavesLockFree(t *testing.T) {
 		}
 	}
 	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
-		_ = command.Process.Kill()
-		_, _ = command.Process.Wait()
+		if killErr := command.Process.Kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			t.Errorf("killing tess after SIGTERM failure: %v", killErr)
+		}
+		if waitErr := command.Wait(); waitErr != nil {
+			t.Errorf("waiting for tess after SIGTERM failure: %v", waitErr)
+		}
 		t.Fatal(err)
 	}
 	waitErr := command.Wait()
-	var exitErr *exec.ExitError
-	if !errors.As(waitErr, &exitErr) || exitErr.ExitCode() != 130 {
+	exitErr, ok := errors.AsType[*exec.ExitError](waitErr)
+	if !ok || exitErr.ExitCode() != 130 {
 		t.Fatalf("tess exit = %v; want 130", waitErr)
 	}
 	lock, acquired, err := effects.AcquireLock(lockPath)
@@ -412,13 +419,14 @@ func TestSIGTERMDuringStubBlockedApplyExits130AndLeavesLockFree(t *testing.T) {
 }
 
 func TestSecondSIGTERMDuringShutdownKillsByDefault(t *testing.T) {
+	//nolint:usetesting // /tmp keeps socket-related fixture paths under macOS's path limit.
 	root, err := os.MkdirTemp("/tmp", "tess-term2-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { assert.NilError(t, os.RemoveAll(root)) }()
 	binary := filepath.Join(root, "tess")
-	build := exec.Command("go", "build", "-o", binary, "../../cmd/tess")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../cmd/tess")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building tess: %v\n%s", err, output)
 	}
@@ -429,7 +437,7 @@ func TestSecondSIGTERMDuringShutdownKillsByDefault(t *testing.T) {
 	if err := os.WriteFile(stub, stubCode, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(binary, "apply")
+	command := exec.CommandContext(t.Context(), binary, "apply")
 	command.Env = append(os.Environ(), "HOME="+root, "TMPDIR="+root, "XDG_CACHE_HOME="+root, "XDG_CONFIG_HOME="+root, "TESSERA_PROFILE=", "TESS_YABAI="+stub, "TESS_ORPHAN_PID="+orphanPID)
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
@@ -475,6 +483,7 @@ func TestSecondSIGTERMDuringShutdownKillsByDefault(t *testing.T) {
 }
 
 func TestWakeWithNoDaemonExits1(t *testing.T) {
+	//nolint:usetesting // /tmp keeps socket-related fixture paths under macOS's path limit.
 	root, err := os.MkdirTemp("/tmp", "tess-wake-")
 	if err != nil {
 		t.Fatal(err)
@@ -492,8 +501,8 @@ func TestWakeWithNoDaemonExits1(t *testing.T) {
 
 func TestUsageErrorNamesUnknownCommandAndMainExits1(t *testing.T) {
 	_, err := Parse(t.Context(), []string{"bogus"}, "test", io.Discard, io.Discard)
-	var usage *UsageError
-	if !errors.As(err, &usage) || !strings.Contains(usage.Msg, "bogus") {
+	usage, ok := errors.AsType[*UsageError](err)
+	if !ok || !strings.Contains(usage.Msg, "bogus") {
 		t.Fatalf("Parse() error = %v; want UsageError naming bogus", err)
 	}
 	var stderr bytes.Buffer
@@ -516,6 +525,7 @@ func TestDefaultCompletionCommandSupportsAllShells(t *testing.T) {
 }
 
 func TestDaemonAlreadyRunningExits0(t *testing.T) {
+	//nolint:usetesting // /tmp keeps socket-related fixture paths under macOS's path limit.
 	root, err := os.MkdirTemp("/tmp", "tess-daemon-")
 	if err != nil {
 		t.Fatal(err)

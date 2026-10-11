@@ -1,75 +1,117 @@
 # yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+#
+# Enable every linter by default. Disable only with a reason, so linter upgrades
+# enable new checks until this policy explicitly reviews them.
+# The linter version is pinned in devenv.nix and CI for deliberate upgrades.
+#
+# Exhaustiveness uses gochecksumtype for sum types and exhaustive for enums.
+
 version: "2"
 
 linters:
   default: all
   enable:
-    - gochecksumtype
-    - exhaustive
-    - sloglint
+    - gochecksumtype # Enforce exhaustive switches over sum types.
+    - exhaustive # Enforce exhaustive switches over enums.
+    - sloglint # Enforce consistent structured logging.
+
   disable:
-    - wsl # formatting religion: blank-line and cuddle style is not correctness
-    - wsl_v5 # formatting religion: successor to wsl, same stylistic concern
-    - nlreturn # formatting religion: blank lines before returns are style
-    - lll # formatting religion: long names and test messages can exceed arbitrary limits
-    - whitespace # formatting religion: gofmt owns whitespace
-    - embeddedstructfieldcheck # formatting religion: blank lines between fields are cosmetic
-    - exhaustruct # fights Go idiom: partial literals and zero values are idiomatic
-    - exhaustruct_v5 # fights Go idiom: successor to exhaustruct, same zero-value concern
-    - varnamelen # fights Go idiom: short local names are idiomatic Go
-    - ireturn # fights Go idiom: returning interfaces is idiomatic Go
-    - noctx # fights Go idiom: main owns process lifetime; I/O APIs accept contexts
-    - gochecknoglobals # fights Go idiom: sentinel errors are package-level vars by design
-    - err113 # fights Go idiom: inline wrapped errors are idiomatic
-    - noinlineerr # fights Go idiom: short if-scoped errors are idiomatic Go
-    - wrapcheck # fights Go idiom: errors are wrapped at package boundaries
-    - mnd # fights Go idiom: self-describing protocol numbers can be clear in context
-    - nonamedreturns # fights Go idiom: named returns are valid for deferred cleanup
-    - godoclint # undeclared policy: descriptive package comments need no fixed template
-    - tagliatelle # undeclared policy: no struct-tag naming policy is established
-    - importas # undeclared policy: no import-alias convention is established
-    - testpackage # undeclared policy: tests may inspect package internals
-    - paralleltest # undeclared policy: not every test can run in parallel
-    - gomodguard # undeclared policy: no module allow-list is established
-    - depguard # undeclared policy: this module has no package allow-list
-    - godox # wrong workflow: tracked TODOs with issue refs are useful
+    # Formatting checks are handled by gofmt or are stylistic.
+    - wsl # Blank-line and cuddle rules are stylistic.
+    - wsl_v5 # Successor to wsl; same stylistic concern.
+    - nlreturn # Requiring blank lines before returns is stylistic.
+    - lll # Line-length limits are not a correctness check.
+    - whitespace # gofmt governs whitespace.
+    - embeddedstructfieldcheck # Blank lines between fields are cosmetic.
+
+    # These checks conflict with common Go idioms.
+    - exhaustruct # Partial struct literals and zero values are idiomatic.
+    - exhaustruct_v5 # Successor to exhaustruct; same concern.
+    - varnamelen # Short local names are idiomatic Go.
+    - ireturn # Returning interfaces is idiomatic Go.
+    - gochecknoglobals # Sentinel errors are package-level variables by design.
+    - err113 # Inline wrapped errors are idiomatic Go.
+    - noinlineerr # If-scoped errors are idiomatic Go.
+    - wrapcheck # Errors are wrapped at package boundaries.
+    - mnd # Some numeric constants are self-describing in context.
+    - nonamedreturns # Named returns are useful for deferred cleanup.
+    - godoclint # Descriptive package comments need no fixed template.
+
+    # These require a repository-wide policy not established here.
+    - tagliatelle # Struct tags follow external and persisted wire formats.
+    - importas # No import-alias convention is established.
+    - testpackage # Tests may need access to package internals.
+    - paralleltest # Not every test can run in parallel.
+    - gomodguard # Deprecated alias; gomodguard_v2 is configured below.
+
+    # Tracked TODOs are allowed.
+    - godox # TODOs may include issue references.
 
   settings:
+    # Import restrictions are deny-list policy. Architectural subprocess seams
+    # use a reasoned per-site nolint directive.
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: io/ioutil
+              desc: deprecated; use io or os (0 uses — clean ratchet)
+            - pkg: crypto/md5
+              desc: weak hash; use crypto/sha256 or better (0 uses — clean ratchet)
+            - pkg: crypto/sha1
+              desc: weak hash; use crypto/sha256 or better (0 uses — clean ratchet)
+            - pkg: math/rand
+              desc: non-crypto RNG; use crypto/rand for security-sensitive randomness (test fixtures exempt below)
+            - pkg: math/rand/v2
+              desc: non-crypto RNG; use crypto/rand for security-sensitive randomness (test fixtures exempt below)
+            - pkg: os/exec
+              desc: direct subprocess exec must be a justified seam; annotate the site //nolint:depguard // <reason>
+
+    gomodguard_v2:
+      blocked:
+        - module: github.com/pkg/errors
+          recommendations:
+            - errors
+          reason: use stdlib errors with %w wrapping; not a dependency today — clean ratchet
+
     cyclop:
-      max-complexity: 55
-    gocyclo:
-      min-complexity: 55
+      max-complexity: 30
     gocognit:
-      min-complexity: 110
+      min-complexity: 40
     funlen:
-      lines: 200
-      statements: 110
-    maintidx:
-      under: 15
+      lines: 120
+      statements: 80
     nestif:
       min-complexity: 8
+
     goconst:
       ignore-tests: true
-      min-occurrences: 12
+
     gochecksumtype:
       default-signifies-exhaustive: false
     exhaustive:
       default-signifies-exhaustive: true
+
     sloglint:
       no-mixed-args: true
       kv-only: false
       key-naming-case: snake
       static-msg: false
+
     forbidigo:
       forbid:
+        - pattern: '^errors\.As$'
+          msg: use errors.AsType[T]
         - pattern: '^time\.Sleep$'
           msg: fixed sleeps are nondeterministic; wait on observable state instead
         - pattern: '^(fmt\.Print(|f|ln)|print|println)$'
           msg: use log/slog instead of debug prints
+
     nolintlint:
       require-explanation: true
       require-specific: true
       allow-unused: false
+
     revive:
       rules:
         - name: package-comments
@@ -80,40 +122,16 @@ linters:
     warn-unused: true
     rules:
       - path: _test\.go
-        linters: [depguard, gosec]
-      - path: config/configtest/.*\.go
-        linters: [depguard, goconst]
-      - path: config/(parse|parse_test)\.go
-        linters: [gosec]
-        text: "G304"
-      # Effects intentionally read caller-selected cache and guard files.
-      - path: effects/effects\.go
-        linters: [gosec]
-        text: "G304"
-      # The fixed sketchybar executable receives the caller-selected event.
-      - path: effects/effects\.go
-        linters: [gosec]
-        text: "G204"
-      # The driver execs the configured yabai and the profile's own spawn argv.
-      - path: wm/yabai/driver\.go
-        linters: [gosec]
-        text: "G204"
-      # The daemon execs the fixed /bin/launchctl with its own argv.
-      - path: daemon/launchd\.go
-        linters: [gosec]
-        text: "G204"
-      # The daemon unlinks the caller-chosen socket path after taking its lock.
-      - path: daemon/listen\.go
-        linters: [gosec]
-        text: "G703"
-      # Socket tests need short /tmp paths; t.TempDir exceeds the macOS socket path limit.
-      - path: (daemon/listen|cli/cli)_test\.go
-        linters: [usetesting]
-        text: "os.MkdirTemp"
-      # The bench writes an executable yabai shim and runs the binaries it compares.
-      - path: tools/benchstartup/main\.go
-        linters: [gosec]
-        text: "G306|G204"
+        linters:
+          - errcheck
+          - gosec
+          - forcetypeassert
+          - dupl
+          - goconst
+          - containedctx
+          - errorlint
+          - predeclared
+          - depguard
 
 formatters:
   enable:

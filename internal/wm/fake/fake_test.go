@@ -100,71 +100,67 @@ func windowWithID(t *testing.T, driver *Driver, id int) wm.Window {
 }
 
 func TestStableSpaceIDSurvivesIndexRenumbering(t *testing.T) {
-	t.Run("destroying a lower-index space renumbers later spaces but not their ids", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		before := spaces(t, driver)
-		main, stray, lapArc := before[0].ID, before[1].ID, before[2].ID
-		if got := globalIndex(t, driver, lapArc); got != 3 {
-			t.Fatalf("lap-arc index = %d, want 3", got)
-		}
-		destroyed, err := driver.DestroySpace(t.Context(), stray)
-		if err != nil || !destroyed {
-			t.Fatalf("DestroySpace() = %t, %v; want true, nil", destroyed, err)
-		}
-		found := false
-		for _, space := range spaces(t, driver) {
-			found = found || space.ID == lapArc
-		}
-		if !found {
-			t.Fatalf("space id %q changed or disappeared", lapArc)
-		}
-		if got := globalIndex(t, driver, lapArc); got != 2 {
-			t.Fatalf("lap-arc index = %d, want 2", got)
-		}
-		if got := globalIndex(t, driver, main); got != 1 {
-			t.Fatalf("main index = %d, want 1", got)
-		}
-	})
+	t.Run("destroying a lower-index space renumbers later spaces but not their ids", testDestroySpaceKeepsLaterIDs)
+	t.Run("createSpace mints a fresh id and appends within the display group", testCreateSpaceMintsFreshID)
+	t.Run("moveSpaceToIndex reorders live index, id stable", testMoveSpaceKeepsID)
+}
 
-	t.Run("createSpace mints a fresh id and appends within the display group", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		created, added, err := driver.CreateSpace(t.Context(), 2)
-		if err != nil || !added {
-			t.Fatalf("CreateSpace() = %q, %t, %v; want id, true, nil", created, added, err)
-		}
-		var fresh *wm.Space
-		for _, space := range spaces(t, driver) {
-			if space.ID == created {
-				fresh = &space
-			}
-		}
-		if fresh == nil || fresh.DisplayIdx != 2 || fresh.Label != "" {
-			t.Fatalf("created space = %+v, want display 2 and empty label", fresh)
-		}
-		for _, display := range displays(t, driver) {
-			if display.Idx == 2 && (len(display.SpaceIDs) != 2 || display.SpaceIDs[1] != created) {
-				t.Fatalf("display 2 spaces = %v, want new id last", display.SpaceIDs)
-			}
-		}
-	})
+func testDestroySpaceKeepsLaterIDs(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	before := spaces(t, driver)
+	main, stray, lapArc := before[0].ID, before[1].ID, before[2].ID
+	if got := globalIndex(t, driver, lapArc); got != 3 {
+		t.Fatalf("lap-arc index = %d, want 3", got)
+	}
+	destroyed, err := driver.DestroySpace(t.Context(), stray)
+	if err != nil || !destroyed {
+		t.Fatalf("DestroySpace() = %t, %v; want true, nil", destroyed, err)
+	}
+	if !slices.ContainsFunc(spaces(t, driver), func(space wm.Space) bool { return space.ID == lapArc }) {
+		t.Fatalf("space id %q changed or disappeared", lapArc)
+	}
+	if got := globalIndex(t, driver, lapArc); got != 2 {
+		t.Fatalf("lap-arc index = %d, want 2", got)
+	}
+	if got := globalIndex(t, driver, main); got != 1 {
+		t.Fatalf("main index = %d, want 1", got)
+	}
+}
 
-	t.Run("moveSpaceToIndex reorders live index, id stable", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		lapArc := spaces(t, driver)[2].ID
-		if err := driver.MoveSpaceToIndex(t.Context(), lapArc, 1); err != nil {
-			t.Fatal(err)
+func testCreateSpaceMintsFreshID(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	created, added, err := driver.CreateSpace(t.Context(), 2)
+	if err != nil || !added {
+		t.Fatalf("CreateSpace() = %q, %t, %v; want id, true, nil", created, added, err)
+	}
+	var fresh *wm.Space
+	for _, space := range spaces(t, driver) {
+		if space.ID == created {
+			fresh = &space
 		}
-		if got := globalIndex(t, driver, lapArc); got != 1 {
-			t.Fatalf("lap-arc index = %d, want 1", got)
+	}
+	if fresh == nil || fresh.DisplayIdx != 2 || fresh.Label != "" {
+		t.Fatalf("created space = %+v, want display 2 and empty label", fresh)
+	}
+	for _, display := range displays(t, driver) {
+		if display.Idx == 2 && (len(display.SpaceIDs) != 2 || display.SpaceIDs[1] != created) {
+			t.Fatalf("display 2 spaces = %v, want new id last", display.SpaceIDs)
 		}
-		found := false
-		for _, space := range spaces(t, driver) {
-			found = found || space.ID == lapArc
-		}
-		if !found {
-			t.Fatalf("space id %q changed or disappeared", lapArc)
-		}
-	})
+	}
+}
+
+func testMoveSpaceKeepsID(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	lapArc := spaces(t, driver)[2].ID
+	if err := driver.MoveSpaceToIndex(t.Context(), lapArc, 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := globalIndex(t, driver, lapArc); got != 1 {
+		t.Fatalf("lap-arc index = %d, want 1", got)
+	}
+	if !slices.ContainsFunc(spaces(t, driver), func(space wm.Space) bool { return space.ID == lapArc }) {
+		t.Fatalf("space id %q changed or disappeared", lapArc)
+	}
 }
 
 func TestSpaceLifecycle(t *testing.T) {
@@ -248,179 +244,190 @@ func TestSpawning(t *testing.T) {
 }
 
 func TestWindowPlacementAndQueries(t *testing.T) {
-	t.Run("moveWindowToSpace updates the window's space and display", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		plan := planSpace(t, driver)
-		if err := driver.MoveWindowToSpace(t.Context(), 10, plan.ID); err != nil {
-			t.Fatal(err)
-		}
-		window := windowWithID(t, driver, 10)
-		if window.SpaceID != plan.ID || window.DisplayIdx != 2 {
-			t.Fatalf("window after move = %+v, want space %q display 2", window, plan.ID)
-		}
-	})
+	t.Run("moveWindowToSpace updates the window's space and display", testMoveWindowToSpaceUpdatesDisplay)
+	t.Run("queryWindowsOnSpace returns all windows after a move", testQueryWindowsOnSpaceAfterMove)
+	t.Run("realizeSpaceLayout moves column windows onto the space and unfloats them", testRealizeColumnsMovesAndUnfloats)
+	t.Run("realizeSpaceLayout cuts columns by weight and copies anchor frames", testRealizeColumnsUsesWeightedFrames)
+	t.Run("realizeSpaceLayout stack preserves frames and weighted rows cut height", testRealizeStackAndRows)
+	t.Run("realizeSpaceLayout drops empty tracks and uses exact offsets", testRealizeLayoutDropsEmptyTracks)
+	t.Run("realizeSpaceLayout moves extras from every track", testRealizeLayoutMovesExtras)
+	t.Run("toggleFloat flips floating and focusWindow sets focused window", testToggleFloatAndFocusWindow)
+	t.Run("moveWindowToDisplay relocates to target display home space", testMoveWindowToDisplay)
+	t.Run("settle unit defaults to zero", testSettleUnitDefaultsToZero)
+}
 
-	t.Run("queryWindowsOnSpace returns all windows after a move", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		main := spaces(t, driver)[0].ID
-		if err := driver.MoveWindowToSpace(t.Context(), 11, main); err != nil {
-			t.Fatal(err)
-		}
-		got, err := driver.QueryWindowsOnSpace(t.Context(), main)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ids := make([]int, len(got))
-		for i, window := range got {
-			ids[i] = window.ID
-		}
-		slices.Sort(ids)
-		if !reflect.DeepEqual(ids, []int{10, 11}) {
-			t.Fatalf("window ids = %v, want [10 11]", ids)
-		}
-	})
+func testMoveWindowToSpaceUpdatesDisplay(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	plan := planSpace(t, driver)
+	if err := driver.MoveWindowToSpace(t.Context(), 10, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	window := windowWithID(t, driver, 10)
+	if window.SpaceID != plan.ID || window.DisplayIdx != 2 {
+		t.Fatalf("window after move = %+v, want space %q display 2", window, plan.ID)
+	}
+}
 
-	t.Run("realizeSpaceLayout moves column windows onto the space and unfloats them", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		plan := planSpace(t, driver)
-		if err := driver.ToggleFloat(t.Context(), 10); err != nil {
-			t.Fatal(err)
-		}
-		if !windowWithID(t, driver, 10).Floating {
-			t.Fatal("toggleFloat did not float window")
-		}
-		if err := driver.RealizeSpaceLayout(t.Context(), plan.ID, wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}, {11}}}); err != nil {
-			t.Fatal(err)
-		}
-		for _, id := range []int{10, 11} {
-			window := windowWithID(t, driver, id)
-			if window.SpaceID != plan.ID || window.Floating {
-				t.Errorf("window %d after realize = %+v, want tiled on %q", id, window, plan.ID)
-			}
-		}
-	})
+func testQueryWindowsOnSpaceAfterMove(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	main := spaces(t, driver)[0].ID
+	if err := driver.MoveWindowToSpace(t.Context(), 11, main); err != nil {
+		t.Fatal(err)
+	}
+	got, err := driver.QueryWindowsOnSpace(t.Context(), main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]int, len(got))
+	for i, window := range got {
+		ids[i] = window.ID
+	}
+	slices.Sort(ids)
+	if !reflect.DeepEqual(ids, []int{10, 11}) {
+		t.Fatalf("window ids = %v, want [10 11]", ids)
+	}
+}
 
-	t.Run("realizeSpaceLayout cuts columns by weight and copies anchor frames", func(t *testing.T) {
-		frame := &wm.Frame{X: 10, Y: 20, W: 1000, H: 800}
-		driver := newTestDriver(t, Seed{
-			Displays: []SeedDisplay{{Idx: 1, Frame: frame}},
-			Spaces:   []SeedSpace{{DisplayIdx: 1, Label: "grid"}},
-			Windows:  []SeedWindow{{ID: 1, App: "A", SpaceIndex: 1}, {ID: 2, App: "A", SpaceIndex: 1}, {ID: 3, App: "A", SpaceIndex: 1}, {ID: 4, App: "A", SpaceIndex: 1}},
-		})
-		space := spaces(t, driver)[0]
-		err := driver.RealizeSpaceLayout(t.Context(), space.ID, wm.SpaceLayoutTarget{
-			Kind: wm.LayoutColumns, Tracks: [][]int{{1, 4}, {2}, {3}}, Weights: []float64{3, 4, 3},
-		})
-		if err != nil {
-			t.Fatal(err)
+func testRealizeColumnsMovesAndUnfloats(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	plan := planSpace(t, driver)
+	if err := driver.ToggleFloat(t.Context(), 10); err != nil {
+		t.Fatal(err)
+	}
+	if !windowWithID(t, driver, 10).Floating {
+		t.Fatal("toggleFloat did not float window")
+	}
+	if err := driver.RealizeSpaceLayout(t.Context(), plan.ID, wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}, {11}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int{10, 11} {
+		window := windowWithID(t, driver, id)
+		if window.SpaceID != plan.ID || window.Floating {
+			t.Errorf("window %d after realize = %+v, want tiled on %q", id, window, plan.ID)
 		}
-		want := []wm.Frame{{X: 10, Y: 20, W: 300, H: 800}, {X: 310, Y: 20, W: 400, H: 800}, {X: 710, Y: 20, W: 300, H: 800}}
-		for i, id := range []int{1, 2, 3} {
-			if got := windowWithID(t, driver, id).Frame; got != want[i] {
-				t.Errorf("window %d frame = %+v, want %+v", id, got, want[i])
-			}
-		}
-		if got := windowWithID(t, driver, 4).Frame; got != want[0] {
-			t.Errorf("extra window frame = %+v, want anchor frame %+v", got, want[0])
-		}
-	})
+	}
+}
 
-	t.Run("realizeSpaceLayout stack preserves frames and weighted rows cut height", func(t *testing.T) {
-		driver := newTestDriver(t, Seed{
-			Displays: []SeedDisplay{{Idx: 1, Frame: &wm.Frame{X: 10, Y: 20, W: 1000, H: 800}}},
-			Spaces:   []SeedSpace{{DisplayIdx: 1, Label: "grid"}},
-			Windows: []SeedWindow{
-				{ID: 1, App: "A", SpaceIndex: 1, Frame: &wm.Frame{X: 1, Y: 2, W: 3, H: 4}},
-				{ID: 2, App: "B", SpaceIndex: 1, Frame: &wm.Frame{X: 5, Y: 6, W: 7, H: 8}},
-			},
-		})
-		space := spaces(t, driver)[0]
-		before := []wm.Frame{windowWithID(t, driver, 1).Frame, windowWithID(t, driver, 2).Frame}
-		if err := driver.RealizeSpaceLayout(t.Context(), space.ID, wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{1, 2}}}); err != nil {
-			t.Fatal(err)
-		}
-		for i, id := range []int{1, 2} {
-			if got := windowWithID(t, driver, id).Frame; got != before[i] {
-				t.Errorf("stack frame for window %d = %+v, want %+v", id, got, before[i])
-			}
-		}
-		if err := driver.RealizeSpaceLayout(t.Context(), space.ID, wm.SpaceLayoutTarget{Kind: wm.LayoutRows, Tracks: [][]int{{1}, {2}}, Weights: []float64{1, 3}}); err != nil {
-			t.Fatal(err)
-		}
-		want := []wm.Frame{{X: 10, Y: 20, W: 1000, H: 200}, {X: 10, Y: 220, W: 1000, H: 600}}
-		for i, id := range []int{1, 2} {
-			if got := windowWithID(t, driver, id).Frame; got != want[i] {
-				t.Errorf("row frame for window %d = %+v, want %+v", id, got, want[i])
-			}
-		}
+func testRealizeColumnsUsesWeightedFrames(t *testing.T) {
+	frame := &wm.Frame{X: 10, Y: 20, W: 1000, H: 800}
+	driver := newTestDriver(t, Seed{
+		Displays: []SeedDisplay{{Idx: 1, Frame: frame}},
+		Spaces:   []SeedSpace{{DisplayIdx: 1, Label: "grid"}},
+		Windows:  []SeedWindow{{ID: 1, App: "A", SpaceIndex: 1}, {ID: 2, App: "A", SpaceIndex: 1}, {ID: 3, App: "A", SpaceIndex: 1}, {ID: 4, App: "A", SpaceIndex: 1}},
 	})
+	space := spaces(t, driver)[0]
+	err := driver.RealizeSpaceLayout(t.Context(), space.ID, wm.SpaceLayoutTarget{
+		Kind: wm.LayoutColumns, Tracks: [][]int{{1, 4}, {2}, {3}}, Weights: []float64{3, 4, 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []wm.Frame{{X: 10, Y: 20, W: 300, H: 800}, {X: 310, Y: 20, W: 400, H: 800}, {X: 710, Y: 20, W: 300, H: 800}}
+	for i, id := range []int{1, 2, 3} {
+		if got := windowWithID(t, driver, id).Frame; got != want[i] {
+			t.Errorf("window %d frame = %+v, want %+v", id, got, want[i])
+		}
+	}
+	if got := windowWithID(t, driver, 4).Frame; got != want[0] {
+		t.Errorf("extra window frame = %+v, want anchor frame %+v", got, want[0])
+	}
+}
 
-	t.Run("realizeSpaceLayout drops empty tracks and uses exact offsets", func(t *testing.T) {
-		driver := newTestDriver(t, Seed{
-			Displays: []SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 1728, H: 1000}}},
-			Spaces:   []SeedSpace{{DisplayIdx: 1, Label: "grid"}},
-			Windows:  []SeedWindow{{ID: 1, App: "A", SpaceIndex: 1}, {ID: 2, App: "A", SpaceIndex: 1}, {ID: 3, App: "A", SpaceIndex: 1}, {ID: 4, App: "A", SpaceIndex: 1}},
-		})
-		space := spaces(t, driver)[0]
-		if err := driver.RealizeSpaceLayout(t.Context(), space.ID, wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{1}, {}, {2}, {3}, {4}}, Weights: []float64{3, 4, 3, 2}}); err != nil {
-			t.Fatal(err)
-		}
-		want := []float64{0, 432, 1008, 1440}
-		for i, id := range []int{1, 2, 3, 4} {
-			if got := windowWithID(t, driver, id).Frame.X; got != want[i] {
-				t.Errorf("window %d x = %v, want %v", id, got, want[i])
-			}
-		}
+func testRealizeStackAndRows(t *testing.T) {
+	driver := newTestDriver(t, Seed{
+		Displays: []SeedDisplay{{Idx: 1, Frame: &wm.Frame{X: 10, Y: 20, W: 1000, H: 800}}},
+		Spaces:   []SeedSpace{{DisplayIdx: 1, Label: "grid"}},
+		Windows: []SeedWindow{
+			{ID: 1, App: "A", SpaceIndex: 1, Frame: &wm.Frame{X: 1, Y: 2, W: 3, H: 4}},
+			{ID: 2, App: "B", SpaceIndex: 1, Frame: &wm.Frame{X: 5, Y: 6, W: 7, H: 8}},
+		},
 	})
+	space := spaces(t, driver)[0]
+	before := []wm.Frame{windowWithID(t, driver, 1).Frame, windowWithID(t, driver, 2).Frame}
+	if err := driver.RealizeSpaceLayout(t.Context(), space.ID, wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{1, 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []int{1, 2} {
+		if got := windowWithID(t, driver, id).Frame; got != before[i] {
+			t.Errorf("stack frame for window %d = %+v, want %+v", id, got, before[i])
+		}
+	}
+	if err := driver.RealizeSpaceLayout(t.Context(), space.ID, wm.SpaceLayoutTarget{Kind: wm.LayoutRows, Tracks: [][]int{{1}, {2}}, Weights: []float64{1, 3}}); err != nil {
+		t.Fatal(err)
+	}
+	want := []wm.Frame{{X: 10, Y: 20, W: 1000, H: 200}, {X: 10, Y: 220, W: 1000, H: 600}}
+	for i, id := range []int{1, 2} {
+		if got := windowWithID(t, driver, id).Frame; got != want[i] {
+			t.Errorf("row frame for window %d = %+v, want %+v", id, got, want[i])
+		}
+	}
+}
 
-	t.Run("realizeSpaceLayout moves extras from every track", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		plan := planSpace(t, driver)
-		if err := driver.RealizeSpaceLayout(t.Context(), plan.ID, wm.SpaceLayoutTarget{Kind: wm.LayoutRows, Tracks: [][]int{{10, 20}, {11}}, Weights: []float64{1, 2}}); err != nil {
-			t.Fatal(err)
-		}
-		for _, id := range []int{10, 11, 20} {
-			if got := windowWithID(t, driver, id).SpaceID; got != plan.ID {
-				t.Errorf("window %d space = %q, want %q", id, got, plan.ID)
-			}
-		}
+func testRealizeLayoutDropsEmptyTracks(t *testing.T) {
+	driver := newTestDriver(t, Seed{
+		Displays: []SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 1728, H: 1000}}},
+		Spaces:   []SeedSpace{{DisplayIdx: 1, Label: "grid"}},
+		Windows:  []SeedWindow{{ID: 1, App: "A", SpaceIndex: 1}, {ID: 2, App: "A", SpaceIndex: 1}, {ID: 3, App: "A", SpaceIndex: 1}, {ID: 4, App: "A", SpaceIndex: 1}},
 	})
+	space := spaces(t, driver)[0]
+	if err := driver.RealizeSpaceLayout(t.Context(), space.ID, wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{1}, {}, {2}, {3}, {4}}, Weights: []float64{3, 4, 3, 2}}); err != nil {
+		t.Fatal(err)
+	}
+	want := []float64{0, 432, 1008, 1440}
+	for i, id := range []int{1, 2, 3, 4} {
+		if got := windowWithID(t, driver, id).Frame.X; got != want[i] {
+			t.Errorf("window %d x = %v, want %v", id, got, want[i])
+		}
+	}
+}
 
-	t.Run("toggleFloat flips floating and focusWindow sets focused window", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		focused, found, err := driver.QueryFocusedWindow(t.Context())
-		if err != nil || found {
-			t.Fatalf("QueryFocusedWindow() = %v, %t, %v; want absent, nil error", focused, found, err)
+func testRealizeLayoutMovesExtras(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	plan := planSpace(t, driver)
+	if err := driver.RealizeSpaceLayout(t.Context(), plan.ID, wm.SpaceLayoutTarget{Kind: wm.LayoutRows, Tracks: [][]int{{10, 20}, {11}}, Weights: []float64{1, 2}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int{10, 11, 20} {
+		if got := windowWithID(t, driver, id).SpaceID; got != plan.ID {
+			t.Errorf("window %d space = %q, want %q", id, got, plan.ID)
 		}
-		ok, err := driver.FocusWindow(t.Context(), 20)
-		if err != nil || !ok {
-			t.Fatalf("FocusWindow() = %t, %v; want true, nil", ok, err)
-		}
-		focused, found, err = driver.QueryFocusedWindow(t.Context())
-		if err != nil || !found || focused.ID != 20 {
-			t.Fatalf("focused window = %v, %t, %v; want id 20", focused, found, err)
-		}
-		ok, err = driver.FocusWindow(t.Context(), 999)
-		if err != nil || ok {
-			t.Fatalf("FocusWindow(unknown) = %t, %v; want false, nil", ok, err)
-		}
-	})
+	}
+}
 
-	t.Run("moveWindowToDisplay relocates to target display home space", func(t *testing.T) {
-		driver := newTestDriver(t, seed())
-		ok, err := driver.MoveWindowToDisplay(t.Context(), 20, wm.DisplaySelector{Index: 1})
-		if err != nil || !ok {
-			t.Fatalf("MoveWindowToDisplay() = %t, %v; want true, nil", ok, err)
-		}
-		window := windowWithID(t, driver, 20)
-		if window.DisplayIdx != 1 || window.SpaceID != displays(t, driver)[0].SpaceIDs[0] {
-			t.Fatalf("window after move = %+v, want display 1 home", window)
-		}
-	})
+func testToggleFloatAndFocusWindow(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	focused, found, err := driver.QueryFocusedWindow(t.Context())
+	if err != nil || found {
+		t.Fatalf("QueryFocusedWindow() = %v, %t, %v; want absent, nil error", focused, found, err)
+	}
+	ok, err := driver.FocusWindow(t.Context(), 20)
+	if err != nil || !ok {
+		t.Fatalf("FocusWindow() = %t, %v; want true, nil", ok, err)
+	}
+	focused, found, err = driver.QueryFocusedWindow(t.Context())
+	if err != nil || !found || focused.ID != 20 {
+		t.Fatalf("focused window = %v, %t, %v; want id 20", focused, found, err)
+	}
+	ok, err = driver.FocusWindow(t.Context(), 999)
+	if err != nil || ok {
+		t.Fatalf("FocusWindow(unknown) = %t, %v; want false, nil", ok, err)
+	}
+}
 
-	t.Run("settle unit defaults to zero", func(t *testing.T) {
-		if got := New(Seed{}).SettleUnit(); got != 0 {
-			t.Fatalf("SettleUnit() = %s, want 0", got)
-		}
-	})
+func testMoveWindowToDisplay(t *testing.T) {
+	driver := newTestDriver(t, seed())
+	ok, err := driver.MoveWindowToDisplay(t.Context(), 20, wm.DisplaySelector{Index: 1})
+	if err != nil || !ok {
+		t.Fatalf("MoveWindowToDisplay() = %t, %v; want true, nil", ok, err)
+	}
+	window := windowWithID(t, driver, 20)
+	if window.DisplayIdx != 1 || window.SpaceID != displays(t, driver)[0].SpaceIDs[0] {
+		t.Fatalf("window after move = %+v, want display 1 home", window)
+	}
+}
+
+func testSettleUnitDefaultsToZero(t *testing.T) {
+	if got := New(Seed{}).SettleUnit(); got != 0 {
+		t.Fatalf("SettleUnit() = %s, want 0", got)
+	}
 }

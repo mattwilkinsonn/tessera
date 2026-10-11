@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -160,14 +161,29 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 }
 
 func spawnMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer) error {
-	type spawnTarget struct {
-		app      *regexp.Regexp
-		baseline map[int]struct{}
-		count    int
+	if profile == nil || driver == nil || stderr == nil {
+		return errors.New("spawning missing windows: profile, driver, and stderr are required")
 	}
+	targets, err := startMissingWindows(ctx, profile, driver, names, windows, stderr)
+	if err != nil || len(targets) == 0 {
+		return err
+	}
+	return waitForSpawnedWindows(ctx, driver, targets, stderr)
+}
+
+type spawnTarget struct {
+	app      *regexp.Regexp
+	baseline map[int]struct{}
+	count    int
+}
+
+func startMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer) (map[string]*spawnTarget, error) {
 	targets := make(map[string]*spawnTarget)
 	for _, name := range engine.SpawnsNeeded(profile, names, windows) {
-		spec := profile.Windows[name]
+		spec, ok := profile.Windows[name]
+		if !ok {
+			continue
+		}
 		target := targets[spec.App]
 		if target == nil {
 			target = &spawnTarget{app: spec.AppRE, baseline: make(map[int]struct{})}
@@ -179,59 +195,68 @@ func spawnMissingWindows(ctx context.Context, profile *config.Profile, driver wm
 			targets[spec.App] = target
 		}
 		if err := driver.SpawnWindow(ctx, spec.Spawn); err != nil {
-			message := fmt.Sprintf("tess: spawn failed for %s: %v\n", name, err)
-			if _, writeErr := io.WriteString(stderr, message); writeErr != nil {
-				return fmt.Errorf("writing spawn failure: %w", writeErr)
+			if _, writeErr := fmt.Fprintf(stderr, "tess: spawn failed for %s: %v\n", name, err); writeErr != nil {
+				return nil, fmt.Errorf("writing spawn failure: %w", writeErr)
 			}
 			continue
 		}
 		target.count++
 	}
-	if len(targets) == 0 {
-		return nil
-	}
+	return targets, nil
+}
+
+func waitForSpawnedWindows(ctx context.Context, driver wm.Driver, targets map[string]*spawnTarget, stderr io.Writer) error {
 	missing := make([]string, 0, len(targets))
 	for attempt := range spawnPolls {
 		current, err := driver.QueryWindows(ctx)
 		if err != nil {
 			return err
 		}
-		missing = missing[:0]
-		for appName, target := range targets {
-			found := 0
-			for _, window := range current {
-				if _, old := target.baseline[window.ID]; old {
-					continue
-				}
-				if target.app.MatchString(window.App) {
-					found++
-				}
-			}
-			if found < target.count {
-				missing = append(missing, appName)
-			}
-		}
+		missing = missingSpawnTargets(current, targets)
 		if len(missing) == 0 {
 			return nil
 		}
 		if attempt+1 < spawnPolls {
-			timer := time.NewTimer(spawnPollInterval)
-			select {
-			case <-ctx.Done():
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return ctx.Err()
-			case <-timer.C:
+			if err := waitForSpawnPoll(ctx); err != nil {
+				return err
 			}
 		}
 	}
 	slices.Sort(missing)
-	message := fmt.Sprintf("tess: spawned windows not found for %s\n", strings.Join(missing, ", "))
-	if _, err := io.WriteString(stderr, message); err != nil {
+	if _, err := fmt.Fprintf(stderr, "tess: spawned windows not found for %s\n", strings.Join(missing, ", ")); err != nil {
 		return fmt.Errorf("writing spawn timeout: %w", err)
 	}
 	return nil
+}
+
+func missingSpawnTargets(current []wm.Window, targets map[string]*spawnTarget) []string {
+	missing := make([]string, 0, len(targets))
+	for appName, target := range targets {
+		found := 0
+		for _, window := range current {
+			if _, old := target.baseline[window.ID]; old {
+				continue
+			}
+			if target.app.MatchString(window.App) {
+				found++
+			}
+		}
+		if found < target.count {
+			missing = append(missing, appName)
+		}
+	}
+	return missing
+}
+
+func waitForSpawnPoll(ctx context.Context) error {
+	timer := time.NewTimer(spawnPollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func unlock(lock interface{ Unlock() error }) {

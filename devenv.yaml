@@ -1,5 +1,9 @@
-# devenv inputs. Rolling nixpkgs is devenv's recommended channel for dev
-# shells — newer than a release channel, curated for devenv.
+# yaml-language-server: $schema=https://devenv.sh/devenv.schema.json
 inputs:
+  go-overlay:
+    url: github:purpleclay/go-overlay
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
   nixpkgs:
     url: github:cachix/devenv-nixpkgs/rolling

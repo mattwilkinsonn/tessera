@@ -66,6 +66,7 @@ func Load(ctx context.Context, env func(string) string, home string) (*Profile, 
 }
 
 func loadFile(path string) (*Profile, error) {
+	//nolint:gosec // Profile paths are selected explicitly by the user.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading profile %s: %w", path, err)
@@ -74,6 +75,7 @@ func loadFile(path string) (*Profile, error) {
 }
 
 func loadIfPresent(path string) (*Profile, error) {
+	//nolint:gosec // Profile paths come from the user's config directory.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

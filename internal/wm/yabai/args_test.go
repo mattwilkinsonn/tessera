@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	path := filepath.Join(dir, "stubyabai")
-	command := exec.Command("go", "build", "-o", path, "./testdata/stubyabai")
+	command := exec.CommandContext(context.Background(), "go", "build", "-o", path, "./testdata/stubyabai")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "building stub yabai: %v\n%s", err, output)
@@ -336,7 +336,7 @@ func TestSpawnWindow(t *testing.T) {
 func TestRecordingStub(t *testing.T) {
 	windowsFixture := filepath.Join("testdata", "stubyabai", "windows.live.json")
 	log := filepath.Join(t.TempDir(), "argv.log")
-	command := exec.Command(os.Getenv("TESS_YABAI"), "-m", "query", "--windows", "--space", "3")
+	command := exec.CommandContext(t.Context(), os.Getenv("TESS_YABAI"), "-m", "query", "--windows", "--space", "3")
 	command.Env = append(os.Environ(), "TESS_YABAI_LOG="+log, "TESS_YABAI_WINDOWS="+windowsFixture)
 	output, err := command.Output()
 	assert.NilError(t, err)
@@ -371,7 +371,7 @@ func TestArgvCorpus(t *testing.T) {
 	}
 	log := filepath.Join(t.TempDir(), "argv.log")
 	for _, args := range cases {
-		command := exec.Command(os.Getenv("TESS_YABAI"), args...)
+		command := exec.CommandContext(t.Context(), os.Getenv("TESS_YABAI"), args...)
 		command.Env = append(os.Environ(), "TESS_YABAI_LOG="+log, "TESS_YABAI_EXIT_CODE=0")
 		assert.NilError(t, command.Run())
 	}

@@ -196,8 +196,9 @@ func TestRun(t *testing.T) {
 		err = Run(t.Context(), Options{Socket: path, Bootstrap: true, Launchctl: lc, UID: 501, Services: []Service{yabai}})
 		assert.Assert(t, errors.Is(err, ErrRunning), "Run() = %v", err)
 		assert.Equal(t, len(lc.recorded()), 0)
-		conn, err := net.Dial("unix", path)
-		assert.NilError(t, err, "the holder's socket survives the loser")
+		dialer := net.Dialer{}
+		conn, dialErr := dialer.DialContext(t.Context(), "unix", path)
+		assert.NilError(t, dialErr)
 		assert.NilError(t, conn.Close())
 		assert.NilError(t, held.Close())
 	})
@@ -226,7 +227,8 @@ func TestRun(t *testing.T) {
 			})
 		}()
 		<-woke
-		conn, err := net.Dial("unix", path)
+		dialer := net.Dialer{}
+		conn, err := dialer.DialContext(t.Context(), "unix", path)
 		assert.NilError(t, err)
 		_, err = io.WriteString(conn, "display_added\n")
 		assert.NilError(t, err)

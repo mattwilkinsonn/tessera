@@ -19,6 +19,14 @@ type kind struct {
 	integer     bool
 }
 
+const (
+	daemonCommand  = "daemon"
+	eastDirection  = "east"
+	northDirection = "north"
+	southDirection = "south"
+	westDirection  = "west"
+)
+
 var kinds = [...]kind{
 	{name: "apply", description: "Converge the active space onto its configured layout."},
 	{name: "laptop", description: "Converge the laptop-only fallback layout."},
@@ -32,14 +40,14 @@ var kinds = [...]kind{
 	{name: "cycle-display", description: "Cycle the focused display.", choices: []string{"next", "prev"}},
 	{name: "reset-splits", description: "Reset splits in the active space."},
 	{name: "columns", description: "Re-flow the active space into its columns."},
-	{name: "focus", description: "Focus the neighboring window.", choices: []string{"west", "south", "north", "east"}},
-	{name: "swap", description: "Swap the focused window with its neighbor.", choices: []string{"west", "south", "north", "east"}},
-	{name: "warp", description: "Warp the focused window to its neighbor.", choices: []string{"west", "south", "north", "east"}},
-	{name: "insert", description: "Set the insertion direction for the focused window.", choices: []string{"east", "west", "north", "south", "stack"}},
+	{name: "focus", description: "Focus the neighboring window.", choices: []string{westDirection, southDirection, northDirection, eastDirection}},
+	{name: "swap", description: "Swap the focused window with its neighbor.", choices: []string{westDirection, southDirection, northDirection, eastDirection}},
+	{name: "warp", description: "Warp the focused window to its neighbor.", choices: []string{westDirection, southDirection, northDirection, eastDirection}},
+	{name: "insert", description: "Set the insertion direction for the focused window.", choices: []string{eastDirection, westDirection, northDirection, southDirection, "stack"}},
 	{name: "toggle-float", description: "Toggle floating for the focused window."},
 	{name: "balance", description: "Balance the active space."},
 	{name: "space", description: "Apply a named space layout.", choices: []string{"bsp", "stack"}},
-	{name: "daemon", description: "Run the resident event daemon."},
+	{name: daemonCommand, description: "Run the resident event daemon."},
 	{name: "wake", description: "Ask the resident daemon to run its wake routine."},
 }
 
@@ -73,7 +81,7 @@ func Parse(ctx context.Context, argv []string, version string, stdout, stderr io
 			Args:      commandArgs(entry),
 			ValidArgs: entry.choices,
 			RunE: func(_ *cobra.Command, args []string) error {
-				if entry.name == "daemon" {
+				if entry.name == daemonCommand {
 					parsed = commands.DaemonCommand{NoBootstrap: noBootstrap}
 					return nil
 				}
@@ -82,7 +90,7 @@ func Parse(ctx context.Context, argv []string, version string, stdout, stderr io
 				return err
 			},
 		}
-		if entry.name == "daemon" {
+		if entry.name == daemonCommand {
 			command.Flags().BoolVar(&noBootstrap, "no-bootstrap", false, "Skip launchd service bootstrap")
 		}
 		root.AddCommand(command)

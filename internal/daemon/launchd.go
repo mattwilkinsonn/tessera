@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os/exec"
+	"os/exec" //nolint:depguard // launchctl is the required subprocess interface.
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -34,6 +34,7 @@ func (l ExecLaunchctl) Run(ctx context.Context, args ...string) error {
 	if path == "" {
 		path = launchctlPath
 	}
+	//nolint:gosec // launchctl is fixed by default; tests inject a local stub executable.
 	out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && notLoadedExit(exitErr.ExitCode()) {

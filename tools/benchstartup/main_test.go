@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,7 +22,7 @@ func TestRunRequiresTwoBinariesAndPositiveSampleCount(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			if err := run(test.args, &bytes.Buffer{}, &stderr); err == nil {
+			if err := run(t.Context(), test.args, &bytes.Buffer{}, &stderr); err == nil {
 				t.Fatal("run() succeeded; want argument error")
 			}
 		})
@@ -36,7 +35,7 @@ func TestRunComparesBothBinariesAndReportsStartupBars(t *testing.T) {
 	base := writeBinary(t, root, "base")
 	current := writeBinary(t, root, "current")
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"-n", "2", base, current}, &stdout, &stderr); err != nil && !errors.Is(err, errStartupBar) {
+	if err := run(t.Context(), []string{"-n", "2", base, current}, &stdout, &stderr); err != nil && !errors.Is(err, errStartupBar) {
 		t.Fatalf("run() error = %v; stderr=%q", err, stderr.String())
 	}
 	for _, expected := range []string{
@@ -100,7 +99,7 @@ func TestRunRejectsBinaryThatDoesNotInvokeTESSYABAI(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	err := run([]string{"-n", "1", base, current}, &bytes.Buffer{}, &stderr)
+	err := run(t.Context(), []string{"-n", "1", base, current}, &bytes.Buffer{}, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "did not invoke TESS_YABAI") {
 		t.Fatalf("run() error = %v; want invalid comparison error", err)
 	}
@@ -113,8 +112,8 @@ func writeBinary(t *testing.T, root, name string) string {
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if output, err := exec.Command("chmod", "755", path).CombinedOutput(); err != nil {
-		t.Fatalf("chmod: %v: %s", err, output)
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
 	}
 	return path
 }

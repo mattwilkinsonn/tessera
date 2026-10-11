@@ -18,28 +18,53 @@ jobs:
   go:
     name: Go · vet · lint · test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.27.1"
-
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.13.2
+          go-version: "1.27.2"
+      - name: Install analysis tools
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+          go install go.uber.org/nilaway/cmd/nilaway@acb8859b9031bb9496be97e027df5573f9fb5340
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          go install github.com/google/go-licenses/v2@v2.0.1
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
 
       - name: Vet
         run: go vet ./...
 
+      - name: Check module tidiness
+        run: go mod tidy -diff
+
       - name: Lint
-        run: golangci-lint run
+        run: golangci-lint run --config .golangci.yml ./...
+
+      - name: Check nil safety
+        run: nilaway -include-pkgs=github.com/mattwilkinsonn/tessera -test=false ./...
+
+      - name: Build
+        run: go build ./...
 
       - name: Test
         run: go test -race ./...
+
+      - name: Stress-test daemon and effects
+        run: go test -race -count=20 ./internal/daemon/... ./internal/effects/...
+
+      - name: Check vulnerabilities
+        run: govulncheck ./...
+
+      - name: Check licenses
+        run: >-
+          go-licenses check ./...
+          --allowed_licenses=Apache-2.0,Apache-2.0-WITH-LLVM-exception,MIT,BSD-3-Clause,BSD-2-Clause,ISC,Unicode-3.0,Zlib,MPL-2.0,CC0-1.0
+          --ignore github.com/mattwilkinsonn/tessera
+
 
   nix:
     name: nix flake · darwin build
