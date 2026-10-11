@@ -14,11 +14,12 @@ import (
 	"github.com/gofrs/flock"
 )
 
+// The guard TTL, the H7 quiet windows, and the sketchybar binary.
 const (
 	guardTTL       = 8 * time.Second
-	displayQuiet   = 3 * time.Second
-	flexQuiet      = 2 * time.Second
-	sketchybarPath = "/opt/homebrew/bin/sketchybar"
+	DisplayQuiet   = 3 * time.Second
+	FlexQuiet      = 2 * time.Second
+	SketchybarPath = "/opt/homebrew/bin/sketchybar"
 )
 
 // Paths contains the on-disk locations used by Tessera.
@@ -144,7 +145,7 @@ type Nudger func(ctx context.Context, event string) error
 
 // NudgeSketchybar triggers an event when sketchybar is available. Its failure is best-effort.
 func NudgeSketchybar(ctx context.Context, event string) error {
-	if err := exec.CommandContext(ctx, sketchybarPath, "--trigger", event).Run(); err != nil {
+	if err := exec.CommandContext(ctx, SketchybarPath, "--trigger", event).Run(); err != nil {
 		slog.DebugContext(ctx, "sketchybar nudge failed", "event", event, "error", err)
 	}
 	return nil
@@ -157,7 +158,7 @@ func IsQuiet(now, stamp time.Time, d time.Duration) bool {
 
 // IsFlexQuiet requires both the flex and display event windows to be quiet.
 func IsFlexQuiet(now, own, display time.Time) bool {
-	return IsQuiet(now, own, flexQuiet) && IsQuiet(now, display, displayQuiet)
+	return IsQuiet(now, own, FlexQuiet) && IsQuiet(now, display, DisplayQuiet)
 }
 
 func parseStamp(data []byte) (int64, bool) {

@@ -98,6 +98,18 @@ linters:
       - path: wm/yabai/driver\.go
         linters: [gosec]
         text: "G204"
+      # The daemon execs the fixed /bin/launchctl with its own argv.
+      - path: daemon/launchd\.go
+        linters: [gosec]
+        text: "G204"
+      # The daemon unlinks the caller-chosen socket path after taking its lock.
+      - path: daemon/listen\.go
+        linters: [gosec]
+        text: "G703"
+      # Socket tests need short /tmp paths; t.TempDir exceeds the macOS socket path limit.
+      - path: daemon/listen_test\.go
+        linters: [usetesting]
+        text: "os.MkdirTemp"
 
 formatters:
   enable:

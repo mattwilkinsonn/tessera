@@ -1,0 +1,193 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"gotest.tools/v3/assert"
+)
+
+// fakeLaunchctl records argv and fails the commands whose joined argv is listed.
+type fakeLaunchctl struct {
+	mu    sync.Mutex
+	calls []string
+	fail  map[string]bool
+}
+
+func (f *fakeLaunchctl) Run(_ context.Context, args ...string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	line := strings.Join(args, " ")
+	f.calls = append(f.calls, line)
+	if f.fail[line] {
+		return errors.New("launchctl failed")
+	}
+	return nil
+}
+
+func (f *fakeLaunchctl) recorded() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
+
+func (f *fakeLaunchctl) reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = nil
+}
+
+var (
+	yabai = Service{Label: "com.asmvik.yabai", Plist: "/home/u/Library/LaunchAgents/com.asmvik.yabai.plist"}
+	skhd  = Service{Label: "com.asmvik.skhd", Plist: "/home/u/Library/LaunchAgents/com.asmvik.skhd.plist"}
+)
+
+func TestBootstrap(t *testing.T) {
+	t.Run("default services use the upstream labels and plists", func(t *testing.T) {
+		assert.DeepEqual(t, DefaultServices("/home/u"), []Service{yabai, skhd})
+	})
+
+	t.Run("enable runs before bootstrap and a bootstrapped service is owned", func(t *testing.T) {
+		lc := &fakeLaunchctl{fail: map[string]bool{"print gui/501/com.asmvik.yabai": true}}
+		owned, err := Bootstrap(t.Context(), lc, 501, []Service{yabai})
+		assert.NilError(t, err)
+		assert.DeepEqual(t, owned, Owned{yabai})
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/com.asmvik.yabai",
+			"enable gui/501/com.asmvik.yabai",
+			"bootstrap gui/501 " + yabai.Plist,
+		})
+	})
+
+	t.Run("a failed enable is logged and bootstrap still runs", func(t *testing.T) {
+		lc := &fakeLaunchctl{fail: map[string]bool{
+			"print gui/501/com.asmvik.skhd":  true,
+			"enable gui/501/com.asmvik.skhd": true,
+		}}
+		owned, err := Bootstrap(t.Context(), lc, 501, []Service{skhd})
+		assert.NilError(t, err)
+		assert.DeepEqual(t, owned, Owned{skhd})
+	})
+
+	t.Run("an already-loaded service is kickstarted, not owned, and never booted out", func(t *testing.T) {
+		lc := &fakeLaunchctl{}
+		owned, err := Bootstrap(t.Context(), lc, 501, []Service{yabai})
+		assert.NilError(t, err)
+		assert.Equal(t, len(owned), 0)
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/com.asmvik.yabai",
+			"kickstart gui/501/com.asmvik.yabai",
+		})
+		lc.reset()
+		assert.NilError(t, Bootout(t.Context(), lc, 501, owned))
+		assert.Equal(t, len(lc.recorded()), 0)
+	})
+
+	t.Run("a failed bootstrap leaves it not owned", func(t *testing.T) {
+		lc := &fakeLaunchctl{fail: map[string]bool{
+			"print gui/501/com.asmvik.yabai":   true,
+			"bootstrap gui/501 " + yabai.Plist: true,
+			"print gui/501/com.asmvik.skhd":    true,
+		}}
+		owned, err := Bootstrap(t.Context(), lc, 501, []Service{yabai, skhd})
+		assert.ErrorContains(t, err, "bootstrapping service")
+		assert.DeepEqual(t, owned, Owned{skhd})
+	})
+}
+
+func TestRun(t *testing.T) {
+	t.Run("with one service loaded and the other bootstrapped, clean shutdown boots out exactly the bootstrapped one", func(t *testing.T) {
+		path := filepath.Join(shortDir(t), "d.sock")
+		lc := &fakeLaunchctl{fail: map[string]bool{"print gui/501/com.asmvik.skhd": true}}
+		ctx, cancel := context.WithCancel(t.Context())
+		woke := make(chan struct{}, 1)
+		done := make(chan error, 1)
+		go func() {
+			done <- Run(ctx, Options{
+				Socket:    path,
+				Bootstrap: true,
+				Launchctl: lc,
+				UID:       501,
+				Services:  []Service{yabai, skhd},
+				Display:   idle,
+				Flex:      idle,
+				Wake: func(context.Context) error {
+					woke <- struct{}{}
+					return nil
+				},
+			})
+		}()
+		<-woke
+		_, err := Listen(t.Context(), path)
+		assert.Assert(t, errors.Is(err, ErrRunning), "second start = %v", err)
+		cancel()
+		assert.NilError(t, <-done)
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/com.asmvik.yabai",
+			"kickstart gui/501/com.asmvik.yabai",
+			"print gui/501/com.asmvik.skhd",
+			"enable gui/501/com.asmvik.skhd",
+			"bootstrap gui/501 " + skhd.Plist,
+			"bootout gui/501/com.asmvik.skhd",
+		})
+		ln, err := Listen(t.Context(), path)
+		assert.NilError(t, err, "lock and socket released after shutdown")
+		assert.NilError(t, ln.Close())
+	})
+
+	t.Run("a second start loses the lock and runs no launchctl", func(t *testing.T) {
+		path := filepath.Join(shortDir(t), "d.sock")
+		held, err := Listen(t.Context(), path)
+		assert.NilError(t, err)
+		lc := &fakeLaunchctl{}
+		err = Run(t.Context(), Options{Socket: path, Bootstrap: true, Launchctl: lc, UID: 501, Services: []Service{yabai}})
+		assert.Assert(t, errors.Is(err, ErrRunning), "Run() = %v", err)
+		assert.Equal(t, len(lc.recorded()), 0)
+		conn, err := net.Dial("unix", path)
+		assert.NilError(t, err, "the holder's socket survives the loser")
+		assert.NilError(t, conn.Close())
+		assert.NilError(t, held.Close())
+	})
+
+	t.Run("--no-bootstrap runs no launchctl and nudges once after the display channel settles", func(t *testing.T) {
+		path := filepath.Join(shortDir(t), "d.sock")
+		lc := &fakeLaunchctl{}
+		ctx, cancel := context.WithCancel(t.Context())
+		woke := make(chan struct{}, 1)
+		nudged := make(chan string, 1)
+		done := make(chan error, 1)
+		go func() {
+			done <- Run(ctx, Options{
+				Socket:    path,
+				Launchctl: lc,
+				Display:   idle,
+				Flex:      idle,
+				Wake: func(context.Context) error {
+					woke <- struct{}{}
+					return nil
+				},
+				Nudge: func(_ context.Context, event string) error {
+					nudged <- event
+					return nil
+				},
+			})
+		}()
+		<-woke
+		conn, err := net.Dial("unix", path)
+		assert.NilError(t, err)
+		_, err = io.WriteString(conn, "display_added\n")
+		assert.NilError(t, err)
+		assert.NilError(t, conn.Close())
+		assert.Equal(t, <-nudged, "display_relatch")
+		cancel()
+		assert.NilError(t, <-done)
+		assert.Equal(t, len(lc.recorded()), 0)
+	})
+}
