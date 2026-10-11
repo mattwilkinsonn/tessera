@@ -107,9 +107,13 @@ linters:
         linters: [gosec]
         text: "G703"
       # Socket tests need short /tmp paths; t.TempDir exceeds the macOS socket path limit.
-      - path: daemon/listen_test\.go
+      - path: (daemon/listen|cli/cli)_test\.go
         linters: [usetesting]
         text: "os.MkdirTemp"
+      # The bench writes an executable yabai shim and runs the binaries it compares.
+      - path: tools/benchstartup/main\.go
+        linters: [gosec]
+        text: "G306|G204"
 
 formatters:
   enable:

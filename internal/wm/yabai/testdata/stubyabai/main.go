@@ -72,6 +72,9 @@ func filterWindows(data []byte, args []string) ([]byte, error) {
 	if err := json.Unmarshal(data, &windows); err != nil {
 		return nil, fmt.Errorf("decoding windows: %w", err)
 	}
+	if len(args) == 1 && args[0] == "--window" {
+		return focusedWindow(windows)
+	}
 	if len(args) < 2 {
 		return data, nil
 	}
@@ -99,14 +102,35 @@ func filterWindows(data []byte, args []string) ([]byte, error) {
 			return nil, fmt.Errorf("decoding window %s: %w", key, err)
 		}
 		if actual == value {
-			filtered = append(filtered, window)
+			// yabai returns one object for --window, and an array for --space.
 			if args[0] == "--window" {
-				break
+				return window, nil
 			}
+			filtered = append(filtered, window)
 		}
+	}
+	if args[0] == "--window" {
+		return nil, fmt.Errorf("could not locate window %d", value)
 	}
 	return json.Marshal(filtered)
 }
+
+// focusedWindow mirrors bare `--window`: the focused window as one object.
+func focusedWindow(windows []json.RawMessage) ([]byte, error) {
+	for _, window := range windows {
+		var fields struct {
+			HasFocus bool `json:"has-focus"`
+		}
+		if err := json.Unmarshal(window, &fields); err != nil {
+			return nil, fmt.Errorf("decoding window: %w", err)
+		}
+		if fields.HasFocus {
+			return window, nil
+		}
+	}
+	return nil, errors.New("could not retrieve window details")
+}
+
 func filterSpaces(data []byte, args []string) ([]byte, error) {
 	var spaces []json.RawMessage
 	if err := json.Unmarshal(data, &spaces); err != nil {
