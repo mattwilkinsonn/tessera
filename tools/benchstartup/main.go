@@ -120,21 +120,7 @@ func run(argv []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("stat new binary: %w", err)
 	}
-	snapBase := findMeasurement(rows, "base", "snap 3col")
-	focusBase := findMeasurement(rows, "base", "focus east")
-	snapNew := findMeasurement(rows, "new", "snap 3col")
-	focusNew := findMeasurement(rows, "new", "focus east")
-	helpNew := findMeasurement(rows, "new", "snap --help")
-	hotRatio := max(float64(snapNew.p50)/float64(snapBase.p50), float64(focusNew.p50)/float64(focusBase.p50))
-	bars := []struct {
-		name string
-		pass bool
-	}{
-		{name: "hot-path p50 ratio <= 2.0x", pass: hotRatio <= 2},
-		{name: "hot-path p90 <= 45 ms", pass: snapNew.p90 <= 45*time.Millisecond && focusNew.p90 <= 45*time.Millisecond},
-		{name: "help p50 <= 60 ms", pass: helpNew.p50 <= 60*time.Millisecond},
-		{name: "binary size <= 70 MB", pass: newSize <= 70_000_000},
-	}
+	hotRatio, bars := evaluateBars(rows, newSize)
 	if _, err := fmt.Fprintln(stdout, "| binary | command | p50 (ms) | p90 (ms) | min (ms) | size (MB) |\n| --- | --- | ---: | ---: | ---: | ---: |"); err != nil {
 		return fmt.Errorf("writing benchmark output: %w", err)
 	}
@@ -158,9 +144,32 @@ func run(argv []string, stdout, stderr io.Writer) error {
 		passed = passed && bar.pass
 	}
 	if !passed {
-		return errors.New("startup acceptance bar failed")
+		return errStartupBar
 	}
 	return nil
+}
+
+var errStartupBar = errors.New("startup acceptance bar failed")
+
+type bar struct {
+	name string
+	pass bool
+}
+
+// evaluateBars applies the record's startup bar to measured rows; it does no timing itself.
+func evaluateBars(rows []measurement, newSize int64) (float64, []bar) {
+	snapBase := findMeasurement(rows, "base", "snap 3col")
+	focusBase := findMeasurement(rows, "base", "focus east")
+	snapNew := findMeasurement(rows, "new", "snap 3col")
+	focusNew := findMeasurement(rows, "new", "focus east")
+	helpNew := findMeasurement(rows, "new", "snap --help")
+	hotRatio := max(float64(snapNew.p50)/float64(snapBase.p50), float64(focusNew.p50)/float64(focusBase.p50))
+	return hotRatio, []bar{
+		{name: "hot-path p50 ratio <= 2.0x", pass: hotRatio <= 2},
+		{name: "hot-path p90 <= 45 ms", pass: snapNew.p90 <= 45*time.Millisecond && focusNew.p90 <= 45*time.Millisecond},
+		{name: "help p50 <= 60 ms", pass: helpNew.p50 <= 60*time.Millisecond},
+		{name: "binary size <= 70 MB", pass: newSize <= 70_000_000},
+	}
 }
 
 func resolveBinary(path string) (string, error) {

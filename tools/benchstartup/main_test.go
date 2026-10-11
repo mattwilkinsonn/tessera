@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunRequiresTwoBinariesAndPositiveSampleCount(t *testing.T) {
@@ -28,12 +30,13 @@ func TestRunRequiresTwoBinariesAndPositiveSampleCount(t *testing.T) {
 	}
 }
 
-func TestRunComparesBothBinariesAndChecksStartupBars(t *testing.T) {
+// Wall-clock bars depend on host load, so this checks the table and treats a bar miss as data.
+func TestRunComparesBothBinariesAndReportsStartupBars(t *testing.T) {
 	root := t.TempDir()
 	base := writeBinary(t, root, "base")
 	current := writeBinary(t, root, "current")
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"-n", "2", base, current}, &stdout, &stderr); err != nil {
+	if err := run([]string{"-n", "2", base, current}, &stdout, &stderr); err != nil && !errors.Is(err, errStartupBar) {
 		t.Fatalf("run() error = %v; stderr=%q", err, stderr.String())
 	}
 	for _, expected := range []string{
@@ -43,14 +46,48 @@ func TestRunComparesBothBinariesAndChecksStartupBars(t *testing.T) {
 		"| new | `focus east` |",
 		"| new | `snap --help` |",
 		"Hot-path p50 ratio",
-		"PASS hot-path p50 ratio <= 2.0x",
-		"PASS hot-path p90 <= 45 ms",
-		"PASS help p50 <= 60 ms",
+		"hot-path p50 ratio <= 2.0x",
+		"hot-path p90 <= 45 ms",
+		"help p50 <= 60 ms",
 		"PASS binary size <= 70 MB",
 	} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("output %q lacks %q", stdout.String(), expected)
 		}
+	}
+}
+
+func TestEvaluateBarsAppliesEachThreshold(t *testing.T) {
+	ms := time.Millisecond
+	rows := func(newSnapP50, newP90, helpP50 time.Duration) []measurement {
+		return []measurement{
+			{binary: "base", command: "snap 3col", p50: 20 * ms},
+			{binary: "base", command: "focus east", p50: 20 * ms},
+			{binary: "new", command: "snap 3col", p50: newSnapP50, p90: newP90},
+			{binary: "new", command: "focus east", p50: 10 * ms, p90: newP90},
+			{binary: "new", command: "snap --help", p50: helpP50},
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		rows   []measurement
+		size   int64
+		failed string
+	}{
+		{name: "all bars pass at their limits", rows: rows(40*ms, 45*ms, 60*ms), size: 70_000_000},
+		{name: "p50 ratio above 2x fails", rows: rows(41*ms, 45*ms, 60*ms), size: 1, failed: "hot-path p50 ratio <= 2.0x"},
+		{name: "p90 above 45 ms fails", rows: rows(10*ms, 46*ms, 60*ms), size: 1, failed: "hot-path p90 <= 45 ms"},
+		{name: "help above 60 ms fails", rows: rows(10*ms, 10*ms, 61*ms), size: 1, failed: "help p50 <= 60 ms"},
+		{name: "binary above 70 MB fails", rows: rows(10*ms, 10*ms, 10*ms), size: 70_000_001, failed: "binary size <= 70 MB"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, bars := evaluateBars(test.rows, test.size)
+			for _, bar := range bars {
+				if bar.pass != (bar.name != test.failed) {
+					t.Fatalf("bar %q pass = %t", bar.name, bar.pass)
+				}
+			}
+		})
 	}
 }
 
