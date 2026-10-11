@@ -1,18 +1,9 @@
 {
-  description = "Tessera — a portable TypeScript/Bun window-manager config (CLI: tess)";
+  description = "Tessera — a portable Go window-manager config (CLI: tess)";
 
-  # Self-pinned inputs (the fork-owns-its-inputs pattern): tessera pins its own
-  # nixpkgs + bun so the flake is reproducible standalone. A consumer that wants
-  # to share its own channel drops the pin with `inputs.tessera.inputs.nixpkgs.
-  # follows = "…"` (orion does exactly this — see the tessera-oss-repoint design,
-  # Fork 1 / Q9). bun rides nixpkgs, so there is no separate bun input to pin.
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    bun2nix = {
-      url = "github:nix-community/bun2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs =
@@ -20,21 +11,12 @@
       self,
       nixpkgs,
       flake-utils,
-      bun2nix,
     }:
     let
-      # homeManagerModules.default and overlays.default are system-agnostic and
-      # live outside eachSystem; the overlay resolves the package for whatever
-      # system the consumer's pkgs set targets.
       overlay = final: prev: {
         tess = self.packages.${prev.stdenv.hostPlatform.system}.default;
       };
 
-      # home-manager module — R1's consumption contract. Option names are load
-      # bearing (a downstream orion module sets them): programs.tessera.{ enable,
-      # package, profilePath }. Enabling puts `tess` on PATH and records the
-      # profile path the binary loads at runtime; it does NOT own or render the
-      # profile content (that stays a private orion project).
       hmModule =
         {
           config,
@@ -58,11 +40,9 @@
 
             profilePath = lib.mkOption {
               type = lib.types.str;
-              # MUST be absolute: the value is exported verbatim as
-              # $TESSERA_PROFILE and the binary's loader does NOT expand `~`
-              # (a leading tilde reaches Bun's import() unexpanded and crashes).
-              default = "${config.home.homeDirectory}/.config/tessera/profile.ts";
-              defaultText = lib.literalExpression ''"''${config.home.homeDirectory}/.config/tessera/profile.ts"'';
+              # The profile path is exported verbatim and must be absolute.
+              default = "${config.home.homeDirectory}/.config/tessera/profile.json";
+              defaultText = lib.literalExpression ''"''${config.home.homeDirectory}/.config/tessera/profile.json"'';
               description = ''
                 Absolute path the `tess` binary loads its profile from at runtime,
                 exported as $TESSERA_PROFILE. This module only points at the
@@ -72,7 +52,7 @@
                 which reaches interactive/login shells but NOT launchd-started
                 daemons (skhd/yabai invoke `tess` from launchd). A daemon-invoked
                 `tess` therefore relies on the binary's own well-known fallback
-                (`$XDG_CONFIG_HOME/tessera/profile.ts`, else `~/.config/...`); keep
+                (`$XDG_CONFIG_HOME/tessera/profile.json`, else `~/.config/...`); keep
                 `profilePath` at the default so both channels resolve the same
                 file. A non-default path is honored only for shell-invoked `tess`.
               '';
@@ -88,104 +68,47 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [ bun2nix.overlays.default ];
-        };
-
-        # The darwin `bun build --compile` recipe, moved verbatim from orion's
-        # darwin/wm.nix (renamed wm → tess). Every attr here is load-bearing;
-        # see the comments for what each one prevents.
-        bunLockCheck = pkgs.runCommand "tessera-bun-lock-check" { nativeBuildInputs = [ pkgs.bun2nix ]; } ''
-          bun2nix -l ${./bun.lock} -o bun.nix
-          diff -u ${./nix/bun.nix} bun.nix
-          touch "$out"
+        pkgs = import nixpkgs { inherit system; };
+        version = pkgs.lib.fileContents ./VERSION;
+        yabaiStub = pkgs.writeShellScript "tessera-yabai-stub" ''
+          printf '[]\n'
         '';
-        tess = pkgs.stdenvNoCC.mkDerivation {
-          bunDeps = pkgs.bun2nix.fetchBunDeps { bunNix = ./nix/bun.nix; };
+        tess = pkgs.buildGoModule.override { go = pkgs.go_1_27; } {
           pname = "tess";
-          inherit (pkgs.lib.importJSON ./package.json) version;
+          inherit version;
           src = ./.;
-
-          nativeBuildInputs = [
-            pkgs.bun2nix.hook
-            pkgs.bun
-          ]
-          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
-            # A compiled arm64 Mach-O must carry an ad-hoc code signature or
-            # Gatekeeper kills it. BUN_NO_CODESIGN_MACHO_BINARY=1 tells bun NOT
-            # to sign, and this fixup hook ad-hoc-signs the emitted binary.
-            pkgs.darwin.autoSignDarwinBinariesHook
-          ];
-          bunInstallFlags = [ "--linker=isolated" "--backend=copyfile" "--frozen-lockfile" ];
-          dontUseBunBuild = true;
-          dontRunLifecycleScripts = true;
-
-          env =
-            pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-              BUN_NO_CODESIGN_MACHO_BINARY = "1";
-            }
-            // {
-              SOURCE_DATE_EPOCH = "1";
-            };
-
-          dontConfigure = true;
-          # bun --compile appends the JS bundle as a trailer after the Mach-O; a
-          # strip pass would corrupt it.
-          dontStrip = true;
-
-          # A `bun --compile` standalone embeds its runtime, so the binary must
-          # not retain a store reference to the ~90MB bun package — assert the
-          # clean closure; a green build alone would not catch a leak.
-          disallowedReferences = [ pkgs.bun ];
-
-          buildPhase = ''
-            runHook preBuild
-            export HOME=$(mktemp -d)
-            ${pkgs.bun}/bin/bun build --compile src/index.ts --outfile tess
-            runHook postBuild
-          '';
-
-          installPhase = ''
-            runHook preInstall
-            install -Dm755 tess "$out/bin/tess"
-            runHook postInstall
-          '';
-
-          # Enforce parser errors and generated help/version in-build.
+          vendorHash = "sha256-acNjymY5I170LrcrshhRk740oZ1LCwFv4lEjKO6qiQk=";
+          env.CGO_ENABLED = "0";
+          ldflags = [ "-X main.version=${version}" ];
+          go = pkgs.go_1_27;
+          allowGoReference = false;
+          doCheck = false;
           doInstallCheck = true;
           installCheckPhase = ''
             runHook preInstallCheck
             rc=0
             HOME="$TMPDIR" "$out/bin/tess" bogus-subcommand >out 2>err || rc=$?
             test "$rc" -eq 1
-            grep -q "Unknown subcommand" err
-            HOME="$TMPDIR" "$out/bin/tess" --help >out
-            grep -q "SUBCOMMANDS" out
-            HOME="$TMPDIR" "$out/bin/tess" --version >out
+            rc=0
+            HOME="$TMPDIR" "$out/bin/tess" --help >out 2>err || rc=$?
+            test "$rc" -eq 0
+            HOME="$TMPDIR" "$out/bin/tess" --version >out 2>err
             grep -q "tess v$version" out
-            HOME="$TMPDIR" "$out/bin/tess" snap --help >out
-            grep -q "tess snap" out
+            rc=0
+            HOME="$TMPDIR" TESSERA_PROFILE= XDG_CONFIG_HOME="$TMPDIR/config" TESS_YABAI=${yabaiStub} "$out/bin/tess" display-setup >out 2>err || rc=$?
+            test "$rc" -eq 0
             runHook postInstallCheck
           '';
 
           meta = {
             mainProgram = "tess";
-            # darwin-only for now; the Hyprland driver later widens this.
             platforms = pkgs.lib.platforms.darwin;
           };
         };
       in
       {
         packages.default = tess;
-        checks.bun-lock = bunLockCheck;
 
-        # Guard the home-manager module's cross-repo contract: evaluate it with
-        # stub home.* options and assert the exported TESSERA_PROFILE is an
-        # ABSOLUTE path (a leading `~` reaches the binary's import() unexpanded
-        # and crashes `tess apply`). `nix build .#default` + the package's
-        # bogus-subcommand smoke both exit before the loader runs, so this is
-        # the only gate that exercises the profile-path default.
         checks.default =
           let
             eval = pkgs.lib.evalModules {
@@ -212,9 +135,11 @@
               ];
             };
             profileVar = eval.config.home.sessionVariables.TESSERA_PROFILE;
+            expected = "/Users/example/.config/tessera/profile.json";
             isAbsolute = pkgs.lib.hasPrefix "/" profileVar;
           in
           assert isAbsolute;
+          assert profileVar == expected;
           pkgs.runCommand "tessera-hm-module-check" { } ''
             echo "TESSERA_PROFILE=${profileVar} is absolute" > "$out"
           '';

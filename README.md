@@ -1,6 +1,6 @@
 # tessera
 
-Write your tiling window manager layout in TypeScript.
+Write your tiling window manager layout in a typed TypeScript profile, rendered to JSON.
 
 Tessera is a config layer for [yabai](https://github.com/koekeishiya/yabai) on
 macOS. You describe your monitors, your windows, and the exact column layout you
@@ -17,9 +17,7 @@ than special-cased.
 ## Status
 
 - macOS via yabai: working.
-- The driver boundary (`src/driver/`) isolates every yabai call behind one
-  interface, so a second backend (e.g. Hyprland on Linux) is a new driver, not a
-  rewrite of the engine. That backend is not built yet.
+- The Go CLI and layout engine are built into one `tess` binary.
 
 ## How it works
 
@@ -29,19 +27,27 @@ invocation reads the live window state, computes the target layout, and issues
 the yabai commands to reach it.
 
 ```text
-tess apply            converge the active space onto its configured layout
-tess laptop           converge the laptop-only fallback layout
-tess display-event    rebuild after a display is added or removed
-tess flex-event       reflow when a flex space changes
-tess init --self P    register the yabai signals (P = tess's own path) and run startup
-tess focus DIR        focus the neighboring window
-tess focus-slot N     focus a named slot (e.g. a numpad binding)
-tess snap MODE        snap the focused window to a layout mode
-tess columns          re-flow the active space into its columns
-tess stack-cycle DIR  cycle the focused stack
-tess resize DIR       resize the active column
-tess move-display N   move the focused window to a display
-tess space LAYOUT     apply a named space layout
+tess apply                      converge the active space onto its configured layout
+tess laptop                     converge the laptop-only fallback layout
+tess rules                      apply window rules from the profile
+tess display-setup              set up displays for the current profile
+tess focus-slot N               focus a named slot
+tess snap MODE                  snap the focused window to a layout mode
+tess stack-cycle DIR            cycle the focused stack
+tess resize DIR                 resize the active column
+tess move-display g9|aw|laptop  move the focused window to a display
+tess cycle-display next|prev    move the focused window to a neighboring display
+tess reset-splits               reset splits in the active space
+tess columns                    re-flow the active space into its columns
+tess focus DIR                  focus the neighboring window
+tess swap DIR                   swap the focused window with its neighbor
+tess warp DIR                   warp the focused window to its neighbor
+tess insert DIR                 set the insertion direction for the focused window
+tess toggle-float               toggle floating for the focused window
+tess balance                    balance the active space
+tess space LAYOUT               apply a named space layout
+tess daemon                     run the resident event daemon
+tess wake                       ask the resident daemon to run its wake routine
 ```
 
 Run `tess --help` (or `tess -h`) for the generated subcommand help. Run
@@ -56,70 +62,48 @@ help.
 
 ## Architecture
 
-Four layers, each with a single responsibility:
+The Go implementation splits into packages, each with a single responsibility:
 
-- `config/` — the typed layout shapes and your `profile.ts` values. Pure data.
-- `engine/` — pure planning. Given the current window world and a profile, it
-  computes what should change. No I/O, fully unit-tested.
-- `driver/` — the only code that talks to yabai. One interface, one real
-  implementation, one fake for tests.
-- `effects/` — the runtime concerns around a single invocation: locks so
-  concurrent signals do not fight, debounce so a burst of display events
-  collapses into one rebuild, and state stamps.
+- `internal/config/` — profile types, validation, and the embedded JSON default.
+- `internal/engine/` — pure layout planning from the current window world and a profile.
+- `internal/executor/` — applies engine plans through the window-manager driver.
+- `internal/commands/` — composes the engine, executor, effects, and driver into each subcommand.
+- `internal/wm/` — the window-manager boundary and yabai driver.
+- `internal/effects/` — locks, the signal guard, and state stamps around each invocation.
+- `internal/daemon/` — the resident daemon: socket, event debounce, signal wiring, and launchd bootstrap.
+- `internal/cli/` — argument parsing and dispatch to commands or the daemon.
 
-`index.ts` is a thin router: it parses `argv`, wires the real driver and your
-profile, and dispatches to a command. Because the engine is pure and the driver
-is swappable, the whole layout logic runs in tests without spawning yabai.
+The engine remains pure, so layout behavior can be tested without spawning yabai.
 
 ## Configuration
 
-The binary loads a `Profile` at startup, resolved in this order:
+The binary loads a JSON `Profile` at startup, resolved in this order:
 
-1. `$TESSERA_PROFILE` — an explicit path to a profile module (overrides
-   everything below).
-2. `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.ts` — the well-known user
-   profile path. Copy the bundled default there and edit it for your machine.
-3. The bundled default (`src/config/profile.ts`) — a neutral two-monitor
-   example with placeholder apps, used when neither of the above resolves.
+1. `$TESSERA_PROFILE` — an explicit path to a JSON profile (overrides everything below).
+2. `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` — the well-known user profile path.
+3. The embedded default JSON profile — a neutral example used when neither of the above resolves.
 
-A profile module exports a `profile` object satisfying `Profile`. It defines
-your displays (keyed by width in pixels, which is stable across reconnects where
-the macOS display index is not), your windows (matched by app and title regex),
-and the column layout for each space on each display. The shapes it must satisfy
-live in `src/config/types.ts`, importable as `import type { Profile } from
-"tessera-wm"`.
-
-To run your own layout without editing the checkout:
+Install the [`tessera-wm`](schema/) package in your profile project. Import `Profile` and render `Profile.parse(profile)` to `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` during your build. `tess` reads JSON and does not run TypeScript. With your profile exported as `profile` from `profile.ts`, Bun renders it:
 
 ```sh
-mkdir -p ~/.config/tessera
-cp src/config/profile.ts ~/.config/tessera/profile.ts
-# edit ~/.config/tessera/profile.ts
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/tessera" && mkdir -p "$dir" && TESSERA_OUT="$dir/profile.json" bun -e 'import { Profile } from "tessera-wm"; import { profile } from "./profile.ts"; await Bun.write(Bun.env.TESSERA_OUT, JSON.stringify(Profile.parse(profile), null, 2) + "\n")'
 ```
 
-A missing well-known file falls back to the bundled default; a present but
-broken profile surfaces its error rather than being silently ignored.
+A missing well-known JSON file falls back to the embedded default. A present but broken JSON profile surfaces its error. A legacy `profile.ts` at the well-known location, or a `.ts` path in `TESSERA_PROFILE`, fails with an instruction to render the profile to JSON.
 
-## Development
-
-Tessera uses Bun for the runtime, test runner, and bundler; [Biome](https://biomejs.dev/)
-for lint and format; `tsc` for type checking.
+The CLI and engine are written in Go. The schema package uses TypeScript and Bun; `tsc` and Bun run its checks.
 
 ```sh
-bun install
-bun run typecheck   # tsc --noEmit
-bun run check       # biome check src/
-bun test            # the full suite
-bun run build       # compile the tess binary
+direnv exec . go vet ./...
+direnv exec . golangci-lint run ./...
+direnv exec . go test -race ./...
+
+cd schema
+bunx tsc --noEmit
+bun test
 ```
 
-After changing dependencies, regenerate the Nix dependency manifest with
-`bun2nix -l bun.lock -o nix/bun.nix`.
-
-A [devenv](https://devenv.sh/) shell (`devenv.nix`) provides Bun and the
-linters; with [direnv](https://direnv.net/) installed, `direnv allow` loads it
-on `cd`. CI (`.github/workflows/ci.yml`) runs the same three checks on every
-pull request.
+`devenv.nix` provides Go 1.27, `golangci-lint`, Bun, and the documentation and workflow linters. With [direnv](https://direnv.net/) installed, `direnv allow` loads the shell on `cd`. CI runs the Go checks and Nix build in `.github/workflows/ci.yml`; `.github/workflows/schema.yml` checks the schema package.
 
 ## License
 

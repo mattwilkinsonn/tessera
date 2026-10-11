@@ -1,38 +1,26 @@
-{ pkgs, inputs, ... }:
+{ pkgs, ... }:
 
-# Tessera dev shell — the single source of the dev + CI toolchain for this
-# single-tool repo. Deliberately minimal: Tessera is one zero-dependency
-# Bun/TypeScript CLI (`tess`), so the shell is just Bun + Biome + the VCS and
-# docs linters. No monorepo build system — `bun test` / `bun run typecheck` /
-# `bun run check` ARE the gate, run directly and by CI (.github/workflows/ci.yml).
+# Tessera dev shell for the Go build and the remaining TypeScript schema.
+# CI uses the same Go version and linter release.
 
 {
   packages = with pkgs; [
-    bun2nix
     # VCS — jj (Matt's review tool) works colocated with git here.
     jujutsu
 
     # Docs + workflow linters, matching what CI runs.
     markdownlint-cli2
     actionlint
+    go_1_27
+    golangci-lint
+    bun
   ];
 
-  languages.javascript = {
-    enable = true;
-    # Bun is the runtime, package manager, test runner, and bundler. Biome and
-    # tsc come from devDependencies (pinned in package.json), installed by the
-    # `bun install` below — kept in the lockfile so dev and CI resolve the same
-    # versions.
-    bun = {
-      enable = true;
-      install.enable = true;
-    };
-  };
-
   enterShell = ''
-    echo "tessera dev shell — bun $(bun --version)"
-    echo "  bun test          run the suite"
-    echo "  bun run typecheck  tsc --noEmit"
-    echo "  bun run check      biome check src/"
+    echo "tessera dev shell — go $(go version | awk '{print $3}')"
+    echo "  direnv exec . go vet ./..."
+    echo "  direnv exec . golangci-lint run ./..."
+    echo "  direnv exec . go test -race ./..."
+    echo "  cd schema && bunx tsc --noEmit && bun test"
   '';
 }
