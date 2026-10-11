@@ -57,7 +57,7 @@ func TestChainRatiosMatchExhaustiveReference(t *testing.T) {
 }
 
 // A valid chain is at most ~21 long, so this 64-weight vector must be rejected. A legal 21-weight geometric
-// prefix padded with ones took the exhaustive search ~9 s; the linear check must answer at once.
+// prefix padded with ones keeps short chains legal, so an exhaustive search walks many subsets before the violation.
 func TestSixtyFourWeightsValidateQuickly(t *testing.T) {
 	weights := make([]float64, 64)
 	weight := 1.0

@@ -200,6 +200,28 @@ func TestServe(t *testing.T) {
 			assert.NilError(t, (<-done).err)
 		})
 	})
+
+	t.Run("cancel ends Serve promptly while work ignores cancellation", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			ln := newPipeListener()
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			stuck := func(context.Context) (Step, error) {
+				close(entered)
+				<-release
+				return Settled, nil
+			}
+			done := startServe(ctx, ln, NewHub(idle, stuck), noWake)
+			ln.send(t, string(wm.EventWindowCreated))
+			<-entered
+			start := time.Now()
+			cancel()
+			assert.NilError(t, (<-done).err)
+			assert.Equal(t, time.Since(start), time.Duration(0))
+			close(release)
+		})
+	})
 }
 
 // signalRecorder is a fake driver that also records signal registrations.

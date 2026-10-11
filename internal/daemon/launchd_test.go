@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -235,4 +237,26 @@ func TestRun(t *testing.T) {
 		assert.NilError(t, <-done)
 		assert.Equal(t, len(lc.recorded()), 0)
 	})
+}
+
+func TestNotLoadedExit(t *testing.T) {
+	for _, test := range []struct {
+		code int
+		want bool
+	}{
+		{code: 3, want: true},
+		{code: 113, want: true},
+		{code: 1, want: false},
+	} {
+		t.Run(strconv.Itoa(test.code), func(t *testing.T) {
+			assert.Equal(t, notLoadedExit(test.code), test.want)
+		})
+	}
+}
+
+func TestExecLaunchctlMarksNotLoaded(t *testing.T) {
+	stub := filepath.Join(t.TempDir(), "launchctl")
+	assert.NilError(t, os.WriteFile(stub, []byte("#!/bin/sh\necho 'Could not find service'\nexit 113\n"), 0o700))
+	err := ExecLaunchctl{Path: stub}.Run(t.Context(), "bootout", "gui/501/com.example")
+	assert.Assert(t, errors.Is(err, ErrNotLoaded), "Run() = %v", err)
 }

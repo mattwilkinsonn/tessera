@@ -23,12 +23,18 @@ type Launchctl interface {
 	Run(ctx context.Context, args ...string) error
 }
 
-// ExecLaunchctl runs /bin/launchctl.
-type ExecLaunchctl struct{}
+// ExecLaunchctl runs launchctl at Path, or /bin/launchctl when Path is empty.
+type ExecLaunchctl struct {
+	Path string
+}
 
 // Run executes launchctl with args and returns its exit error, marked ErrNotLoaded when the service is absent.
-func (ExecLaunchctl) Run(ctx context.Context, args ...string) error {
-	out, err := exec.CommandContext(ctx, launchctlPath, args...).CombinedOutput()
+func (l ExecLaunchctl) Run(ctx context.Context, args ...string) error {
+	path := l.Path
+	if path == "" {
+		path = launchctlPath
+	}
+	out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
 	if err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && notLoadedExit(exitErr.ExitCode()) {
 			err = errors.Join(ErrNotLoaded, err)

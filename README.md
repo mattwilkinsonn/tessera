@@ -83,10 +83,10 @@ The binary loads a JSON `Profile` at startup, resolved in this order:
 2. `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` — the well-known user profile path.
 3. The embedded default JSON profile — a neutral example used when neither of the above resolves.
 
-Install the [`tessera-wm`](schema/) package in your profile project. Import `Profile` and render `Profile.parse(profile)` to `~/.config/tessera/profile.json` during your build. `tess` reads JSON and does not run TypeScript. With your profile exported as `profile` from `profile.ts`, Bun renders it:
+Install the [`tessera-wm`](schema/) package in your profile project. Import `Profile` and render `Profile.parse(profile)` to `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` during your build. `tess` reads JSON and does not run TypeScript. With your profile exported as `profile` from `profile.ts`, Bun renders it:
 
 ```sh
-bun -e 'import { Profile } from "tessera-wm"; import { profile } from "./profile.ts"; await Bun.write(Bun.env.HOME + "/.config/tessera/profile.json", JSON.stringify(Profile.parse(profile), null, 2) + "\n")'
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/tessera" && mkdir -p "$dir" && TESSERA_OUT="$dir/profile.json" bun -e 'import { Profile } from "tessera-wm"; import { profile } from "./profile.ts"; await Bun.write(Bun.env.TESSERA_OUT, JSON.stringify(Profile.parse(profile), null, 2) + "\n")'
 ```
 
 A missing well-known JSON file falls back to the embedded default. A present but broken JSON profile surfaces its error. A legacy `profile.ts` at the well-known location, or a `.ts` path in `TESSERA_PROFILE`, fails with an instruction to render the profile to JSON.

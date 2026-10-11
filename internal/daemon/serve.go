@@ -102,8 +102,8 @@ func readLine(conn net.Conn) (string, error) {
 	return strings.TrimSuffix(line, "\n"), nil
 }
 
-// bounded runs fn under CascadeTimeout and never waits past that deadline, even if fn ignores cancellation.
-// A deadline is fatal to Serve; a stray fn is left behind, since the process then exits 1.
+// bounded runs fn under CascadeTimeout and returns at that deadline or when ctx ends, even if fn ignores cancellation.
+// A deadline is fatal to Serve; a stray fn is left behind, since the process then exits or is shutting down.
 func bounded[T any](ctx context.Context, h *Hub, fn func(context.Context) (T, error)) (T, error) {
 	boundedCtx, cancel := context.WithTimeout(ctx, CascadeTimeout)
 	defer cancel()
@@ -124,6 +124,8 @@ func bounded[T any](ctx context.Context, h *Hub, fn func(context.Context) (T, er
 		if ctx.Err() != nil || !errors.Is(boundedCtx.Err(), context.DeadlineExceeded) {
 			return r.v, r.err
 		}
+	case <-ctx.Done():
+		return zero, ctx.Err()
 	case <-expired.C:
 		if ctx.Err() != nil {
 			return zero, ctx.Err()
