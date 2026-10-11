@@ -102,7 +102,10 @@ func readLine(conn net.Conn) (string, error) {
 	return strings.TrimSuffix(line, "\n"), nil
 }
 
-// bounded runs fn under CascadeTimeout and returns at that deadline or when ctx ends, even if fn ignores cancellation.
+// cancelGrace is how long a cancelled Serve waits for work to run its cleanup.
+const cancelGrace = 2 * time.Second
+
+// bounded runs fn under CascadeTimeout and returns at that deadline, or within cancelGrace once ctx ends.
 // A deadline is fatal to Serve; a stray fn is left behind, since the process then exits or is shutting down.
 func bounded[T any](ctx context.Context, h *Hub, fn func(context.Context) (T, error)) (T, error) {
 	boundedCtx, cancel := context.WithTimeout(ctx, CascadeTimeout)
@@ -125,7 +128,14 @@ func bounded[T any](ctx context.Context, h *Hub, fn func(context.Context) (T, er
 			return r.v, r.err
 		}
 	case <-ctx.Done():
-		return zero, ctx.Err()
+		grace := time.NewTimer(cancelGrace)
+		defer grace.Stop()
+		select {
+		case r := <-done:
+			return r.v, r.err
+		case <-grace.C:
+			return zero, ctx.Err()
+		}
 	case <-expired.C:
 		if ctx.Err() != nil {
 			return zero, ctx.Err()

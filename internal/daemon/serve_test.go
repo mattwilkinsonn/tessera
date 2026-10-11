@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -201,7 +202,7 @@ func TestServe(t *testing.T) {
 		})
 	})
 
-	t.Run("cancel ends Serve promptly while work ignores cancellation", func(t *testing.T) {
+	t.Run("cancel ends Serve after the grace period while work ignores cancellation", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			ln := newPipeListener()
@@ -218,8 +219,30 @@ func TestServe(t *testing.T) {
 			start := time.Now()
 			cancel()
 			assert.NilError(t, (<-done).err)
-			assert.Equal(t, time.Since(start), time.Duration(0))
+			assert.Equal(t, time.Since(start), cancelGrace)
 			close(release)
+		})
+	})
+	t.Run("cancel waits for cooperative work to finish its cleanup", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			ln := newPipeListener()
+			entered := make(chan struct{})
+			var cleaned atomic.Bool
+			cooperative := func(ctx context.Context) (Step, error) {
+				close(entered)
+				<-ctx.Done()
+				// Cleanup that takes virtual time, like releasing the guard via yabai.
+				<-time.After(time.Second)
+				cleaned.Store(true)
+				return Settled, ctx.Err()
+			}
+			done := startServe(ctx, ln, NewHub(idle, cooperative), noWake)
+			ln.send(t, string(wm.EventWindowCreated))
+			<-entered
+			cancel()
+			assert.NilError(t, (<-done).err)
+			assert.Assert(t, cleaned.Load(), "Serve returned before the work's cleanup ran")
 		})
 	})
 }

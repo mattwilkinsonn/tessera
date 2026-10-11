@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -241,14 +240,15 @@ func TestRun(t *testing.T) {
 
 func TestNotLoadedExit(t *testing.T) {
 	for _, test := range []struct {
+		name string
 		code int
 		want bool
 	}{
-		{code: 3, want: true},
-		{code: 113, want: true},
-		{code: 1, want: false},
+		{name: "bootout of a missing service", code: 3, want: true},
+		{name: "print of a missing service", code: 113, want: true},
+		{name: "other failure", code: 1, want: false},
 	} {
-		t.Run(strconv.Itoa(test.code), func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, notLoadedExit(test.code), test.want)
 		})
 	}
