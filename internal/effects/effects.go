@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
+	"os/exec" //nolint:depguard // Sketchybar is an intentional subprocess seam.
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -115,6 +115,7 @@ func ReleaseSignals(path string) error {
 // SignalsSuppressed reports whether the guard is present and younger than its TTL.
 // An expired guard is removed as a side effect.
 func SignalsSuppressed(path string, now time.Time) (bool, error) {
+	//nolint:gosec // The cache path is chosen by the caller.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -137,6 +138,7 @@ func SignalsSuppressed(path string, now time.Time) (bool, error) {
 
 // ReadFlexOrder reads the persisted order, dropping empty lines.
 func ReadFlexOrder(path string) ([]string, error) {
+	//nolint:gosec // Flex-order state is stored at the caller-selected config path.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -175,6 +177,7 @@ type Nudger func(ctx context.Context, event string) error
 
 // NudgeSketchybar triggers an event when sketchybar is available. Its failure is best-effort.
 func NudgeSketchybar(ctx context.Context, event string) error {
+	//nolint:gosec // This executes the fixed sketchybar binary with one event argument.
 	if err := exec.CommandContext(ctx, SketchybarPath, "--trigger", event).Run(); err != nil {
 		slog.DebugContext(ctx, "sketchybar nudge failed", "event", event, "error", err)
 	}
@@ -210,6 +213,7 @@ func WriteStamp(path string) error {
 
 // ReadStamp reads an epoch-second stamp. Missing or malformed content is absent.
 func ReadStamp(path string) (int64, bool, error) {
+	//nolint:gosec // Signal stamps use the caller-selected state path.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

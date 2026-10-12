@@ -69,8 +69,8 @@ func TestStampFile(t *testing.T) {
 	})
 }
 
-func TestSignalsSuppressed(t *testing.T) {
-	t.Run("no guard file → not suppressed", func(t *testing.T) {
+func TestSignalsSuppressedReads(t *testing.T) {
+	t.Run("no guard file means not suppressed", func(t *testing.T) {
 		got, err := SignalsSuppressed(filepath.Join(t.TempDir(), "g"), time.Unix(100, 0))
 		if err != nil || got {
 			t.Fatalf("SignalsSuppressed() = %t, %v; want false, nil", got, err)
@@ -96,7 +96,10 @@ func TestSignalsSuppressed(t *testing.T) {
 			t.Fatalf("SignalsSuppressed() = %t, %v; want true, nil", got, err)
 		}
 	})
-	t.Run("a guard at/over the TTL expires, reads false, and is removed", func(t *testing.T) {
+}
+
+func TestSignalsSuppressedExpiryAndRelease(t *testing.T) {
+	t.Run("a guard at the TTL expires, reads false, and is removed", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "g")
 		if err := os.WriteFile(path, []byte("100\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -122,7 +125,10 @@ func TestSignalsSuppressed(t *testing.T) {
 			t.Fatalf("SignalsSuppressed() = %t, %v; want false, nil", got, err)
 		}
 	})
-	t.Run("a symlink at the guard path is refused and its target untouched", func(t *testing.T) {
+}
+
+func TestSuppressSignalsRejectsUnsafeFiles(t *testing.T) {
+	t.Run("a symlink is refused without changing its target", func(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, "target")
 		if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
@@ -140,7 +146,7 @@ func TestSignalsSuppressed(t *testing.T) {
 			t.Fatalf("symlink target = %q, %v; want %q untouched", got, err, "keep\n")
 		}
 	})
-	t.Run("a hard link at the guard path is refused and its victim untouched", func(t *testing.T) {
+	t.Run("a hard link is refused without changing its victim", func(t *testing.T) {
 		dir := t.TempDir()
 		victim := filepath.Join(dir, "victim")
 		if err := os.WriteFile(victim, []byte("keep\n"), 0o600); err != nil {
@@ -158,7 +164,7 @@ func TestSignalsSuppressed(t *testing.T) {
 			t.Fatalf("hard-link victim = %q, %v; want %q untouched", got, err, "keep\n")
 		}
 	})
-	t.Run("a FIFO at the guard path is refused without blocking", func(t *testing.T) {
+	t.Run("a FIFO is refused without blocking", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "g")
 		if err := syscall.Mkfifo(path, 0o600); err != nil {
 			t.Fatal(err)

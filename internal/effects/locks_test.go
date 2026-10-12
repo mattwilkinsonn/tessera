@@ -12,8 +12,8 @@ import (
 	"testing"
 )
 
-func TestAcquireLock(t *testing.T) {
-	t.Run("first caller acquires; release frees the dir", func(t *testing.T) {
+func TestAcquireLockLifecycle(t *testing.T) {
+	t.Run("first caller acquires and release leaves the lock file", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "l.lock")
 		lock, acquired, err := AcquireLock(path)
 		if err != nil || !acquired {
@@ -33,6 +33,7 @@ func TestAcquireLock(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+
 	t.Run("release is idempotent", func(t *testing.T) {
 		lock, acquired, err := AcquireLock(filepath.Join(t.TempDir(), "l.lock"))
 		if err != nil || !acquired {
@@ -45,7 +46,10 @@ func TestAcquireLock(t *testing.T) {
 			t.Fatalf("second Unlock() = %v; want nil", err)
 		}
 	})
-	t.Run("a LIVE holder (our own pid) is genuine contention → null", func(t *testing.T) {
+}
+
+func TestAcquireLockContention(t *testing.T) {
+	t.Run("a live holder is genuine contention", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "l.lock")
 		lock, acquired, err := AcquireLock(path)
 		if err != nil || !acquired {
@@ -61,6 +65,7 @@ func TestAcquireLock(t *testing.T) {
 			t.Fatalf("second AcquireLock() = %v, %t, %v; want nil, false, nil", second, got, err)
 		}
 	})
+
 	t.Run("acquires when free", func(t *testing.T) {
 		lock, acquired, err := AcquireLock(filepath.Join(t.TempDir(), "a.lock"))
 		if err != nil || !acquired {
@@ -70,12 +75,14 @@ func TestAcquireLock(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	t.Run("a SIGKILLed child's lock is free at once, with no reclaim step", func(t *testing.T) {
+}
+
+func TestAcquireLockAfterProcessDeath(t *testing.T) {
+	t.Run("a SIGKILLed child's lock is free at once", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "child.lock")
-		cmd := exec.Command(os.Args[0], "-test.run=^TestLockHelperProcess$")
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestLockHelperProcess$")
 		cmd.Env = append(os.Environ(), "TESSERA_LOCK_HELPER=1", "TESSERA_LOCK_PATH="+path)
-		_, err := cmd.StdinPipe()
-		if err != nil {
+		if _, err := cmd.StdinPipe(); err != nil {
 			t.Fatal(err)
 		}
 		stdout, err := cmd.StdoutPipe()

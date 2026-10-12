@@ -2,6 +2,11 @@ package configtest
 
 import "github.com/mattwilkinsonn/tessera/internal/config"
 
+const (
+	alphaSlot = "alpha"
+	betaSlot  = "beta"
+)
+
 func Full() *config.Profile {
 	return &config.Profile{
 		Displays: config.Displays{
@@ -10,27 +15,27 @@ func Full() *config.Profile {
 			Laptop: config.DisplaySpec{Width: 700, Weights: &config.WeightDefaults{Columns: map[int][]float64{2: {1, 2}}}},
 		},
 		Windows: map[string]config.WindowSpec{
-			"alpha": {App: "Alpha", Title: "first", TitleInvert: true, Spawn: []string{"open", "alpha"}},
-			"beta":  {App: "Beta", Title: "second", Spawn: []string{"open", "beta"}},
+			alphaSlot: {App: "Alpha", Title: "first", TitleInvert: true, Spawn: []string{"open", alphaSlot}},
+			betaSlot:  {App: "Beta", Title: "second", Spawn: []string{"open", betaSlot}},
 		},
 		Desk: []config.DeskLayout{
-			{Display: config.DisplayG9, Label: "primary", Kind: config.LayoutColumns, Tracks: [][]string{{"alpha"}, {"beta"}}, Weights: []float64{2, 3}},
-			{Display: config.DisplayLaptop, Label: "portable", Kind: config.LayoutStack, Tracks: [][]string{{"alpha", "beta"}}},
+			{Display: config.DisplayG9, Label: "primary", Kind: config.LayoutColumns, Tracks: [][]string{{alphaSlot}, {betaSlot}}, Weights: []float64{2, 3}},
+			{Display: config.DisplayLaptop, Label: "portable", Kind: config.LayoutStack, Tracks: [][]string{{alphaSlot, betaSlot}}},
 		},
 		Topologies: []config.Topology{{
 			Name:     "dual",
 			Displays: []config.DisplayName{config.DisplayG9, config.DisplayLaptop},
 			Desk: []config.DeskLayout{
-				{Display: config.DisplayG9, Label: "primary", Kind: config.LayoutRows, Tracks: [][]string{{"alpha"}, {"beta"}}},
-				{Display: config.DisplayLaptop, Label: "portable", Kind: config.LayoutStack, Tracks: [][]string{{"alpha"}}},
+				{Display: config.DisplayG9, Label: "primary", Kind: config.LayoutRows, Tracks: [][]string{{alphaSlot}, {betaSlot}}},
+				{Display: config.DisplayLaptop, Label: "portable", Kind: config.LayoutStack, Tracks: [][]string{{alphaSlot}}},
 			},
 		}},
 		Weights: &config.WeightDefaults{
 			Columns: map[int][]float64{2: {1, 1}},
 			Rows:    map[int][]float64{2: {3, 2}},
 		},
-		DeskSlots:       []config.DeskSlot{{Name: "alpha", OnDisplay: config.DisplayG9}, {Name: "beta"}},
-		LaptopPinned:    []string{"alpha", "beta"},
+		DeskSlots:       []config.DeskSlot{{Name: alphaSlot, OnDisplay: config.DisplayG9}, {Name: betaSlot}},
+		LaptopPinned:    []string{alphaSlot, betaSlot},
 		LaptopStackApps: []string{"Background App"},
 	}
 }

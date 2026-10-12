@@ -25,55 +25,65 @@ type BspStep struct {
 	HasUnfloat bool
 }
 
-func QueryWindowsArgs() []string { return []string{"-m", "query", "--windows"} }
+const (
+	queryMode  = "query"
+	spaceMode  = "space"
+	windowMode = "window"
+	ruleMode   = "rule"
+	windowsArg = "--windows"
+	spaceArg   = "--space"
+	focusArg   = "--focus"
+)
+
+func QueryWindowsArgs() []string { return []string{"-m", queryMode, windowsArg} }
 
 func QueryWindowsOnSpaceArgs(spaceIndex int) []string {
-	return []string{"-m", "query", "--windows", "--space", strconv.Itoa(spaceIndex)}
+	return []string{"-m", queryMode, windowsArg, spaceArg, strconv.Itoa(spaceIndex)}
 }
 
 func QueryWindowArgs(windowID int) []string {
-	return []string{"-m", "query", "--windows", "--window", strconv.Itoa(windowID)}
+	return []string{"-m", queryMode, windowsArg, "--window", strconv.Itoa(windowID)}
 }
 
-func QueryFocusedWindowArgs() []string { return []string{"-m", "query", "--windows", "--window"} }
+func QueryFocusedWindowArgs() []string { return []string{"-m", queryMode, windowsArg, "--window"} }
 
-func QuerySpacesArgs() []string { return []string{"-m", "query", "--spaces"} }
+func QuerySpacesArgs() []string { return []string{"-m", queryMode, "--spaces"} }
 
-func QueryFocusedSpaceArgs() []string { return []string{"-m", "query", "--spaces", "--space"} }
+func QueryFocusedSpaceArgs() []string { return []string{"-m", queryMode, "--spaces", spaceArg} }
 
-func QueryDisplaysArgs() []string { return []string{"-m", "query", "--displays"} }
+func QueryDisplaysArgs() []string { return []string{"-m", queryMode, "--displays"} }
 
-func CreateSpaceArgs() []string { return []string{"-m", "space", "--create"} }
+func CreateSpaceArgs() []string { return []string{"-m", spaceMode, "--create"} }
 
 func DestroySpaceArgs(spaceIndex int) []string {
-	return []string{"-m", "space", strconv.Itoa(spaceIndex), "--destroy"}
+	return []string{"-m", spaceMode, strconv.Itoa(spaceIndex), "--destroy"}
 }
 
 func LabelSpaceArgs(spaceIndex int, label string) []string {
-	return []string{"-m", "space", strconv.Itoa(spaceIndex), "--label", label}
+	return []string{"-m", spaceMode, strconv.Itoa(spaceIndex), "--label", label}
 }
 
 func SetSpaceLayoutArgs(spaceIndex int, layout wm.Layout) []string {
-	return []string{"-m", "space", strconv.Itoa(spaceIndex), "--layout", string(layout)}
+	return []string{"-m", spaceMode, strconv.Itoa(spaceIndex), "--layout", string(layout)}
 }
 
 func MoveSpaceToIndexArgs(spaceIndex, toIndex int) []string {
-	return []string{"-m", "space", strconv.Itoa(spaceIndex), "--move", strconv.Itoa(toIndex)}
+	return []string{"-m", spaceMode, strconv.Itoa(spaceIndex), "--move", strconv.Itoa(toIndex)}
 }
 
 func BalanceSpaceArgs(spaceIndex *int) []string {
 	if spaceIndex == nil {
-		return []string{"-m", "space", "--balance"}
+		return []string{"-m", spaceMode, "--balance"}
 	}
-	return []string{"-m", "space", strconv.Itoa(*spaceIndex), "--balance"}
+	return []string{"-m", spaceMode, strconv.Itoa(*spaceIndex), "--balance"}
 }
 
 func MoveWindowToSpaceArgs(windowID, spaceIndex int) []string {
-	return []string{"-m", "window", strconv.Itoa(windowID), "--space", strconv.Itoa(spaceIndex)}
+	return []string{"-m", windowMode, strconv.Itoa(windowID), spaceArg, strconv.Itoa(spaceIndex)}
 }
 
 func MoveWindowToDisplayArgs(windowID int, selector wm.DisplaySelector) []string {
-	return []string{"-m", "window", strconv.Itoa(windowID), "--display", displaySelectorArg(selector)}
+	return []string{"-m", windowMode, strconv.Itoa(windowID), "--display", displaySelectorArg(selector)}
 }
 
 func SetSplitRatioArgs(windowID int, absRatio float64) []string {
@@ -81,51 +91,51 @@ func SetSplitRatioArgs(windowID int, absRatio float64) []string {
 }
 
 func SetSplitRatioArgArgs(windowID int, ratio string) []string {
-	return []string{"-m", "window", strconv.Itoa(windowID), "--ratio", ratio}
+	return []string{"-m", windowMode, strconv.Itoa(windowID), "--ratio", ratio}
 }
 
 func ToggleSplitArgs(windowID int) []string {
-	return []string{"-m", "window", strconv.Itoa(windowID), "--toggle", "split"}
+	return []string{"-m", windowMode, strconv.Itoa(windowID), "--toggle", "split"}
 }
 
 func ToggleFloatArgs(windowID int) []string {
-	return []string{"-m", "window", strconv.Itoa(windowID), "--toggle", "float"}
+	return []string{"-m", windowMode, strconv.Itoa(windowID), "--toggle", "float"}
 }
 
 func ArmInsertArgs(windowID int, direction string) []string {
-	return []string{"-m", "window", strconv.Itoa(windowID), "--insert", direction}
+	return []string{"-m", windowMode, strconv.Itoa(windowID), "--insert", direction}
 }
 
 func SwapWindowsArgs(direction wm.Direction) []string {
-	return []string{"-m", "window", "--swap", string(direction)}
+	return []string{"-m", windowMode, "--swap", string(direction)}
 }
 
 func WarpWindowArgs(direction wm.Direction) []string {
-	return []string{"-m", "window", "--warp", string(direction)}
+	return []string{"-m", windowMode, "--warp", string(direction)}
 }
 
 func ResizeWindowArgs(edge wm.ResizeEdge, dx, dy int) []string {
-	return []string{"-m", "window", "--resize", fmt.Sprintf("%s:%d:%d", edge, dx, dy)}
+	return []string{"-m", windowMode, "--resize", fmt.Sprintf("%s:%d:%d", edge, dx, dy)}
 }
 
 func FocusWindowArgs(windowID int) []string {
-	return []string{"-m", "window", "--focus", strconv.Itoa(windowID)}
+	return []string{"-m", windowMode, focusArg, strconv.Itoa(windowID)}
 }
 
 func FocusWindowDirArgs(selector wm.FocusSelector) []string {
-	return []string{"-m", "window", "--focus", string(selector)}
+	return []string{"-m", windowMode, focusArg, string(selector)}
 }
 
 func FocusDisplayArgs(selector wm.DisplaySelector) []string {
-	return []string{"-m", "display", "--focus", displaySelectorArg(selector)}
+	return []string{"-m", "display", focusArg, displaySelectorArg(selector)}
 }
 
-func RuleListArgs() []string { return []string{"-m", "rule", "--list"} }
+func RuleListArgs() []string { return []string{"-m", ruleMode, "--list"} }
 
-func RuleRemoveArgs(label string) []string { return []string{"-m", "rule", "--remove", label} }
+func RuleRemoveArgs(label string) []string { return []string{"-m", ruleMode, "--remove", label} }
 
 func RuleAddArgs(rule RuleAdd) []string {
-	args := []string{"-m", "rule", "--add", "label=" + rule.Label}
+	args := []string{"-m", ruleMode, "--add", "label=" + rule.Label}
 	if rule.App != "" {
 		args = append(args, "app="+rule.App)
 	}
@@ -148,7 +158,7 @@ func RuleAddArgs(rule RuleAdd) []string {
 	return args
 }
 
-func RuleApplyArgs() []string { return []string{"-m", "rule", "--apply"} }
+func RuleApplyArgs() []string { return []string{"-m", ruleMode, "--apply"} }
 
 func SignalAddArgs(event wm.Event, label, action string) []string {
 	return []string{"-m", "signal", "--add", "event=" + string(event), "label=" + label, "action=" + action}

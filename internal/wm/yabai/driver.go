@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
+	"os/exec" //nolint:depguard // yabai and configured launchers require subprocess execution.
 	"strconv"
 	"strings"
 	"time"
@@ -298,8 +298,8 @@ func (d *Driver) ResizeWindow(ctx context.Context, edge wm.ResizeEdge, dx, dy in
 	return exitCode == 0, err
 }
 
-// SpawnWindow runs the launcher and waits up to spawnWait for it. A launcher still running then is left
-// alive and reaped in the background; only caller cancellation during the wait kills it.
+// SpawnWindow runs the launcher and waits up to spawnWait. A launcher still running then is left
+// alive and reaped in the background; caller cancellation kills it only during the wait.
 func (d *Driver) SpawnWindow(ctx context.Context, argv []string) error {
 	if len(argv) == 0 {
 		return errors.New("spawning window: empty argv")
@@ -309,6 +309,7 @@ func (d *Driver) SpawnWindow(ctx context.Context, argv []string) error {
 	if err != nil {
 		return fmt.Errorf("creating spawn stderr file: %w", err)
 	}
+	//nolint:noctx,gosec // Explicit launcher argv may outlive the caller's wait.
 	command := exec.Command(argv[0], argv[1:]...)
 	command.Stderr = stderr
 	if err := command.Start(); err != nil {
@@ -439,6 +440,7 @@ func waitContext(ctx context.Context, duration time.Duration) error {
 }
 
 func (d *Driver) run(ctx context.Context, args []string) ([]byte, int, error) {
+	//nolint:gosec // The configured yabai executable and arguments are the CLI interface.
 	command := exec.CommandContext(ctx, d.path, args...)
 	// Bound Wait if a descendant keeps the output pipes open after yabai exits or is killed.
 	command.WaitDelay = 2 * time.Second

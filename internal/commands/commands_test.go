@@ -338,280 +338,302 @@ func TestColumns(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	t.Run("labels each present display's home space, lays out the desk, nudges once", func(t *testing.T) {
-		driver := deskWorld()
-		events := make([]string, 0)
-		env := commandEnv(t)
-		env.Nudge = func(_ context.Context, event string) error {
-			events = append(events, event)
-			return nil
+	t.Run("labels each present display's home space, lays out the desk, nudges once", testApplyLabelsHomeSpacesAndNudges)
+	t.Run("spawns a missing Ghostty once, places it, and reuses it on the next apply", testApplySpawnsGhosttyOnce)
+	t.Run("does not spawn names belonging only to an absent display", testApplySkipsAbsentDisplaySpawns)
+	t.Run("a spawn failure neither stops later spawns nor the layout", testApplyContinuesAfterSpawnFailure)
+	t.Run("spawn wait gives up after its bounded polls when no window appears", testApplyStopsWaitingWithoutWindow)
+	t.Run("no-op under lock contention (a live holder owns the lock)", testApplyNoopUnderLockContention)
+	t.Run("foreign windows land on the laptop park; g9 keeps only its targets", testApplyParksForeignWindows)
+}
+
+func testApplyLabelsHomeSpacesAndNudges(t *testing.T) {
+	driver := deskWorld()
+	events := make([]string, 0)
+	env := commandEnv(t)
+	env.Nudge = func(_ context.Context, event string) error {
+		events = append(events, event)
+		return nil
+	}
+	if err := Apply(t.Context(), testProfile(t), driver, env); err != nil {
+		t.Fatal(err)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	labels := make([]string, len(spaces))
+	for index, space := range spaces {
+		labels[index] = space.Label
+	}
+	for _, label := range []string{"main", "plan", "laptop"} {
+		if !slices.Contains(labels, label) {
+			t.Errorf("labels = %v; missing %q", labels, label)
 		}
-		if err := Apply(t.Context(), testProfile(t), driver, env); err != nil {
-			t.Fatal(err)
-		}
-		spaces, err := driver.QuerySpaces(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		labels := make([]string, len(spaces))
-		for index, space := range spaces {
-			labels[index] = space.Label
-		}
-		for _, label := range []string{"main", "plan", "laptop"} {
-			if !slices.Contains(labels, label) {
-				t.Errorf("labels = %v; missing %q", labels, label)
-			}
-		}
-		if !slices.Equal(events, []string{"yabai_spaces_changed"}) {
-			t.Fatalf("nudges = %v", events)
-		}
+	}
+	if !slices.Equal(events, []string{"yabai_spaces_changed"}) {
+		t.Fatalf("nudges = %v", events)
+	}
+}
+
+func testApplySpawnsGhosttyOnce(t *testing.T) {
+	profile := testProfile(t)
+	spec := profile.Windows["ghostty-wave"]
+	spec.Spawn = []string{"open", "-na", "Ghostty"}
+	profile.Windows["ghostty-wave"] = spec
+	driver := fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1}},
+		Windows:  []fake.SeedWindow{{ID: 1, App: "Arc", Title: "one", SpaceIndex: 1}, {ID: 2, App: "Obsidian", SpaceIndex: 1}, {ID: 3, App: "Code", SpaceIndex: 1}},
 	})
-	t.Run("spawns a missing Ghostty once, places it, and reuses it on the next apply", func(t *testing.T) {
-		profile := testProfile(t)
-		spec := profile.Windows["ghostty-wave"]
-		spec.Spawn = []string{"open", "-na", "Ghostty"}
-		profile.Windows["ghostty-wave"] = spec
-		driver := fake.New(fake.Seed{
-			Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}},
-			Spaces:   []fake.SeedSpace{{DisplayIdx: 1}},
-			Windows:  []fake.SeedWindow{{ID: 1, App: "Arc", Title: "one", SpaceIndex: 1}, {ID: 2, App: "Obsidian", SpaceIndex: 1}, {ID: 3, App: "Code", SpaceIndex: 1}},
-		})
-		env := commandEnv(t)
-		if err := Apply(t.Context(), profile, driver, env); err != nil {
-			t.Fatal(err)
-		}
-		if len(driver.SpawnCalls) != 1 || !slices.Equal(driver.SpawnCalls[0], spec.Spawn) {
-			t.Fatalf("spawn calls = %v; want one Ghostty launch", driver.SpawnCalls)
-		}
-		windows, err := driver.QueryWindows(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(windows) != 4 {
-			t.Fatalf("windows = %d; want spawned window in layout", len(windows))
-		}
-		if err := Apply(t.Context(), profile, driver, env); err != nil {
-			t.Fatal(err)
-		}
-		if len(driver.SpawnCalls) != 1 {
-			t.Fatalf("spawn calls = %d; want no second spawn", len(driver.SpawnCalls))
-		}
+	env := commandEnv(t)
+	if err := Apply(t.Context(), profile, driver, env); err != nil {
+		t.Fatal(err)
+	}
+	if len(driver.SpawnCalls) != 1 || !slices.Equal(driver.SpawnCalls[0], spec.Spawn) {
+		t.Fatalf("spawn calls = %v; want one Ghostty launch", driver.SpawnCalls)
+	}
+	windows, err := driver.QueryWindows(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(windows) != 4 {
+		t.Fatalf("windows = %d; want spawned window in layout", len(windows))
+	}
+	if err := Apply(t.Context(), profile, driver, env); err != nil {
+		t.Fatal(err)
+	}
+	if len(driver.SpawnCalls) != 1 {
+		t.Fatalf("spawn calls = %d; want no second spawn", len(driver.SpawnCalls))
+	}
+}
+
+func testApplySkipsAbsentDisplaySpawns(t *testing.T) {
+	profile := testProfile(t)
+	spec := profile.Windows["ghostty-wave"]
+	spec.Spawn = []string{"open", "-a", "Ghostty"}
+	profile.Windows["ghostty-wave"] = spec
+	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}})
+	if err := Apply(t.Context(), profile, driver, commandEnv(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(driver.SpawnCalls) != 0 {
+		t.Fatalf("spawn calls = %v; want none", driver.SpawnCalls)
+	}
+}
+
+func testApplyContinuesAfterSpawnFailure(t *testing.T) {
+	profile := testProfile(t)
+	linear := profile.Windows["linear"]
+	linear.Spawn = []string{"open", "-a", "Linear"}
+	profile.Windows["linear"] = linear
+	akiflow := profile.Windows["akiflow"]
+	akiflow.Spawn = []string{"open", "-a", "Akiflow"}
+	profile.Windows["akiflow"] = akiflow
+	driver := fake.New(fake.Seed{
+		Displays:   []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}},
+		Spaces:     []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 1}},
+		Windows:    []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 2}},
+		SpawnFails: 1,
 	})
-	t.Run("does not spawn names belonging only to an absent display", func(t *testing.T) {
-		profile := testProfile(t)
-		spec := profile.Windows["ghostty-wave"]
-		spec.Spawn = []string{"open", "-a", "Ghostty"}
-		profile.Windows["ghostty-wave"] = spec
-		driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}})
-		if err := Apply(t.Context(), profile, driver, commandEnv(t)); err != nil {
-			t.Fatal(err)
+	if err := Apply(t.Context(), profile, driver, commandEnv(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(driver.SpawnCalls) != 2 {
+		t.Fatalf("spawn calls = %v; want both launches attempted", driver.SpawnCalls)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(spaces, func(space wm.Space) bool { return space.Label == "plan" }) {
+		t.Fatalf("spaces = %+v; want desk layout after spawn failure", spaces)
+	}
+}
+
+func testApplyStopsWaitingWithoutWindow(t *testing.T) {
+	profile := testProfile(t)
+	arc := profile.Windows["arc"]
+	arc.Spawn = []string{"open", "-a", "Arc"}
+	profile.Windows["arc"] = arc
+	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}, SpawnNoWindow: true})
+	env := commandEnv(t)
+	env.Nudge = func(context.Context, string) error { return nil }
+	if err := Apply(t.Context(), profile, driver, env); err != nil {
+		t.Fatal(err)
+	}
+	if len(driver.SpawnCalls) == 0 {
+		t.Fatal("no spawn was attempted")
+	}
+}
+
+func testApplyNoopUnderLockContention(t *testing.T) {
+	driver := deskWorld()
+	env := commandEnv(t)
+	lock, ok, err := effects.AcquireLock(env.Paths.ApplyLock)
+	if err != nil || !ok {
+		t.Fatalf("AcquireLock() = %t, %v", ok, err)
+	}
+	defer func() {
+		if err := lock.Unlock(); err != nil {
+			t.Error(err)
 		}
-		if len(driver.SpawnCalls) != 0 {
-			t.Fatalf("spawn calls = %v; want none", driver.SpawnCalls)
+	}()
+	if err := Apply(t.Context(), testProfile(t), driver, env); err != nil {
+		t.Fatal(err)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, space := range spaces {
+		if space.Label != "" {
+			t.Fatalf("contention changed space label: %+v", space)
 		}
+	}
+}
+
+func testApplyParksForeignWindows(t *testing.T) {
+	driver := fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}, {Idx: 3, Frame: displayFrame(1728, 1117)}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3}},
+		Windows: []fake.SeedWindow{
+			{ID: 1, App: "Arc", SpaceIndex: 1}, {ID: 2, App: "Obsidian", SpaceIndex: 1}, {ID: 3, App: "Ghostty", Title: "pc", SpaceIndex: 1}, {ID: 4, App: "Ghostty", Title: "mbp", SpaceIndex: 1}, {ID: 5, App: "Code", SpaceIndex: 1},
+			{ID: 100, App: "Messages", SpaceIndex: 1}, {ID: 101, App: "Slack", SpaceIndex: 1},
+			{ID: 6, App: "Linear", SpaceIndex: 2}, {ID: 7, App: "Arc", Title: "two", SpaceIndex: 2}, {ID: 8, App: "Akiflow", SpaceIndex: 2}, {ID: 102, App: "Finder", SpaceIndex: 2},
+			{ID: 9, App: "Arc", Title: "three", SpaceIndex: 3}, {ID: 30, App: "Spotify", SpaceIndex: 3}, {ID: 31, App: "Discord", SpaceIndex: 3},
+		},
 	})
-	t.Run("a spawn failure neither stops later spawns nor the layout", func(t *testing.T) {
-		profile := testProfile(t)
-		linear := profile.Windows["linear"]
-		linear.Spawn = []string{"open", "-a", "Linear"}
-		profile.Windows["linear"] = linear
-		akiflow := profile.Windows["akiflow"]
-		akiflow.Spawn = []string{"open", "-a", "Akiflow"}
-		profile.Windows["akiflow"] = akiflow
-		driver := fake.New(fake.Seed{
-			Displays:   []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}},
-			Spaces:     []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 1}},
-			Windows:    []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 2}},
-			SpawnFails: 1,
-		})
-		if err := Apply(t.Context(), profile, driver, commandEnv(t)); err != nil {
-			t.Fatal(err)
+	if err := Apply(t.Context(), testProfile(t), driver, commandEnv(t)); err != nil {
+		t.Fatal(err)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var main, laptop wm.Space
+	for _, space := range spaces {
+		if space.Label == "main" {
+			main = space
 		}
-		if len(driver.SpawnCalls) != 2 {
-			t.Fatalf("spawn calls = %v; want both launches attempted", driver.SpawnCalls)
+		if space.Label == "laptop" {
+			laptop = space
 		}
-		spaces, err := driver.QuerySpaces(t.Context())
-		if err != nil {
-			t.Fatal(err)
+	}
+	if !slices.Equal(main.WindowIDs, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("main window ids = %v; want desk targets", main.WindowIDs)
+	}
+	for _, refugee := range []int{100, 101, 102} {
+		if !slices.Contains(laptop.WindowIDs, refugee) {
+			t.Errorf("laptop park lacks refugee %d: %v", refugee, laptop.WindowIDs)
 		}
-		if !slices.ContainsFunc(spaces, func(space wm.Space) bool { return space.Label == "plan" }) {
-			t.Fatalf("spaces = %+v; want desk layout after spawn failure", spaces)
-		}
-	})
-	t.Run("spawn wait gives up after its bounded polls when no window appears", func(t *testing.T) {
-		profile := testProfile(t)
-		arc := profile.Windows["arc"]
-		arc.Spawn = []string{"open", "-a", "Arc"}
-		profile.Windows["arc"] = arc
-		driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}, SpawnNoWindow: true})
-		env := commandEnv(t)
-		env.Nudge = func(context.Context, string) error { return nil }
-		if err := Apply(t.Context(), profile, driver, env); err != nil {
-			t.Fatal(err)
-		}
-		if len(driver.SpawnCalls) == 0 {
-			t.Fatal("no spawn was attempted")
-		}
-	})
-	t.Run("no-op under lock contention (a live holder owns the lock)", func(t *testing.T) {
-		driver := deskWorld()
-		env := commandEnv(t)
-		lock, ok, err := effects.AcquireLock(env.Paths.ApplyLock)
-		if err != nil || !ok {
-			t.Fatalf("AcquireLock() = %t, %v", ok, err)
-		}
-		defer func() {
-			if err := lock.Unlock(); err != nil {
-				t.Error(err)
-			}
-		}()
-		if err := Apply(t.Context(), testProfile(t), driver, env); err != nil {
-			t.Fatal(err)
-		}
-		spaces, err := driver.QuerySpaces(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, space := range spaces {
-			if space.Label != "" {
-				t.Fatalf("contention changed space label: %+v", space)
-			}
-		}
-	})
-	t.Run("foreign windows land on the laptop park; g9 keeps only its targets", func(t *testing.T) {
-		driver := fake.New(fake.Seed{
-			Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}, {Idx: 3, Frame: displayFrame(1728, 1117)}},
-			Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3}},
-			Windows: []fake.SeedWindow{
-				{ID: 1, App: "Arc", SpaceIndex: 1}, {ID: 2, App: "Obsidian", SpaceIndex: 1}, {ID: 3, App: "Ghostty", Title: "pc", SpaceIndex: 1}, {ID: 4, App: "Ghostty", Title: "mbp", SpaceIndex: 1}, {ID: 5, App: "Code", SpaceIndex: 1},
-				{ID: 100, App: "Messages", SpaceIndex: 1}, {ID: 101, App: "Slack", SpaceIndex: 1},
-				{ID: 6, App: "Linear", SpaceIndex: 2}, {ID: 7, App: "Arc", Title: "two", SpaceIndex: 2}, {ID: 8, App: "Akiflow", SpaceIndex: 2}, {ID: 102, App: "Finder", SpaceIndex: 2},
-				{ID: 9, App: "Arc", Title: "three", SpaceIndex: 3}, {ID: 30, App: "Spotify", SpaceIndex: 3}, {ID: 31, App: "Discord", SpaceIndex: 3},
-			},
-		})
-		if err := Apply(t.Context(), testProfile(t), driver, commandEnv(t)); err != nil {
-			t.Fatal(err)
-		}
-		spaces, err := driver.QuerySpaces(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		var main, laptop wm.Space
-		for _, space := range spaces {
-			if space.Label == "main" {
-				main = space
-			}
-			if space.Label == "laptop" {
-				laptop = space
-			}
-		}
-		if !slices.Equal(main.WindowIDs, []int{1, 2, 3, 4, 5}) {
-			t.Fatalf("main window ids = %v; want desk targets", main.WindowIDs)
-		}
-		for _, refugee := range []int{100, 101, 102} {
-			if !slices.Contains(laptop.WindowIDs, refugee) {
-				t.Errorf("laptop park lacks refugee %d: %v", refugee, laptop.WindowIDs)
-			}
-		}
-		if laptop.Layout != wm.LayoutStack {
-			t.Fatalf("laptop layout = %q; want stack", laptop.Layout)
-		}
-	})
+	}
+	if laptop.Layout != wm.LayoutStack {
+		t.Fatalf("laptop layout = %q; want stack", laptop.Layout)
+	}
 }
 
 func TestLaptop(t *testing.T) {
-	t.Run("converges the grid on a laptop-only world and persists the flex order", func(t *testing.T) {
-		driver := fake.New(fake.Seed{
-			Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}},
-			Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}},
-			Windows:  []fake.SeedWindow{{ID: 1, App: "Arc", Title: "a", SpaceIndex: 1}, {ID: 2, App: "Ghostty", Title: "pc", SpaceIndex: 1}, {ID: 3, App: "Spotify", SpaceIndex: 1}},
-		})
-		env := commandEnv(t)
-		result, err := Laptop(t.Context(), testProfile(t), driver, env)
-		if err != nil || result != LaptopRan {
-			t.Fatalf("Laptop() = %q, %v; want ran", result, err)
-		}
-		spaces, err := driver.QuerySpaces(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		var hasLap, homeStack bool
-		for _, space := range spaces {
-			hasLap = hasLap || strings.HasPrefix(space.Label, "lap-")
-			homeStack = homeStack || (space.Label == "laptop" && space.Layout == wm.LayoutStack)
-		}
-		if !hasLap || !homeStack {
-			t.Fatalf("laptop spaces = %+v; want lap grid and stack home", spaces)
-		}
-		if _, err := os.Stat(env.Paths.FlexOrder); err != nil {
-			t.Fatalf("flex order was not persisted: %v", err)
-		}
+	t.Run("converges the grid on a laptop-only world and persists the flex order", testLaptopConvergesAndPersists)
+	t.Run("an explicit run spawns and clears blank spaces; a window-event converge does neither", testLaptopExplicitAndEventBehavior)
+	t.Run("returns contended when a live holder owns the converge lock", testLaptopReturnsContendedUnderLock)
+	t.Run("skipped when a monitor is attached (not laptop-only)", testLaptopSkipsWhenMonitorAttached)
+}
+
+func testLaptopConvergesAndPersists(t *testing.T) {
+	driver := fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}},
+		Windows:  []fake.SeedWindow{{ID: 1, App: "Arc", Title: "a", SpaceIndex: 1}, {ID: 2, App: "Ghostty", Title: "pc", SpaceIndex: 1}, {ID: 3, App: "Spotify", SpaceIndex: 1}},
 	})
-	t.Run("an explicit run spawns and clears blank spaces; a window-event converge does neither", func(t *testing.T) {
-		profile := testProfile(t)
-		spec := profile.Windows["ghostty-mbp"]
-		spec.Spawn = []string{"open", "-na", "Ghostty"}
-		profile.Windows["ghostty-mbp"] = spec
-		seed := fake.Seed{
-			Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}},
-			Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 1, Label: ""}},
-			Windows:  []fake.SeedWindow{{ID: 1, App: "Arc", Title: "a", SpaceIndex: 1}},
+	env := commandEnv(t)
+	result, err := Laptop(t.Context(), testProfile(t), driver, env)
+	if err != nil || result != LaptopRan {
+		t.Fatalf("Laptop() = %q, %v; want ran", result, err)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hasLap, homeStack bool
+	for _, space := range spaces {
+		hasLap = hasLap || strings.HasPrefix(space.Label, "lap-")
+		homeStack = homeStack || (space.Label == "laptop" && space.Layout == wm.LayoutStack)
+	}
+	if !hasLap || !homeStack {
+		t.Fatalf("laptop spaces = %+v; want lap grid and stack home", spaces)
+	}
+	if _, err := os.Stat(env.Paths.FlexOrder); err != nil {
+		t.Fatalf("flex order was not persisted: %v", err)
+	}
+}
+
+func testLaptopExplicitAndEventBehavior(t *testing.T) {
+	profile := testProfile(t)
+	spec := profile.Windows["ghostty-mbp"]
+	spec.Spawn = []string{"open", "-na", "Ghostty"}
+	profile.Windows["ghostty-mbp"] = spec
+	seed := fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 1, Label: ""}},
+		Windows:  []fake.SeedWindow{{ID: 1, App: "Arc", Title: "a", SpaceIndex: 1}},
+	}
+	explicit := fake.New(seed)
+	if _, err := Laptop(t.Context(), profile, explicit, commandEnv(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(explicit.SpawnCalls) != 1 {
+		t.Fatalf("explicit spawn calls = %v; want one launch", explicit.SpawnCalls)
+	}
+	explicitSpaces, err := explicit.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, space := range explicitSpaces {
+		if space.Label == "" {
+			t.Fatal("explicit converge left an unrelated blank space")
 		}
-		explicit := fake.New(seed)
-		if _, err := Laptop(t.Context(), profile, explicit, commandEnv(t)); err != nil {
-			t.Fatal(err)
+	}
+	windowEvent := fake.New(seed)
+	if _, err := RunFlexConverge(t.Context(), profile, windowEvent, commandEnv(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(windowEvent.SpawnCalls) != 0 {
+		t.Fatalf("event spawn calls = %v; want none", windowEvent.SpawnCalls)
+	}
+	spaces, err := windowEvent.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(spaces, func(space wm.Space) bool { return space.Label == "" }) {
+		t.Fatal("window-event converge removed a blank space")
+	}
+}
+
+func testLaptopReturnsContendedUnderLock(t *testing.T) {
+	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}}, Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 1}}})
+	env := commandEnv(t)
+	lock, ok, err := effects.AcquireLock(env.Paths.LaptopLock)
+	if err != nil || !ok {
+		t.Fatalf("AcquireLock() = %t, %v", ok, err)
+	}
+	defer func() {
+		if err := lock.Unlock(); err != nil {
+			t.Error(err)
 		}
-		if len(explicit.SpawnCalls) != 1 {
-			t.Fatalf("explicit spawn calls = %v; want one launch", explicit.SpawnCalls)
-		}
-		explicitSpaces, err := explicit.QuerySpaces(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, space := range explicitSpaces {
-			if space.Label == "" {
-				t.Fatal("explicit converge left an unrelated blank space")
-			}
-		}
-		windowEvent := fake.New(seed)
-		if _, err := RunFlexConverge(t.Context(), profile, windowEvent, commandEnv(t)); err != nil {
-			t.Fatal(err)
-		}
-		if len(windowEvent.SpawnCalls) != 0 {
-			t.Fatalf("event spawn calls = %v; want none", windowEvent.SpawnCalls)
-		}
-		spaces, err := windowEvent.QuerySpaces(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !slices.ContainsFunc(spaces, func(space wm.Space) bool { return space.Label == "" }) {
-			t.Fatal("window-event converge removed a blank space")
-		}
-	})
-	t.Run("returns contended when a live holder owns the converge lock", func(t *testing.T) {
-		driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}}, Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 1}}})
-		env := commandEnv(t)
-		lock, ok, err := effects.AcquireLock(env.Paths.LaptopLock)
-		if err != nil || !ok {
-			t.Fatalf("AcquireLock() = %t, %v", ok, err)
-		}
-		defer func() {
-			if err := lock.Unlock(); err != nil {
-				t.Error(err)
-			}
-		}()
-		result, err := Laptop(t.Context(), testProfile(t), driver, env)
-		if err != nil || result != LaptopContended {
-			t.Fatalf("Laptop() = %q, %v; want contended", result, err)
-		}
-	})
-	t.Run("skipped when a monitor is attached (not laptop-only)", func(t *testing.T) {
-		driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}, {Idx: 2, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2, Label: "aw"}}, Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 1}}})
-		result, err := Laptop(t.Context(), testProfile(t), driver, commandEnv(t))
-		if err != nil || result != LaptopSkipped {
-			t.Fatalf("Laptop() = %q, %v; want skipped", result, err)
-		}
-	})
+	}()
+	result, err := Laptop(t.Context(), testProfile(t), driver, env)
+	if err != nil || result != LaptopContended {
+		t.Fatalf("Laptop() = %q, %v; want contended", result, err)
+	}
+}
+
+func testLaptopSkipsWhenMonitorAttached(t *testing.T) {
+	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}, {Idx: 2, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2, Label: "aw"}}, Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 1}}})
+	result, err := Laptop(t.Context(), testProfile(t), driver, commandEnv(t))
+	if err != nil || result != LaptopSkipped {
+		t.Fatalf("Laptop() = %q, %v; want skipped", result, err)
+	}
 }
 
 func TestRules(t *testing.T) {
@@ -679,7 +701,7 @@ func TestRun(t *testing.T) {
 func TestWake(t *testing.T) {
 	t.Run("writes wake request to the daemon socket", func(t *testing.T) {
 		sock := "/tmp/tess-wake-" + strconv.Itoa(os.Getpid()) + ".sock"
-		listener, err := net.Listen("unix", sock)
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
 		if err != nil {
 			t.Fatal(err)
 		}

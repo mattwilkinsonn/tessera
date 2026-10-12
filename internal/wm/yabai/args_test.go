@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	path := filepath.Join(dir, "stubyabai")
-	command := exec.Command("go", "build", "-o", path, "./testdata/stubyabai")
+	command := exec.CommandContext(context.Background(), "go", "build", "-o", path, "./testdata/stubyabai")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "building stub yabai: %v\n%s", err, output)
@@ -279,7 +279,7 @@ func TestSpawnWindow(t *testing.T) {
 	})
 	t.Run("reports stderr from an early launcher exit", func(t *testing.T) {
 		driver := New("yabai")
-		err := driver.SpawnWindow(t.Context(), []string{"/bin/sh", "-c", "echo boom >&2; sleep 3 & exit 1"})
+		err := driver.SpawnWindow(t.Context(), []string{"/bin/sh", "-c", "echo boom >&2; exit 1"})
 		assert.ErrorContains(t, err, "boom")
 	})
 	t.Run("returns after caller cancellation", func(t *testing.T) {
@@ -296,39 +296,67 @@ func TestSpawnWindow(t *testing.T) {
 		err := driver.SpawnWindow(ctx, []string{"/bin/sleep", "2"})
 		assert.Assert(t, errors.Is(err, context.DeadlineExceeded))
 	})
-	t.Run("a launcher outliving the wait is left running and SpawnWindow returns nil", func(t *testing.T) {
+	t.Run("a launcher outliving the wait survives caller cancellation", func(t *testing.T) {
 		dir := t.TempDir()
-		gate, out := filepath.Join(dir, "gate"), filepath.Join(dir, "out")
-		assert.NilError(t, syscall.Mkfifo(gate, 0o600))
-		assert.NilError(t, syscall.Mkfifo(out, 0o600))
-		driver := &Driver{path: "yabai", spawnWait: 10 * time.Millisecond}
-		// The launcher blocks on gate until the test opens it, then reports through out.
-		script := `read x < "$1"; echo alive > "$2"`
-		assert.NilError(t, driver.SpawnWindow(t.Context(), []string{"/bin/sh", "-c", script, "sh", gate, out}))
-		// A killed launcher never opens either FIFO, so bound the handshake instead of hanging.
-		alive := make(chan error, 1)
+		gate, started, out := filepath.Join(dir, "gate"), filepath.Join(dir, "started"), filepath.Join(dir, "out")
+		for _, path := range []string{gate, started} {
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := syscall.Mkfifo(out, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		startedRead := make(chan error, 1)
+		go func() {
+			f, err := os.Open(started)
+			if err != nil {
+				startedRead <- err
+				return
+			}
+			defer f.Close()
+			var marker [1]byte
+			_, err = f.Read(marker[:])
+			startedRead <- err
+		}()
+		driver := &Driver{path: "yabai", spawnWait: 0}
+		ctx, cancel := context.WithCancel(t.Context())
+		script := `printf x > "$3"; read x < "$1"; echo alive > "$2"`
+		if err := driver.SpawnWindow(ctx, []string{"/bin/sh", "-c", script, "sh", gate, out, started}); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		select {
+		case err := <-startedRead:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("launcher did not reach the event gate")
+		}
+		gateOpened := make(chan error, 1)
 		go func() {
 			f, err := os.OpenFile(gate, os.O_WRONLY, 0)
-			if err != nil {
-				alive <- err
-				return
+			if err == nil {
+				_, err = f.WriteString("go\n")
+				err = errors.Join(err, f.Close())
 			}
-			_, err = f.WriteString("go\n")
-			if err = errors.Join(err, f.Close()); err != nil {
-				alive <- err
-				return
-			}
-			got, err := os.ReadFile(out)
-			if err == nil && string(got) != "alive\n" {
-				err = fmt.Errorf("launcher wrote %q; want %q", got, "alive\n")
-			}
-			alive <- err
+			gateOpened <- err
 		}()
 		select {
-		case err := <-alive:
-			assert.NilError(t, err)
+		case err := <-gateOpened:
+			if err != nil {
+				t.Fatal(err)
+			}
 		case <-time.After(10 * time.Second):
-			t.Fatal("the launcher did not survive SpawnWindow's wait")
+			t.Fatal("launcher did not survive caller cancellation")
+		}
+		got, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != "alive\n" {
+			t.Fatalf("launcher wrote %q; want alive", got)
 		}
 	})
 }
@@ -336,7 +364,7 @@ func TestSpawnWindow(t *testing.T) {
 func TestRecordingStub(t *testing.T) {
 	windowsFixture := filepath.Join("testdata", "stubyabai", "windows.live.json")
 	log := filepath.Join(t.TempDir(), "argv.log")
-	command := exec.Command(os.Getenv("TESS_YABAI"), "-m", "query", "--windows", "--space", "3")
+	command := exec.CommandContext(t.Context(), os.Getenv("TESS_YABAI"), "-m", "query", "--windows", "--space", "3")
 	command.Env = append(os.Environ(), "TESS_YABAI_LOG="+log, "TESS_YABAI_WINDOWS="+windowsFixture)
 	output, err := command.Output()
 	assert.NilError(t, err)
@@ -371,7 +399,7 @@ func TestArgvCorpus(t *testing.T) {
 	}
 	log := filepath.Join(t.TempDir(), "argv.log")
 	for _, args := range cases {
-		command := exec.Command(os.Getenv("TESS_YABAI"), args...)
+		command := exec.CommandContext(t.Context(), os.Getenv("TESS_YABAI"), args...)
 		command.Env = append(os.Environ(), "TESS_YABAI_LOG="+log, "TESS_YABAI_EXIT_CODE=0")
 		assert.NilError(t, command.Run())
 	}

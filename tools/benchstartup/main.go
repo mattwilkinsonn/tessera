@@ -1,15 +1,22 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	"os/exec" //nolint:depguard // This command intentionally runs the benchmark binaries.
 	"path/filepath"
 	"slices"
 	"time"
+)
+
+const (
+	newBinaryName = "new"
+	snapCommand   = "snap"
+	threeColumn   = "3col"
 )
 
 type measurement struct {
@@ -21,13 +28,13 @@ type measurement struct {
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 }
 
-func run(argv []string, stdout, stderr io.Writer) error {
+func run(ctx context.Context, argv []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("benchstartup", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	count := flags.Int("n", 40, "measurements per command")
@@ -46,6 +53,10 @@ func run(argv []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolving new binary: %w", err)
 	}
+	return compareBinaries(ctx, base, current, *count, stdout, stderr)
+}
+
+func compareBinaries(ctx context.Context, base, current string, count int, stdout, stderr io.Writer) error {
 	temp, err := os.MkdirTemp("/tmp", "tess-startup-")
 	if err != nil {
 		return fmt.Errorf("creating benchmark directory: %w", err)
@@ -59,58 +70,19 @@ func run(argv []string, stdout, stderr io.Writer) error {
 	if err := os.Mkdir(home, 0o700); err != nil {
 		return fmt.Errorf("creating benchmark home: %w", err)
 	}
-	shim := filepath.Join(temp, "yabai")
-	marker := filepath.Join(temp, "shim-ran")
+	shim, marker := filepath.Join(temp, "yabai"), filepath.Join(temp, "shim-ran")
 	shimBody := []byte("#!/bin/sh\nprintf x > \"$TESS_BENCH_MARKER\"\nexit 1\n")
+	//nolint:gosec // The benchmark must create an executable yabai test shim.
 	if err := os.WriteFile(shim, shimBody, 0o755); err != nil {
 		return fmt.Errorf("writing yabai stub: %w", err)
 	}
-	binaries := []struct {
-		name string
-		path string
-	}{{name: "base", path: base}, {name: "new", path: current}}
-	for _, binary := range binaries {
-		if err := os.WriteFile(marker, nil, 0o600); err != nil {
-			return fmt.Errorf("resetting benchmark marker: %w", err)
-		}
-		if err := probe(binary.path, []string{"snap", "3col"}, temp, home, shim, marker); err != nil {
-			return fmt.Errorf("probing %s binary: %w", binary.name, err)
-		}
-		info, err := os.Stat(marker)
-		if err != nil || info.Size() == 0 {
-			return fmt.Errorf("%s binary did not invoke TESS_YABAI; refusing an invalid comparison", binary.name)
-		}
+	binaries := []benchmarkBinary{{name: "base", path: base}, {name: newBinaryName, path: current}}
+	if err := verifyBinaryShims(ctx, binaries, home, shim, marker); err != nil {
+		return err
 	}
-	rows := make([]measurement, 0, 5)
-	for _, binary := range binaries {
-		commands := [][]string{{"snap", "3col"}, {"focus", "east"}}
-		if binary.name == "new" {
-			commands = append(commands, []string{"snap", "--help"})
-		}
-		for _, argv := range commands {
-			times := make([]time.Duration, 0, *count)
-			for range *count {
-				if err := os.WriteFile(marker, nil, 0o600); err != nil {
-					return fmt.Errorf("resetting benchmark marker: %w", err)
-				}
-				start := time.Now()
-				command := commandFor(binary.path, argv, temp, home, shim, marker)
-				command.Stdout = io.Discard
-				command.Stderr = io.Discard
-				if err := command.Run(); err != nil {
-					return fmt.Errorf("%s %s failed: %w", binary.name, joinArgs(argv), err)
-				}
-				times = append(times, time.Since(start))
-				if argv[0] == "snap" && len(argv) == 2 && argv[1] == "3col" {
-					info, err := os.Stat(marker)
-					if err != nil || info.Size() == 0 {
-						return fmt.Errorf("%s binary stopped invoking TESS_YABAI; refusing an invalid measurement", binary.name)
-					}
-				}
-			}
-			slices.Sort(times)
-			rows = append(rows, measurement{binary: binary.name, command: joinArgs(argv), p50: percentile(times, 0.50), p90: percentile(times, 0.90), min: times[0]})
-		}
+	rows, err := measureCommands(ctx, binaries, count, temp, home, shim, marker)
+	if err != nil {
+		return err
 	}
 	baseSize, err := fileSize(base)
 	if err != nil {
@@ -120,13 +92,91 @@ func run(argv []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("stat new binary: %w", err)
 	}
+	return reportMeasurements(stdout, rows, baseSize, newSize)
+}
+
+type benchmarkBinary struct {
+	name string
+	path string
+}
+
+func verifyBinaryShims(ctx context.Context, binaries []benchmarkBinary, home, shim, marker string) error {
+	for _, binary := range binaries {
+		if err := os.WriteFile(marker, nil, 0o600); err != nil {
+			return fmt.Errorf("resetting benchmark marker: %w", err)
+		}
+		if err := probe(ctx, binary.path, []string{snapCommand, threeColumn}, home, shim, marker); err != nil {
+			return fmt.Errorf("probing %s binary: %w", binary.name, err)
+		}
+		if err := verifyMarker(binary.name, marker, "did not invoke"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func measureCommands(ctx context.Context, binaries []benchmarkBinary, count int, temp, home, shim, marker string) ([]measurement, error) {
+	rows := make([]measurement, 0, 5)
+	for _, binary := range binaries {
+		commands := [][]string{{snapCommand, threeColumn}, {"focus", "east"}}
+		if binary.name == newBinaryName {
+			commands = append(commands, []string{snapCommand, "--help"})
+		}
+		for _, argv := range commands {
+			times, err := timeCommand(ctx, binary, argv, count, temp, home, shim, marker)
+			if err != nil {
+				return nil, err
+			}
+			slices.Sort(times)
+			rows = append(rows, measurement{binary: binary.name, command: joinArgs(argv), p50: percentile(times, 0.50), p90: percentile(times, 0.90), min: times[0]})
+		}
+	}
+	return rows, nil
+}
+
+func timeCommand(ctx context.Context, binary benchmarkBinary, argv []string, count int, temp, home, shim, marker string) ([]time.Duration, error) {
+	times := make([]time.Duration, 0, count)
+	for range count {
+		if err := os.WriteFile(marker, nil, 0o600); err != nil {
+			return nil, fmt.Errorf("resetting benchmark marker: %w", err)
+		}
+		start := time.Now()
+		command := commandFor(ctx, binary.path, argv, home, shim, marker)
+		command.Dir = temp
+		command.Stdout = io.Discard
+		command.Stderr = io.Discard
+		if err := command.Run(); err != nil {
+			return nil, fmt.Errorf("%s %s failed: %w", binary.name, joinArgs(argv), err)
+		}
+		times = append(times, time.Since(start))
+		if len(argv) == 2 && argv[0] == snapCommand && argv[1] == threeColumn {
+			if err := verifyMarker(binary.name, marker, "stopped invoking"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return times, nil
+}
+
+func verifyMarker(binary, marker, action string) error {
+	info, err := os.Stat(marker)
+	if err != nil {
+		return fmt.Errorf("checking %s benchmark marker: %w", binary, err)
+	}
+	if info == nil || info.Size() == 0 {
+		return fmt.Errorf("%s binary %s TESS_YABAI; refusing an invalid comparison", binary, action)
+	}
+	return nil
+}
+
+func reportMeasurements(stdout io.Writer, rows []measurement, baseSize, newSize int64) error {
 	hotRatio, bars := evaluateBars(rows, newSize)
 	if _, err := fmt.Fprintln(stdout, "| binary | command | p50 (ms) | p90 (ms) | min (ms) | size (MB) |\n| --- | --- | ---: | ---: | ---: | ---: |"); err != nil {
 		return fmt.Errorf("writing benchmark output: %w", err)
 	}
 	for _, row := range rows {
 		size := baseSize
-		if row.binary == "new" {
+		if row.binary == newBinaryName {
 			size = newSize
 		}
 		if _, err := fmt.Fprintf(stdout, "| %s | `%s` | %.1f | %.1f | %.1f | %.2f |\n", row.binary, row.command, millis(row.p50), millis(row.p90), millis(row.min), float64(size)/1_000_000); err != nil {
@@ -136,6 +186,10 @@ func run(argv []string, stdout, stderr io.Writer) error {
 	if _, err := fmt.Fprintf(stdout, "\nHot-path p50 ratio (worst row): %.2fx\n\nBinary sizes: base %d bytes; new %d bytes.\n", hotRatio, baseSize, newSize); err != nil {
 		return fmt.Errorf("writing benchmark summary: %w", err)
 	}
+	return writeBars(stdout, bars)
+}
+
+func writeBars(stdout io.Writer, bars []bar) error {
 	passed := true
 	for _, bar := range bars {
 		if _, err := fmt.Fprintf(stdout, "%s %s\n", map[bool]string{true: "PASS", false: "FAIL"}[bar.pass], bar.name); err != nil {
@@ -190,16 +244,17 @@ func resolveBinary(path string) (string, error) {
 	return absolute, nil
 }
 
-func commandFor(binary string, args []string, dir, home, shim, marker string) *exec.Cmd {
-	command := exec.Command(binary, args...)
-	command.Dir = dir
+func commandFor(ctx context.Context, binary string, args []string, home, shim, marker string) *exec.Cmd {
+	//nolint:gosec // Benchmarked binaries are explicit caller-supplied paths.
+	command := exec.CommandContext(ctx, binary, args...)
 	// An empty TESSERA_PROFILE keeps a host profile out of the measurement.
 	command.Env = append(os.Environ(), "HOME="+home, "TESSERA_PROFILE=", "TESS_YABAI="+shim, "TESS_BENCH_MARKER="+marker)
 	return command
 }
 
-func probe(binary string, args []string, dir, home, shim, marker string) error {
-	command := commandFor(binary, args, dir, home, shim, marker)
+func probe(ctx context.Context, binary string, args []string, home, shim, marker string) error {
+	command := commandFor(ctx, binary, args, home, shim, marker)
+	command.Dir = filepath.Dir(marker)
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
 	return command.Run()

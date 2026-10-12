@@ -33,6 +33,7 @@ func listen(ctx context.Context, path string) (*lockedListener, error) {
 	if !locked {
 		return nil, ErrRunning
 	}
+	//nolint:gosec // The socket path is caller-selected and unlinked only under its lock.
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.Join(fmt.Errorf("removing stale daemon socket: %w", err), lock.Unlock())
 	}

@@ -21,6 +21,7 @@ import (
 // shortDir returns a temp dir under /tmp, which keeps socket paths under the macOS limit.
 func shortDir(t *testing.T) string {
 	t.Helper()
+	//nolint:usetesting // The short /tmp path stays within the macOS socket path limit.
 	dir, err := os.MkdirTemp("/tmp", "tessd")
 	assert.NilError(t, err)
 	t.Cleanup(func() {
@@ -33,7 +34,8 @@ func shortDir(t *testing.T) string {
 
 func staleSocket(t *testing.T, path string) {
 	t.Helper()
-	ln, err := net.Listen("unix", path)
+	var config net.ListenConfig
+	ln, err := config.Listen(t.Context(), "unix", path)
 	assert.NilError(t, err)
 	unix, ok := ln.(*net.UnixListener)
 	assert.Assert(t, ok)
@@ -65,7 +67,8 @@ func TestListen(t *testing.T) {
 		assert.Assert(t, errors.Is(errs[loser], ErrRunning), "loser error %v", errs[loser])
 		assert.Assert(t, lns[loser] == nil)
 
-		conn, err := net.Dial("unix", path)
+		dialer := net.Dialer{}
+		conn, err := dialer.DialContext(t.Context(), "unix", path)
 		assert.NilError(t, err)
 		assert.NilError(t, conn.Close())
 		assert.NilError(t, lns[winner].Close())
@@ -88,7 +91,8 @@ func TestListen(t *testing.T) {
 			return nil
 		})
 		<-woke
-		conn, err := net.Dial("unix", path)
+		dialer := net.Dialer{}
+		conn, err := dialer.DialContext(t.Context(), "unix", path)
 		assert.NilError(t, err)
 		_, err = io.WriteString(conn, "wake\n")
 		assert.NilError(t, err)
@@ -107,7 +111,7 @@ func TestListen(t *testing.T) {
 
 	t.Run("a kill -9'd holder's lock frees, and the next Listen binds", func(t *testing.T) {
 		path := filepath.Join(shortDir(t), "d.sock")
-		cmd := exec.Command(os.Args[0], "-test.run=^TestListenHelperProcess$")
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestListenHelperProcess$")
 		cmd.Env = append(os.Environ(), "TESSERA_LISTEN_HELPER=1", "TESSERA_LISTEN_PATH="+path)
 		_, err := cmd.StdinPipe()
 		assert.NilError(t, err)
@@ -129,7 +133,8 @@ func TestListen(t *testing.T) {
 
 		ln, err := Listen(t.Context(), path)
 		assert.NilError(t, err)
-		conn, err := net.Dial("unix", path)
+		dialer := net.Dialer{}
+		conn, err := dialer.DialContext(t.Context(), "unix", path)
 		assert.NilError(t, err)
 		assert.NilError(t, conn.Close())
 		assert.NilError(t, ln.Close())

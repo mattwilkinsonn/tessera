@@ -4,6 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    go-overlay = {
+      url = "github:purpleclay/go-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -11,6 +15,7 @@
       self,
       nixpkgs,
       flake-utils,
+      go-overlay,
     }:
     let
       overlay = final: prev: {
@@ -69,18 +74,19 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
+        goToolchain = go-overlay.packages.${system}.go_1_27_2;
         version = pkgs.lib.fileContents ./VERSION;
         yabaiStub = pkgs.writeShellScript "tessera-yabai-stub" ''
           printf '[]\n'
         '';
-        tess = pkgs.buildGoModule.override { go = pkgs.go_1_27; } {
+        tess = (pkgs.buildGoModule.override { go = goToolchain; }) {
           pname = "tess";
           inherit version;
           src = ./.;
           vendorHash = "sha256-acNjymY5I170LrcrshhRk740oZ1LCwFv4lEjKO6qiQk=";
           env.CGO_ENABLED = "0";
           ldflags = [ "-X main.version=${version}" ];
-          go = pkgs.go_1_27;
+          go = goToolchain;
           allowGoReference = false;
           doCheck = false;
           doInstallCheck = true;

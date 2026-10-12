@@ -1,6 +1,7 @@
 module github.com/mattwilkinsonn/tessera
 
 go 1.27
+toolchain go1.27.2
 
 require (
 	github.com/gofrs/flock v0.13.1

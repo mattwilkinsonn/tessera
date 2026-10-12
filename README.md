@@ -94,16 +94,24 @@ A missing well-known JSON file falls back to the embedded default. A present but
 The CLI and engine are written in Go. The schema package uses TypeScript and Bun; `tsc` and Bun run its checks.
 
 ```sh
+direnv exec . gofmt -l .
 direnv exec . go vet ./...
-direnv exec . golangci-lint run ./...
+direnv exec . go mod tidy -diff
+direnv exec . golangci-lint run --config .golangci.yml ./...
+direnv exec . nilaway -include-pkgs=github.com/mattwilkinsonn/tessera -test=false ./...
+direnv exec . go build ./...
 direnv exec . go test -race ./...
+direnv exec . go test -race -count=20 ./internal/daemon/... ./internal/effects/...
+direnv exec . govulncheck ./...
+direnv exec . go-licenses check ./... --allowed_licenses=Apache-2.0,Apache-2.0-WITH-LLVM-exception,MIT,BSD-3-Clause,BSD-2-Clause,ISC,Unicode-3.0,Zlib,MPL-2.0,CC0-1.0 --ignore github.com/mattwilkinsonn/tessera
+direnv exec . actionlint
 
 cd schema
 bunx tsc --noEmit
 bun test
 ```
 
-`devenv.nix` provides Go 1.27, `golangci-lint`, Bun, and the documentation and workflow linters. With [direnv](https://direnv.net/) installed, `direnv allow` loads the shell on `cd`. CI runs the Go checks and Nix build in `.github/workflows/ci.yml`; `.github/workflows/schema.yml` checks the schema package.
+`devenv.nix` provides Go 1.27.2 from go-overlay, plus the pinned Go analysis tools built with that toolchain, Bun, and the documentation and workflow linters. With [direnv](https://direnv.net/) installed, `direnv allow` loads the shell on `cd`. CI builds its Go analysis tools with the same Go version and runs these checks plus the Nix build in `.github/workflows/ci.yml`; `.github/workflows/schema.yml` checks the schema package.
 
 ## License
 
