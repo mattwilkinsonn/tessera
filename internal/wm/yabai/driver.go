@@ -298,8 +298,8 @@ func (d *Driver) ResizeWindow(ctx context.Context, edge wm.ResizeEdge, dx, dy in
 	return exitCode == 0, err
 }
 
-// SpawnWindow runs the launcher and waits up to spawnWait for it. A launcher still running then is left
-// alive and reaped in the background; only caller cancellation during the wait kills it.
+// SpawnWindow runs the launcher and waits up to spawnWait. A launcher still running then is left
+// alive and reaped in the background; caller cancellation kills it only during the wait.
 func (d *Driver) SpawnWindow(ctx context.Context, argv []string) error {
 	if len(argv) == 0 {
 		return errors.New("spawning window: empty argv")
@@ -309,8 +309,8 @@ func (d *Driver) SpawnWindow(ctx context.Context, argv []string) error {
 	if err != nil {
 		return fmt.Errorf("creating spawn stderr file: %w", err)
 	}
-	//nolint:gosec // The profile's spawn argv is the intended launcher interface.
-	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	//nolint:noctx,gosec // Explicit launcher argv may outlive the caller's wait.
+	command := exec.Command(argv[0], argv[1:]...)
 	command.Stderr = stderr
 	if err := command.Start(); err != nil {
 		return errors.Join(fmt.Errorf("spawning window %s: %w", argv[0], err), discardSpawnStderr(stderr))

@@ -254,6 +254,7 @@ func commandFor(ctx context.Context, binary string, args []string, home, shim, m
 
 func probe(ctx context.Context, binary string, args []string, home, shim, marker string) error {
 	command := commandFor(ctx, binary, args, home, shim, marker)
+	command.Dir = filepath.Dir(marker)
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
 	return command.Run()

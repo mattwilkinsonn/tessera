@@ -105,6 +105,30 @@ func TestRunRejectsBinaryThatDoesNotInvokeTESSYABAI(t *testing.T) {
 	}
 }
 
+func TestProbeRunsFromMarkerDirectory(t *testing.T) {
+	dir := t.TempDir()
+	wantDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "marker")
+	path := filepath.Join(dir, "probe")
+	body := "#!/bin/sh\nprintf '%s' \"$PWD\" > \"$TESS_BENCH_MARKER\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := probe(t.Context(), path, nil, dir, "/bin/false", marker); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != wantDir {
+		t.Fatalf("probe working directory = %q; want %q", got, wantDir)
+	}
+}
+
 func writeBinary(t *testing.T, root, name string) string {
 	t.Helper()
 	path := filepath.Join(root, name)

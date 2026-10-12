@@ -402,7 +402,9 @@ func TestSIGTERMDuringStubBlockedApplyExits130AndLeavesLockFree(t *testing.T) {
 			t.Errorf("killing tess after SIGTERM failure: %v", killErr)
 		}
 		if waitErr := command.Wait(); waitErr != nil {
-			t.Errorf("waiting for tess after SIGTERM failure: %v", waitErr)
+			if _, ok := errors.AsType[*exec.ExitError](waitErr); !ok {
+				t.Errorf("waiting for tess after SIGTERM failure: %v", waitErr)
+			}
 		}
 		t.Fatal(err)
 	}

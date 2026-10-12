@@ -114,6 +114,7 @@ linters:
 
     revive:
       rules:
+        # Existing package docs are scoped; package comments should describe declarations.
         - name: package-comments
           disabled: true
 
@@ -121,6 +122,7 @@ linters:
     generated: strict
     warn-unused: true
     rules:
+      # Tests assert behavior directly; these checks target production-code patterns.
       - path: _test\.go
         linters:
           - errcheck
@@ -133,6 +135,10 @@ linters:
           - predeclared
           - depguard
 
+      # Staticcheck quickfix hints are advisory; retain its correctness checks.
+      - path: _test\.go
+        linters: [staticcheck]
+        text: "QF[0-9]"
 formatters:
   enable:
     - gofmt
