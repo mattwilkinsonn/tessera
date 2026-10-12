@@ -122,7 +122,7 @@ restart. `WindowManager::apply_state` (`komorebi/src/window_manager.rs`):
 - replaces each workspace with the sent copy
   (`*workspace = state_workspace.clone()`), so a window that komorebi
   starts to manage after tess's query leaves the ring *[INFERENCE: whether
-  a later `Show` manages it again is unverified; W4 check 2]*;
+  a later `Show` manages it again is unverified; W4 check 2b]*;
 - focuses the sent focused workspace, then hides and restores every
   workspace on every monitor (`Monitor::load_focused_workspace`);
 - writes no reply.

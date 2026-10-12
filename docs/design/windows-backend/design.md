@@ -31,7 +31,8 @@ changes the plan if the answer differs.
 
    **Recommendation: (a), with a commercial licence for work use.**
    **Decision needed:** confirm komorebi, and confirm the licence covers
-   your use. If W4 check 5 fails, reopen this with (b).
+   your use. Reopen this with (b) only if W4 check 5 fails and one of
+   checks 1–4 fails too (W4 outcomes table).
 
 2. **Changing a window or workspace that has no focus** (depends on 1).
    *Load-bearing.* komorebi commands act on the focused window or take a
@@ -55,9 +56,9 @@ changes the plan if the answer differs.
    phases, and in `teardownSpaces`. A check query ends every mutation, so
    a dropped message is an error, not a loop. The cost: focus moves
    visibly, and keys typed during a daemon converge can land in the wrong
-   window. If W4 check 5 fails, use (d) and reopen Open Question 1. If
-   check 2 fails, `DestroySpace` uses the retire pool, and reordering
-   needs its own engine record.
+   window. W4 picks any fallback (W4 outcomes table). If check 5 fails
+   and checks 1–4 pass, window moves also use (d). If check 2 fails, no
+   operation uses `ApplyState` (§ Guarded state).
 
 3. **`wm.RuleOps`** (depends on 1). *Not load-bearing: no task depends on
    it.* (a) Skip it in v1, and copy `auto:` rules into `komorebi.json` by
@@ -182,13 +183,21 @@ behind an unexported `foregrounder`, which tests replace.
 `MoveSpaceToIndex` query `State`, edit one workspace in an
 `encoding/json/v2` value tree, send `ApplyState`, and query again. Unknown
 members pass through unchanged. A missing change returns `ErrNotApplied`,
-and the converge stops. The retire pool, if W4 check 2 fails, renames the
-workspace to `tess-free-<n>`, which `Normalize` hides and `CreateSpace`
-reuses.
+and the converge stops. The lock serializes tess, not komorebi. A window
+that komorebi starts to manage between query and apply is absent from the
+sent state, and tess cannot see it to merge it in. If W4 check 2 fails,
+neither method uses `ApplyState`. `DestroySpace` renames the workspace to
+`tess-free-<n>`, which `Normalize` hides and `CreateSpace` reuses.
+`MoveSpaceToIndex` swaps the two labels with `WorkspaceName` and moves
+their windows by focus-then-act, and the converge re-applies each layout
+*[INFERENCE: W5 golden-tests it]*. If that swap fails W8, it returns
+`ErrUnsupported`, and the order phase needs its own engine record.
 
-**Feature probe.** komorebi reports no usable version. On first use the
-driver checks that every `State` member it uses exists, and names a
-missing one and the oldest tested release, v0.1.41 (2026-05-03).
+**Feature probe.** komorebi reports no usable version, so the probe checks
+shape, not version. On first use the driver checks that every `State`
+member it uses exists, and names a missing one. An older release with the
+same shape passes. The error cites v0.1.41 (2026-05-03) only as the
+oldest tested release.
 
 ### Push events
 
@@ -268,8 +277,9 @@ points the driver at the stub. Event tests use `net.Pipe` inside
 
 ## Global Constraints
 
-- **Toolchain.** `go 1.27` (1.27.2 in CI), Windows build 10.0.17063+ for
-  AF_UNIX, and komorebi v0.1.41+, enforced by the feature probe.
+- **Toolchain.** `go 1.27` (1.27.2 in CI), and Windows build 10.0.17063+
+  for AF_UNIX. komorebi has no version floor: the feature probe enforces
+  the `State` shape, and v0.1.41 is the oldest tested release.
 - **No cgo.** `CGO_ENABLED=0`; Win32 calls use `golang.org/x/sys/windows`
   or `NewLazySystemDLL`.
 - **Import rules**, added to `go-port/design.md` § Module layout: only
@@ -362,7 +372,7 @@ shape. Record the answers in `evidence.md` § Spike results.
 | 1 | `State` shape: `Ring<T>`, `Rect` as edges or size, physical pixels | sets `Normalize` and Open Question 5 |
 | 2 | guarded `ApplyState` removes and reorders one workspace, and keeps unknown members | yes |
 | 2a | a window closed between query and apply | no change; `ErrNotApplied` |
-| 2b | a window opened between query and apply | record whether it is dropped, and whether a later `Show` brings it back |
+| 2b | a window that komorebi starts to manage between query and apply | still managed after the apply with no user action; a dropped window fails check 2 |
 | 2c | an apply while a monitor connects or disconnects | `ErrNotApplied` |
 | 2d | where focus lands; how much the desktop flickers | record |
 | 2e | a message while paused, or while the lock is held over 1 s | dropped; the check query catches it |
@@ -377,10 +387,18 @@ Interfaces: `evidence.md` § Spike results, and the scrubbed fixtures
 `state-desk.json`, `state-laptop.json` and `notification-*.json` in
 `internal/wm/komorebi/testdata/`.
 
-Gate: every check has an observed answer. If check 5 fails, the
-window-focus methods move to guarded state, and Open Question 1 reopens.
-If check 2 fails, `DestroySpace` uses the retire pool, and
-`MoveSpaceToIndex` waits for its own engine record.
+**Outcomes.** `evidence.md` § Spike results names the row that applies:
+
+| W4 result | Plan |
+| --- | --- |
+| all pass | Open Question 2 (c) as written |
+| 2 fails, 5 passes | no `ApplyState`: retire pool and label swap (§ Guarded state) |
+| 1, 3 or 4 fails, 5 passes | adjust that operation in W5; the path is unchanged |
+| 5 fails, 1–4 pass | Open Question 2 (d): the window-focus methods move to guarded state |
+| 5 fails, and one of 1–4 fails | reopen Open Question 1 with (b) |
+
+Gate: every check has an observed answer. Check 2 passes, or the driver
+uses the "2 fails" row. A recorded window loss never passes check 2.
 
 ### W5 — `internal/wm/komorebi`
 
@@ -421,7 +439,8 @@ Gate:
   once.
 - Under `-race`, concurrent mutating calls never interleave messages.
 - An unknown `State` member survives a guarded edit byte for byte.
-- A missing required member gives an error that names it.
+- A fixture with a required member removed gives an error that names it.
+  A full-shape fixture passes whatever release it came from.
 
 ### W6 — `wm.EventStream` and the daemon
 
@@ -461,7 +480,7 @@ Interfaces:
   `os.Stderr`. `main.go` calls it before `daemon.Run`, points `slog` at
   it, and joins its `Close` error into the exit error.
 - `docs/windows/tess-daemon.xml` (§ Supervision).
-- A README section for Windows: komorebi v0.1.41 or later and
+- A README section for Windows: komorebi (v0.1.41 is the oldest tested) and
   `komorebic enable-autostart`; the profile path
   (`%USERPROFILE%\.config\tessera\profile.json` or `$TESSERA_PROFILE`);
   exe-stem `app` patterns and Windows `spawn` argv; registering the task;
