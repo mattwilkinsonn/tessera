@@ -4,14 +4,15 @@
   "type": "module",
   "description": "Typed profile schema for Tessera window-manager layouts",
   "license": "MIT",
-  "types": "./profile.ts",
+  "types": "./schema/profile.ts",
   "exports": {
     ".": {
-      "types": "./profile.ts",
-      "import": "./profile.ts",
-      "default": "./profile.ts"
+      "types": "./schema/profile.ts",
+      "import": "./schema/profile.ts",
+      "default": "./schema/profile.ts"
     }
   },
+  "files": ["schema/profile.ts"],
   "peerDependencies": {
     "zod": "^4.0.0"
   },
@@ -22,6 +23,6 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test schema"
   }
 }
