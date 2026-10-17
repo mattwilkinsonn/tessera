@@ -200,6 +200,21 @@ func TestBootstrapLabels(t *testing.T) {
 		})
 	})
 
+	t.Run("both labels loaded reports the conflict and kickstarts only the current one", func(t *testing.T) {
+		candidates := candidatesFor(t.TempDir())
+		current, legacy := candidates[0], candidates[1]
+		lc := &fakeLaunchctl{}
+
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{candidates})
+		assert.ErrorContains(t, err, "several labels loaded")
+		assert.Equal(t, len(owned), 0)
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/" + current.Label,
+			"print gui/501/" + legacy.Label,
+			"kickstart gui/501/" + current.Label,
+		})
+	})
+
 	t.Run("both plists installed and nothing loaded bootstraps the current label", func(t *testing.T) {
 		home := t.TempDir()
 		candidates := candidatesFor(home)

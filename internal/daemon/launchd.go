@@ -100,19 +100,20 @@ func Bootstrap(ctx context.Context, lc Launchctl, uid int, tools []Candidates) (
 	var owned Owned
 	var errs []error
 	for _, candidates := range tools {
-		loaded := false
+		var loaded []string
 		for _, svc := range candidates {
-			target := domain + "/" + svc.Label
-			if err := lc.Run(ctx, "print", target); err != nil {
-				continue
+			if err := lc.Run(ctx, "print", domain+"/"+svc.Label); err == nil {
+				loaded = append(loaded, svc.Label)
 			}
-			loaded = true
-			if err := lc.Run(ctx, "kickstart", target); err != nil {
-				errs = append(errs, oops.With("label", svc.Label).Wrapf(err, "kickstarting service"))
-			}
-			break
 		}
-		if loaded {
+		if len(loaded) > 1 {
+			// Two loaded labels run one tool twice; the user must boot out the stale one.
+			errs = append(errs, oops.With("labels", loaded).Errorf("several labels loaded for one service"))
+		}
+		if len(loaded) > 0 {
+			if err := lc.Run(ctx, "kickstart", domain+"/"+loaded[0]); err != nil {
+				errs = append(errs, oops.With("label", loaded[0]).Wrapf(err, "kickstarting service"))
+			}
 			continue
 		}
 		svc, ok := candidates.installed()
