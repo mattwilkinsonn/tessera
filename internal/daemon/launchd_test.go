@@ -56,8 +56,30 @@ var (
 )
 
 func TestBootstrap(t *testing.T) {
-	t.Run("default services use the upstream labels and plists", func(t *testing.T) {
+	t.Run("with no plist installed, default services use the current upstream labels", func(t *testing.T) {
 		assert.DeepEqual(t, DefaultServices("/home/u"), []Service{yabai, skhd})
+	})
+
+	t.Run("an installed pre-rename plist selects its label", func(t *testing.T) {
+		home := t.TempDir()
+		dir := filepath.Join(home, "Library", "LaunchAgents")
+		assert.NilError(t, os.MkdirAll(dir, 0o750))
+		legacy := filepath.Join(dir, "com.koekeishiya.skhd.plist")
+		assert.NilError(t, os.WriteFile(legacy, nil, 0o600))
+		assert.DeepEqual(t, DefaultServices(home), []Service{
+			{Label: "com.asmvik.yabai", Plist: filepath.Join(dir, "com.asmvik.yabai.plist")},
+			{Label: "com.koekeishiya.skhd", Plist: legacy},
+		})
+	})
+
+	t.Run("the current upstream plist wins when both are installed", func(t *testing.T) {
+		home := t.TempDir()
+		dir := filepath.Join(home, "Library", "LaunchAgents")
+		assert.NilError(t, os.MkdirAll(dir, 0o750))
+		for _, name := range []string{"com.asmvik.skhd.plist", "com.koekeishiya.skhd.plist"} {
+			assert.NilError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
+		}
+		assert.Equal(t, DefaultServices(home)[1].Label, "com.asmvik.skhd")
 	})
 
 	t.Run("enable runs before bootstrap and a bootstrapped service is owned", func(t *testing.T) {

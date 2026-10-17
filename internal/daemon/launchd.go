@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec" //nolint:depguard // launchctl is the required subprocess interface.
 	"path/filepath"
 	"slices"
@@ -59,14 +60,26 @@ type Service struct {
 // Owned lists the services this daemon bootstrapped, in bootstrap order.
 type Owned []Service
 
-// DefaultServices returns yabai and skhd under their upstream labels.
+// DefaultServices returns yabai and skhd under the label whose plist is installed in ~/Library/LaunchAgents.
+// Upstream renamed both labels to com.asmvik.*; releases before the rename still write com.koekeishiya.*.
 func DefaultServices(home string) []Service {
-	labels := []string{"com.asmvik.yabai", "com.asmvik.skhd"}
-	services := make([]Service, 0, len(labels))
-	for _, label := range labels {
-		services = append(services, Service{Label: label, Plist: filepath.Join(home, "Library", "LaunchAgents", label+".plist")})
+	dir := filepath.Join(home, "Library", "LaunchAgents")
+	services := make([]Service, 0, 2)
+	for _, name := range []string{"yabai", "skhd"} {
+		services = append(services, installedService(dir, "com.asmvik."+name, "com.koekeishiya."+name))
 	}
 	return services
+}
+
+// installedService returns the first label whose plist exists, else the current upstream label.
+func installedService(dir string, labels ...string) Service {
+	for _, label := range labels {
+		plist := filepath.Join(dir, label+".plist")
+		if _, err := os.Stat(plist); err == nil {
+			return Service{Label: label, Plist: plist}
+		}
+	}
+	return Service{Label: labels[0], Plist: filepath.Join(dir, labels[0]+".plist")}
 }
 
 // Bootstrap follows upstream service_start for each service and returns the ones it loaded.
