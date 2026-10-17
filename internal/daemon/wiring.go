@@ -111,7 +111,7 @@ type Options struct {
 	Bootstrap bool
 	Launchctl Launchctl
 	UID       int
-	Services  []Service
+	Services  []Candidates
 	Display   Work
 	Flex      Work
 	Wake      func(context.Context) error
