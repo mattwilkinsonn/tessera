@@ -60,42 +60,66 @@ type Service struct {
 // Owned lists the services this daemon bootstrapped, in bootstrap order.
 type Owned []Service
 
-// DefaultServices returns yabai and skhd under the label whose plist is installed in ~/Library/LaunchAgents.
-// Upstream renamed both labels to com.asmvik.*; releases before the rename still write com.koekeishiya.*.
-func DefaultServices(home string) []Service {
+// Candidates lists one tool's launchd labels, current upstream name first.
+type Candidates []Service
+
+// DefaultServices returns yabai and skhd, each under its current and pre-rename labels.
+// Upstream renamed both to com.asmvik.*; releases before the rename still install com.koekeishiya.*.
+func DefaultServices(home string) []Candidates {
 	dir := filepath.Join(home, "Library", "LaunchAgents")
-	services := make([]Service, 0, 2)
-	for _, name := range []string{"yabai", "skhd"} {
-		services = append(services, installedService(dir, "com.asmvik."+name, "com.koekeishiya."+name))
+	tools := []string{"yabai", "skhd"}
+	services := make([]Candidates, 0, len(tools))
+	for _, name := range tools {
+		var candidates Candidates
+		for _, label := range []string{"com.asmvik." + name, "com.koekeishiya." + name} {
+			candidates = append(candidates, Service{Label: label, Plist: filepath.Join(dir, label+".plist")})
+		}
+		services = append(services, candidates)
 	}
 	return services
 }
 
-// installedService returns the first label whose plist exists, else the current upstream label.
-func installedService(dir string, labels ...string) Service {
-	for _, label := range labels {
-		plist := filepath.Join(dir, label+".plist")
-		if _, err := os.Stat(plist); err == nil {
-			return Service{Label: label, Plist: plist}
+// installed returns the first candidate whose plist exists, else the current upstream label.
+func (c Candidates) installed() (Service, bool) {
+	for _, svc := range c {
+		if _, err := os.Stat(svc.Plist); err == nil {
+			return svc, true
 		}
 	}
-	return Service{Label: labels[0], Plist: filepath.Join(dir, labels[0]+".plist")}
+	if len(c) == 0 {
+		return Service{}, false
+	}
+	return c[0], true
 }
 
-// Bootstrap follows upstream service_start for each service and returns the ones it loaded.
+// Bootstrap follows upstream service_start for each tool and returns the services it loaded.
+// A loaded candidate is kickstarted; otherwise the installed plist is bootstrapped.
 // A failed bootstrap leaves the service not owned; the joined failures are returned beside Owned.
-func Bootstrap(ctx context.Context, lc Launchctl, uid int, svcs []Service) (Owned, error) {
+func Bootstrap(ctx context.Context, lc Launchctl, uid int, tools []Candidates) (Owned, error) {
 	domain := "gui/" + strconv.Itoa(uid)
 	var owned Owned
 	var errs []error
-	for _, svc := range svcs {
-		target := domain + "/" + svc.Label
-		if err := lc.Run(ctx, "print", target); err == nil {
+	for _, candidates := range tools {
+		loaded := false
+		for _, svc := range candidates {
+			target := domain + "/" + svc.Label
+			if err := lc.Run(ctx, "print", target); err != nil {
+				continue
+			}
+			loaded = true
 			if err := lc.Run(ctx, "kickstart", target); err != nil {
 				errs = append(errs, oops.With("label", svc.Label).Wrapf(err, "kickstarting service"))
 			}
+			break
+		}
+		if loaded {
 			continue
 		}
+		svc, ok := candidates.installed()
+		if !ok {
+			continue
+		}
+		target := domain + "/" + svc.Label
 		if err := lc.Run(ctx, "enable", target); err != nil {
 			slog.WarnContext(ctx, "enabling service failed", "label", svc.Label, "error", err)
 		}

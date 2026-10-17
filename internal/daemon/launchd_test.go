@@ -56,35 +56,19 @@ var (
 )
 
 func TestBootstrap(t *testing.T) {
-	t.Run("with no plist installed, default services use the current upstream labels", func(t *testing.T) {
-		assert.DeepEqual(t, DefaultServices("/home/u"), []Service{yabai, skhd})
-	})
-
-	t.Run("an installed pre-rename plist selects its label", func(t *testing.T) {
-		home := t.TempDir()
-		dir := filepath.Join(home, "Library", "LaunchAgents")
-		assert.NilError(t, os.MkdirAll(dir, 0o750))
-		legacy := filepath.Join(dir, "com.koekeishiya.skhd.plist")
-		assert.NilError(t, os.WriteFile(legacy, nil, 0o600))
-		assert.DeepEqual(t, DefaultServices(home), []Service{
-			{Label: "com.asmvik.yabai", Plist: filepath.Join(dir, "com.asmvik.yabai.plist")},
-			{Label: "com.koekeishiya.skhd", Plist: legacy},
+	t.Run("default services return current and legacy labels under LaunchAgents", func(t *testing.T) {
+		dir := filepath.Join("/home/u", "Library", "LaunchAgents")
+		yabaiLegacy := Service{Label: "com.koekeishiya.yabai", Plist: filepath.Join(dir, "com.koekeishiya.yabai.plist")}
+		skhdLegacy := Service{Label: "com.koekeishiya.skhd", Plist: filepath.Join(dir, "com.koekeishiya.skhd.plist")}
+		assert.DeepEqual(t, DefaultServices("/home/u"), []Candidates{
+			{yabai, yabaiLegacy},
+			{skhd, skhdLegacy},
 		})
-	})
-
-	t.Run("the current upstream plist wins when both are installed", func(t *testing.T) {
-		home := t.TempDir()
-		dir := filepath.Join(home, "Library", "LaunchAgents")
-		assert.NilError(t, os.MkdirAll(dir, 0o750))
-		for _, name := range []string{"com.asmvik.skhd.plist", "com.koekeishiya.skhd.plist"} {
-			assert.NilError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
-		}
-		assert.Equal(t, DefaultServices(home)[1].Label, "com.asmvik.skhd")
 	})
 
 	t.Run("enable runs before bootstrap and a bootstrapped service is owned", func(t *testing.T) {
 		lc := &fakeLaunchctl{fail: map[string]bool{"print gui/501/com.asmvik.yabai": true}}
-		owned, err := Bootstrap(t.Context(), lc, 501, []Service{yabai})
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{{yabai}})
 		assert.NilError(t, err)
 		assert.DeepEqual(t, owned, Owned{yabai})
 		assert.DeepEqual(t, lc.recorded(), []string{
@@ -99,14 +83,19 @@ func TestBootstrap(t *testing.T) {
 			"print gui/501/com.asmvik.skhd":  true,
 			"enable gui/501/com.asmvik.skhd": true,
 		}}
-		owned, err := Bootstrap(t.Context(), lc, 501, []Service{skhd})
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{{skhd}})
 		assert.NilError(t, err)
 		assert.DeepEqual(t, owned, Owned{skhd})
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/com.asmvik.skhd",
+			"enable gui/501/com.asmvik.skhd",
+			"bootstrap gui/501 " + skhd.Plist,
+		})
 	})
 
 	t.Run("an already-loaded service is kickstarted, not owned, and never booted out", func(t *testing.T) {
 		lc := &fakeLaunchctl{}
-		owned, err := Bootstrap(t.Context(), lc, 501, []Service{yabai})
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{{yabai}})
 		assert.NilError(t, err)
 		assert.Equal(t, len(owned), 0)
 		assert.DeepEqual(t, lc.recorded(), []string{
@@ -124,19 +113,127 @@ func TestBootstrap(t *testing.T) {
 			"bootstrap gui/501 " + yabai.Plist: true,
 			"print gui/501/com.asmvik.skhd":    true,
 		}}
-		owned, err := Bootstrap(t.Context(), lc, 501, []Service{yabai, skhd})
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{{yabai}, {skhd}})
 		assert.ErrorContains(t, err, "bootstrapping service")
 		assert.DeepEqual(t, owned, Owned{skhd})
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/com.asmvik.yabai",
+			"enable gui/501/com.asmvik.yabai",
+			"bootstrap gui/501 " + yabai.Plist,
+			"print gui/501/com.asmvik.skhd",
+			"enable gui/501/com.asmvik.skhd",
+			"bootstrap gui/501 " + skhd.Plist,
+		})
+	})
+}
+
+func TestBootstrapLabels(t *testing.T) {
+	candidatesFor := func(home string) Candidates {
+		dir := filepath.Join(home, "Library", "LaunchAgents")
+		return Candidates{
+			{Label: "com.asmvik.skhd", Plist: filepath.Join(dir, "com.asmvik.skhd.plist")},
+			{Label: "com.koekeishiya.skhd", Plist: filepath.Join(dir, "com.koekeishiya.skhd.plist")},
+		}
+	}
+	writePlist := func(t *testing.T, service Service) {
+		t.Helper()
+		assert.NilError(t, os.MkdirAll(filepath.Dir(service.Plist), 0o750))
+		assert.NilError(t, os.WriteFile(service.Plist, nil, 0o600))
+	}
+
+	t.Run("nothing loaded and only the legacy plist installed bootstraps and owns it", func(t *testing.T) {
+		home := t.TempDir()
+		candidates := candidatesFor(home)
+		current, legacy := candidates[0], candidates[1]
+		writePlist(t, legacy)
+		lc := &fakeLaunchctl{fail: map[string]bool{
+			"print gui/501/" + current.Label: true,
+			"print gui/501/" + legacy.Label:  true,
+		}}
+
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{candidates})
+		assert.NilError(t, err)
+		assert.DeepEqual(t, owned, Owned{legacy})
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/" + current.Label,
+			"print gui/501/" + legacy.Label,
+			"enable gui/501/" + legacy.Label,
+			"bootstrap gui/501 " + legacy.Plist,
+		})
 	})
 
+	t.Run("nothing loaded and no plist installed bootstraps the current label", func(t *testing.T) {
+		home := t.TempDir()
+		candidates := candidatesFor(home)
+		current, legacy := candidates[0], candidates[1]
+		lc := &fakeLaunchctl{fail: map[string]bool{
+			"print gui/501/" + current.Label: true,
+			"print gui/501/" + legacy.Label:  true,
+		}}
+
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{candidates})
+		assert.NilError(t, err)
+		assert.DeepEqual(t, owned, Owned{current})
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/" + current.Label,
+			"print gui/501/" + legacy.Label,
+			"enable gui/501/" + current.Label,
+			"bootstrap gui/501 " + current.Plist,
+		})
+	})
+
+	t.Run("both plists installed and the legacy service loaded kickstarts only it", func(t *testing.T) {
+		home := t.TempDir()
+		candidates := candidatesFor(home)
+		current, legacy := candidates[0], candidates[1]
+		writePlist(t, current)
+		writePlist(t, legacy)
+		lc := &fakeLaunchctl{fail: map[string]bool{"print gui/501/" + current.Label: true}}
+
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{candidates})
+		assert.NilError(t, err)
+		assert.Equal(t, len(owned), 0)
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/" + current.Label,
+			"print gui/501/" + legacy.Label,
+			"kickstart gui/501/" + legacy.Label,
+		})
+	})
+
+	t.Run("both plists installed and nothing loaded bootstraps the current label", func(t *testing.T) {
+		home := t.TempDir()
+		candidates := candidatesFor(home)
+		current, legacy := candidates[0], candidates[1]
+		writePlist(t, current)
+		writePlist(t, legacy)
+		lc := &fakeLaunchctl{fail: map[string]bool{
+			"print gui/501/" + current.Label: true,
+			"print gui/501/" + legacy.Label:  true,
+		}}
+
+		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{candidates})
+		assert.NilError(t, err)
+		assert.DeepEqual(t, owned, Owned{current})
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/" + current.Label,
+			"print gui/501/" + legacy.Label,
+			"enable gui/501/" + current.Label,
+			"bootstrap gui/501 " + current.Plist,
+		})
+	})
+}
+
+func TestBootout(t *testing.T) {
 	t.Run("bootout of a service that is no longer loaded succeeds", func(t *testing.T) {
 		lc := &fakeLaunchctl{gone: map[string]bool{"bootout gui/501/com.asmvik.yabai": true}}
 		assert.NilError(t, Bootout(t.Context(), lc, 501, Owned{yabai}))
+		assert.DeepEqual(t, lc.recorded(), []string{"bootout gui/501/com.asmvik.yabai"})
 	})
 
 	t.Run("any other bootout failure is returned", func(t *testing.T) {
 		lc := &fakeLaunchctl{fail: map[string]bool{"bootout gui/501/com.asmvik.yabai": true}}
 		assert.ErrorContains(t, Bootout(t.Context(), lc, 501, Owned{yabai}), "booting out service")
+		assert.DeepEqual(t, lc.recorded(), []string{"bootout gui/501/com.asmvik.yabai"})
 	})
 }
 
@@ -153,7 +250,7 @@ func TestRun(t *testing.T) {
 				Bootstrap: true,
 				Launchctl: lc,
 				UID:       501,
-				Services:  []Service{yabai, skhd},
+				Services:  []Candidates{{yabai}, {skhd}},
 				Display:   idle,
 				Flex:      idle,
 				Wake: func(context.Context) error {
@@ -195,7 +292,7 @@ func TestRun(t *testing.T) {
 				Bootstrap: true,
 				Launchctl: lc,
 				UID:       501,
-				Services:  []Service{skhd},
+				Services:  []Candidates{{skhd}},
 				Display:   idle,
 				Flex:      idle,
 				Wake: func(context.Context) error {
@@ -207,22 +304,12 @@ func TestRun(t *testing.T) {
 		<-woke
 		cancel()
 		assert.NilError(t, <-done)
-		assert.Equal(t, lc.recorded()[len(lc.recorded())-1], "bootout gui/501/com.asmvik.skhd")
-	})
-
-	t.Run("a second start loses the lock and runs no launchctl", func(t *testing.T) {
-		path := filepath.Join(shortDir(t), "d.sock")
-		held, err := Listen(t.Context(), path)
-		assert.NilError(t, err)
-		lc := &fakeLaunchctl{}
-		err = Run(t.Context(), Options{Socket: path, Bootstrap: true, Launchctl: lc, UID: 501, Services: []Service{yabai}})
-		assert.Assert(t, errors.Is(err, ErrRunning), "Run() = %v", err)
-		assert.Equal(t, len(lc.recorded()), 0)
-		dialer := net.Dialer{}
-		conn, dialErr := dialer.DialContext(t.Context(), "unix", path)
-		assert.NilError(t, dialErr)
-		assert.NilError(t, conn.Close())
-		assert.NilError(t, held.Close())
+		assert.DeepEqual(t, lc.recorded(), []string{
+			"print gui/501/com.asmvik.skhd",
+			"enable gui/501/com.asmvik.skhd",
+			"bootstrap gui/501 " + skhd.Plist,
+			"bootout gui/501/com.asmvik.skhd",
+		})
 	})
 
 	t.Run("--no-bootstrap runs no launchctl and nudges once after the display channel settles", func(t *testing.T) {
@@ -259,6 +346,29 @@ func TestRun(t *testing.T) {
 		cancel()
 		assert.NilError(t, <-done)
 		assert.Equal(t, len(lc.recorded()), 0)
+	})
+}
+
+func TestRunSecondStart(t *testing.T) {
+	t.Run("a second start loses the lock and runs no launchctl", func(t *testing.T) {
+		path := filepath.Join(shortDir(t), "d.sock")
+		held, err := Listen(t.Context(), path)
+		assert.NilError(t, err)
+		lc := &fakeLaunchctl{}
+		err = Run(t.Context(), Options{
+			Socket:    path,
+			Bootstrap: true,
+			Launchctl: lc,
+			UID:       501,
+			Services:  []Candidates{{yabai}},
+		})
+		assert.Assert(t, errors.Is(err, ErrRunning), "Run() = %v", err)
+		assert.Equal(t, len(lc.recorded()), 0)
+		dialer := net.Dialer{}
+		conn, dialErr := dialer.DialContext(t.Context(), "unix", path)
+		assert.NilError(t, dialErr)
+		assert.NilError(t, conn.Close())
+		assert.NilError(t, held.Close())
 	})
 }
 
