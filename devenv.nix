@@ -54,6 +54,6 @@ in
     echo "  direnv exec . govulncheck ./..."
     echo "  direnv exec . go-licenses check ./... --allowed_licenses=Apache-2.0,Apache-2.0-WITH-LLVM-exception,MIT,BSD-3-Clause,BSD-2-Clause,ISC,Unicode-3.0,Zlib,MPL-2.0,CC0-1.0 --ignore github.com/mattwilkinsonn/tessera"
     echo "  direnv exec . actionlint"
-    echo "  cd schema && bunx tsc --noEmit && bun test"
+    echo "  bunx tsc --noEmit && bun test schema"
   '';
 }

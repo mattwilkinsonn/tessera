@@ -83,7 +83,7 @@ The binary loads a JSON `Profile` at startup, resolved in this order:
 2. `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` — the well-known user profile path.
 3. The embedded default JSON profile — a neutral example used when neither of the above resolves.
 
-Install the [`tessera-wm`](schema/) package in your profile project. Import `Profile` and render `Profile.parse(profile)` to `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` during your build. `tess` reads JSON and does not run TypeScript. With your profile exported as `profile` from `profile.ts`, Bun renders it:
+Install the [`tessera-wm`](schema/) package in your profile project; until it is on npm, install it from git (`bun add github:mattwilkinsonn/tessera#<commit>`). Import `Profile` and render `Profile.parse(profile)` to `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` during your build. `tess` reads JSON and does not run TypeScript. With your profile exported as `profile` from `profile.ts`, Bun renders it:
 
 ```sh
 dir="${XDG_CONFIG_HOME:-$HOME/.config}/tessera" && mkdir -p "$dir" && TESSERA_OUT="$dir/profile.json" bun -e 'import { Profile } from "tessera-wm"; import { profile } from "./profile.ts"; await Bun.write(Bun.env.TESSERA_OUT, JSON.stringify(Profile.parse(profile), null, 2) + "\n")'
@@ -106,9 +106,8 @@ direnv exec . govulncheck ./...
 direnv exec . go-licenses check ./... --allowed_licenses=Apache-2.0,Apache-2.0-WITH-LLVM-exception,MIT,BSD-3-Clause,BSD-2-Clause,ISC,Unicode-3.0,Zlib,MPL-2.0,CC0-1.0 --ignore github.com/mattwilkinsonn/tessera
 direnv exec . actionlint
 
-cd schema
 bunx tsc --noEmit
-bun test
+bun test schema
 ```
 
 `devenv.nix` provides Go 1.27.2 from go-overlay, plus the pinned Go analysis tools built with that toolchain, Bun, and the documentation and workflow linters. With [direnv](https://direnv.net/) installed, `direnv allow` loads the shell on `cd`. CI builds its Go analysis tools with the same Go version and runs these checks plus the Nix build in `.github/workflows/ci.yml`; `.github/workflows/schema.yml` checks the schema package.
