@@ -1040,3 +1040,45 @@ On 2026-10-10 Matt ruled on the profile format:
    the Go structs and `Validate`. Patterns are strings that `Validate`
    compiles with `regexp`. Config languages and an embedded JS engine are
    rejected (§ Alternatives considered).
+
+## Errata
+
+### 2026-10-28: the profile is CUE, loaded in-process
+
+Matt reversed Resolved decision 7 on 2026-10-28: "we dont really need a
+test runner for tess". CUE's closed structs and constraints carry the type
+checks that the TS module and `bun test` gave. It supersedes every
+JSON, Zod and TS-render statement about the profile in this record: the
+summary, § Problem / Intent, § Module layout, § Profile format, § Build and
+the startup bar, § Migration, the config-language entry in § Alternatives
+considered, § Global Constraints, C2, C10, the C2 task line and Resolved
+decision 7. Where those sections say `profile.json`, `default.json` or
+Zod, read this section.
+
+- **Schema.** `internal/config/schema.cue` (`package tessera`) defines
+  `#Profile` with the same shape the Zod schema had: closed structs,
+  required fields, display-name enums, `#Pattern: string & regexp.Valid`,
+  and the `desk` union on `kind`. The schema checks shape only. Every
+  cross-field rule stays in Go `Validate`, as on `main` today, so each rule
+  has one copy. The draft at `e3304b45^` moved some of them into CUE; this
+  design does not.
+- **Loader.** `Parse` compiles the file with `cue.Scope(schema)`, so a file
+  with or without `package tessera` loads. It unifies it with `#Profile`,
+  validates it as concrete, decodes it into the same structs, then runs
+  `Validate`. Errors carry CUE positions from `errors.Details`.
+- **Lookup.** `$TESSERA_PROFILE`, then
+  `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.cue`, then the embedded
+  `default.cue`. If `profile.cue` is missing and a `profile.ts` or
+  `profile.json` is there, `Load` fails loudly. JSON is valid CUE, so a
+  JSON file named by `$TESSERA_PROFILE` still loads.
+- **Removed.** The Zod package (`schema/`, the root `package.json`,
+  `schema.yml`), `default.json` and the JSON fixture. The drift test decodes
+  `testdata/full.cue` instead.
+- **Nix.** The module's `profilePath` default becomes
+  `.../tessera/profile.cue`. The package installs
+  `share/tessera/schema.cue`, so `cue vet -c profile.cue <schema>` checks a
+  profile without running tess.
+- **Cost.** `cuelang.org/go` v0.17.1, the latest release, with no cgo. The
+  probes in [`profile-evidence.md`](profile-evidence.md) at commit
+  `e3304b45^` measured about 5.5 ms of added package init and an 8.79 ms
+  p50 full load.
