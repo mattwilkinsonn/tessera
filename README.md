@@ -1,6 +1,6 @@
 # tessera
 
-Write your tiling window manager layout in a typed TypeScript profile, rendered to JSON.
+Write your tiling window manager layout in a CUE profile, validated in-process by `tess`.
 
 Tessera is a config layer for [yabai](https://github.com/koekeishiya/yabai) on
 macOS. You describe your monitors, your windows, and the exact column layout you
@@ -64,8 +64,7 @@ help.
 
 The Go implementation splits into packages, each with a single responsibility:
 
-- `internal/config/` — profile types, validation, and the embedded JSON default.
-- `internal/engine/` — pure layout planning from the current window world and a profile.
+- `internal/config/` — profile types, CUE schema, validation, and the embedded CUE default.
 - `internal/executor/` — applies engine plans through the window-manager driver.
 - `internal/commands/` — composes the engine, executor, effects, and driver into each subcommand.
 - `internal/wm/` — the window-manager boundary and yabai driver.
@@ -77,21 +76,25 @@ The engine remains pure, so layout behavior can be tested without spawning yabai
 
 ## Configuration
 
-The binary loads a JSON `Profile` at startup, resolved in this order:
+The binary loads a CUE `Profile` at startup, resolved in this order:
 
-1. `$TESSERA_PROFILE` — an explicit path to a JSON profile (overrides everything below).
-2. `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` — the well-known user profile path.
-3. The embedded default JSON profile — a neutral example used when neither of the above resolves.
+1. `$TESSERA_PROFILE` — an explicit profile path (overrides everything below). CUE files and JSON are accepted.
+2. `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.cue` — the well-known user profile path.
+3. The embedded `default.cue` profile.
 
-Install the [`tessera-wm`](schema/) package in your profile project; until it is on npm, install it from git (`bun add github:mattwilkinsonn/tessera#<commit>`). Import `Profile` and render `Profile.parse(profile)` to `${XDG_CONFIG_HOME:-~/.config}/tessera/profile.json` during your build. `tess` reads JSON and does not run TypeScript. With your profile exported as `profile` from `profile.ts`, Bun renders it:
+A missing well-known `profile.cue` falls back to the embedded default. A present but broken profile is an error. If `profile.cue` is absent while a legacy `profile.ts` or `profile.json` exists, `tess` reports that file and directs you to use `profile.cue`. A `.ts` path in `TESSERA_PROFILE` is also rejected.
+
+The schema is installed at `share/tessera/schema.cue` alongside the `tess` binary. Validate a profile against the schema with CUE's CLI:
 
 ```sh
-dir="${XDG_CONFIG_HOME:-$HOME/.config}/tessera" && mkdir -p "$dir" && TESSERA_OUT="$dir/profile.json" bun -e 'import { Profile } from "tessera-wm"; import { profile } from "./profile.ts"; await Bun.write(Bun.env.TESSERA_OUT, JSON.stringify(Profile.parse(profile), null, 2) + "\n")'
+schema="$(dirname "$(dirname "$(command -v tess)")")/share/tessera/schema.cue"
+cue export "${XDG_CONFIG_HOME:-$HOME/.config}/tessera/profile.cue" --out json |
+  cue vet -c -d '#Profile' "$schema" json: -
 ```
 
-A missing well-known JSON file falls back to the embedded default. A present but broken JSON profile surfaces its error. A legacy `profile.ts` at the well-known location, or a `.ts` path in `TESSERA_PROFILE`, fails with an instruction to render the profile to JSON.
+When `TESSERA_PROFILE` and the well-known profile are absent, `tess` loads its embedded `default.cue` profile.
 
-The CLI and engine are written in Go. The schema package uses TypeScript and Bun; `tsc` and Bun run its checks.
+The CLI and engine are written in Go. The profile schema uses CUE and is also embedded in the binary.
 
 ```sh
 direnv exec . gofmt -l .
@@ -101,16 +104,14 @@ direnv exec . golangci-lint run --config .golangci.yml ./...
 direnv exec . nilaway -include-pkgs=github.com/mattwilkinsonn/tessera -test=false ./...
 direnv exec . go build ./...
 direnv exec . go test -race ./...
-direnv exec . go test -race -count=20 ./internal/daemon/... ./internal/effects/...
 direnv exec . govulncheck ./...
-direnv exec . go-licenses check ./... --allowed_licenses=Apache-2.0,Apache-2.0-WITH-LLVM-exception,MIT,BSD-3-Clause,BSD-2-Clause,ISC,Unicode-3.0,Zlib,MPL-2.0,CC0-1.0 --ignore github.com/mattwilkinsonn/tessera
-direnv exec . actionlint
-
-bunx tsc --noEmit
-bun test schema
+direnv exec . sh -c "cue export internal/config/default.cue --out json | cue vet -c -d '#Profile' internal/config/schema.cue json: -"
+direnv exec . actionlint .github/workflows/*.yml
+nix build .#default
+nix flake check
 ```
 
-`devenv.nix` provides Go 1.27.2 from go-overlay, plus the pinned Go analysis tools built with that toolchain, Bun, and the documentation and workflow linters. With [direnv](https://direnv.net/) installed, `direnv allow` loads the shell on `cd`. CI builds its Go analysis tools with the same Go version and runs these checks plus the Nix build in `.github/workflows/ci.yml`; `.github/workflows/schema.yml` checks the schema package.
+`devenv.nix` provides Go 1.27.3 from go-overlay, the CUE CLI, pinned Go analysis tools built with that toolchain, and documentation/workflow linters. With [direnv](https://direnv.net/) installed, `direnv allow` loads the shell on `cd`. CI builds its Go analysis tools with the same Go version and runs the checks plus the Nix build in `.github/workflows/ci.yml`.
 
 ## License
 

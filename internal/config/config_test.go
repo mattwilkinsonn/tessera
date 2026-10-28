@@ -2,7 +2,6 @@ package config_test
 
 import (
 	"context"
-	"encoding/json/v2"
 	"math"
 	"os"
 	"path/filepath"
@@ -16,13 +15,16 @@ import (
 	"gotest.tools/v3/assert"
 )
 
+const validJSONProfile = `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`
+
 func TestParse(t *testing.T) {
+	validJSON := validJSONProfile
 	tests := []struct {
 		name  string
 		src   string
 		valid bool
 	}{
-		{name: "default profile", src: mustRead(t, "default.json"), valid: true},
+		{name: "default profile", src: mustRead(t, "default.cue"), valid: true},
 		{name: "unknown profile key", src: `{"extra":true}`},
 		{name: "unknown nested key", src: `{"displays":{"g9":{"width":1,"extra":true}}}`},
 		{name: "no width", src: `{"displays":{"g9":{},"aw":{"width":1},"laptop":{"width":1}},"windows":{},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`},
@@ -36,16 +38,17 @@ func TestParse(t *testing.T) {
 		{name: "missing slots", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"laptopPinned":[],"laptopStackApps":[]}`},
 		{name: "missing pinned", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopStackApps":[]}`},
 		{name: "missing stack app list", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[]}`},
-		{name: "empty required collections", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`, valid: true},
-		{name: "invalid RE2 lookbehind", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"(?<=x)y"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`},
-		{name: "unknown track name", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["missing"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`},
-		{name: "stack with two tracks", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"],["app"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`},
-		{name: "invalid display enum", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"external","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`},
-		{name: "invalid layout kind", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"grid","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`},
+		{name: "empty required collections", src: validJSON, valid: true},
+		{name: "invalid regular expression", src: strings.Replace(validJSON, `"App"`, `"(?<=x)y"`, 1)},
+		{name: "unknown track name", src: strings.Replace(validJSON, `"app"]`, `"missing"]`, 1)},
+		{name: "stack with two tracks", src: strings.Replace(validJSON, `[["app"]]`, `[["app"],["app"]]`, 1)},
+		{name: "stack with weights", src: strings.Replace(validJSON, `"tracks":[["app"]]`, `"tracks":[["app"]],"weights":[1]`, 1)},
+		{name: "invalid display enum", src: strings.Replace(validJSON, `"display":"g9"`, `"display":"external"`, 1)},
+		{name: "invalid layout kind", src: strings.Replace(validJSON, `"kind":"stack"`, `"kind":"grid"`, 1)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := config.Parse("test.json", []byte(test.src))
+			_, err := config.Parse("test.cue", []byte(test.src))
 			if test.valid {
 				assert.NilError(t, err)
 			} else if err == nil {
@@ -53,6 +56,17 @@ func TestParse(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("unknown field error includes a CUE position", func(t *testing.T) {
+		_, err := config.Parse("unknown.cue", []byte(`displays: {g9: {width: 1, extra: true}}`))
+		assert.Assert(t, err != nil)
+		assert.Assert(t, strings.Contains(err.Error(), "unknown.cue:"), err)
+	})
+
+	t.Run("missing required field is rejected", func(t *testing.T) {
+		_, err := config.Parse("missing.cue", []byte(`displays: {g9: {width: 1}, aw: {width: 1}}`))
+		assert.Assert(t, err != nil)
+	})
 }
 
 func TestValidate(t *testing.T) {
@@ -225,8 +239,8 @@ func TestProfileFixture(t *testing.T) {
 }
 
 func TestParseFullProfileDrift(t *testing.T) {
-	data := mustRead(t, "testdata/full.json")
-	got, err := config.Parse("testdata/full.json", []byte(data))
+	data := mustRead(t, "testdata/full.cue")
+	got, err := config.Parse("testdata/full.cue", []byte(data))
 	assert.NilError(t, err)
 	want := configtest.Full()
 	assert.DeepEqual(t, got, want, cmp.Options{
@@ -239,8 +253,8 @@ func TestParseFullProfileDrift(t *testing.T) {
 
 func TestLoad(t *testing.T) {
 	t.Run("explicit profile override", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "override.json")
-		data := mustRead(t, "default.json")
+		path := filepath.Join(t.TempDir(), "override.cue")
+		data := mustRead(t, "default.cue")
 		assert.NilError(t, os.WriteFile(path, []byte(data), 0o600))
 		profile, err := config.Load(context.Background(), func(key string) string {
 			if key == "TESSERA_PROFILE" {
@@ -258,12 +272,12 @@ func TestLoad(t *testing.T) {
 		assert.Equal(t, profile.Displays.Laptop.Width, 1512)
 	})
 
-	t.Run("well-known JSON profile wins", func(t *testing.T) {
+	t.Run("well-known CUE profile wins", func(t *testing.T) {
 		home := t.TempDir()
 		configHome := filepath.Join(home, "config")
-		path := filepath.Join(configHome, "tessera", "profile.json")
+		path := filepath.Join(configHome, "tessera", "profile.cue")
 		assert.NilError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-		data := mustRead(t, "default.json")
+		data := mustRead(t, "default.cue")
 		assert.NilError(t, os.WriteFile(path, []byte(data), 0o600))
 		profile, err := config.Load(context.Background(), func(key string) string {
 			if key == "XDG_CONFIG_HOME" {
@@ -278,7 +292,7 @@ func TestLoad(t *testing.T) {
 	t.Run("broken well-known profile errors", func(t *testing.T) {
 		home := t.TempDir()
 		configHome := filepath.Join(home, "config")
-		path := filepath.Join(configHome, "tessera", "profile.json")
+		path := filepath.Join(configHome, "tessera", "profile.cue")
 		assert.NilError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 		assert.NilError(t, os.WriteFile(path, []byte("{"), 0o600))
 		_, err := config.Load(context.Background(), func(key string) string {
@@ -290,46 +304,59 @@ func TestLoad(t *testing.T) {
 		assert.Assert(t, err != nil)
 	})
 
-	t.Run("TypeScript override requires rendering", func(t *testing.T) {
+	t.Run("TypeScript override names the new profile format", func(t *testing.T) {
 		_, err := config.Load(context.Background(), func(key string) string {
 			if key == "TESSERA_PROFILE" {
 				return "profile.ts"
 			}
 			return ""
 		}, t.TempDir())
-		assert.Assert(t, err != nil && strings.Contains(err.Error(), "render"))
+		assert.Assert(t, err != nil && strings.Contains(err.Error(), "profile.cue"))
 	})
 
-	t.Run("legacy TypeScript profile requires JSON render", func(t *testing.T) {
-		home := t.TempDir()
-		configHome := filepath.Join(home, "config")
-		directory := filepath.Join(configHome, "tessera")
-		assert.NilError(t, os.MkdirAll(directory, 0o700))
-		assert.NilError(t, os.WriteFile(filepath.Join(directory, "profile.ts"), nil, 0o600))
-		_, err := config.Load(context.Background(), func(key string) string {
-			if key == "XDG_CONFIG_HOME" {
-				return configHome
+	t.Run("legacy profile requires CUE", func(t *testing.T) {
+		for _, extension := range []string{".ts", ".json"} {
+			t.Run(extension, func(t *testing.T) {
+				home := t.TempDir()
+				configHome := filepath.Join(home, "config")
+				directory := filepath.Join(configHome, "tessera")
+				assert.NilError(t, os.MkdirAll(directory, 0o700))
+				legacyPath := filepath.Join(directory, "profile"+extension)
+				assert.NilError(t, os.WriteFile(legacyPath, nil, 0o600))
+				_, err := config.Load(context.Background(), func(key string) string {
+					if key == "XDG_CONFIG_HOME" {
+						return configHome
+					}
+					return ""
+				}, home)
+				assert.Assert(t, err != nil && strings.Contains(err.Error(), legacyPath) && strings.Contains(err.Error(), "profile.cue"))
+			})
+		}
+	})
+
+	t.Run("JSON override is valid CUE", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "override.json")
+		assert.NilError(t, os.WriteFile(path, []byte(validJSONProfile), 0o600))
+		profile, err := config.Load(context.Background(), func(key string) string {
+			if key == "TESSERA_PROFILE" {
+				return path
 			}
 			return ""
-		}, home)
-		assert.Assert(t, err != nil && strings.Contains(err.Error(), "render"))
+		}, t.TempDir())
+		assert.NilError(t, err)
+		assert.Equal(t, profile.Displays.G9.Width, 1)
 	})
-}
 
-func TestDecodeRequiredEmptyCollections(t *testing.T) {
-	src := []byte(`{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[],"laptopStackApps":[]}`)
-	var profile config.Profile
-	assert.NilError(t, json.Unmarshal(src, &profile, json.RejectUnknownMembers(true)))
-	assert.Assert(t, profile.Windows != nil)
-	assert.Equal(t, len(profile.Windows), 0)
-	if err := config.Validate(&profile); err == nil || strings.Contains(err.Error(), "windows must be set") {
-		t.Fatalf("Validate() error = %v, want unrelated profile invariant errors", err)
-	}
-}
-
-func TestSnapshotDecodeOptions(t *testing.T) {
-	var value map[string]any
-	assert.NilError(t, json.Unmarshal([]byte(`{"known":true}`), &value, json.RejectUnknownMembers(true)))
+	t.Run("profile without package clause loads", func(t *testing.T) {
+		profile, err := config.Parse("unpackaged.cue", []byte(`displays: {g9: {width: 1}, aw: {width: 1}, laptop: {width: 1}}
+		windows: {app: {app: "App"}}
+		desk: [{display: "g9", label: "main", kind: "stack", tracks: [["app"]]}]
+		deskSlots: []
+		laptopPinned: []
+		laptopStackApps: []`))
+		assert.NilError(t, err)
+		assert.Equal(t, profile.Displays.G9.Width, 1)
+	})
 }
 
 func mustRead(t *testing.T, name string) string {
