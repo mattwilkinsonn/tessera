@@ -1047,9 +1047,13 @@ On 2026-10-10 Matt ruled on the profile format:
 
 Matt reversed Resolved decision 7 on 2026-10-28: "we dont really need a
 test runner for tess". CUE's closed structs and constraints carry the type
-checks that the TS module and `bun test` gave. This supersedes § Profile
-format, the profile parts of § Global Constraints and C2, and Resolved
-decision 7.
+checks that the TS module and `bun test` gave. It supersedes every
+JSON, Zod and TS-render statement about the profile in this record: the
+summary, § Problem / Intent, § Module layout, § Profile format, § Build and
+the startup bar, § Migration, the config-language entry in § Alternatives
+considered, § Global Constraints, C2, C10, the C2 task line and Resolved
+decision 7. Where those sections say `profile.json`, `default.json` or
+Zod, read this section.
 
 - **Schema.** `internal/config/schema.cue` (`package tessera`) defines
   `#Profile` with the same shape the Zod schema had: closed structs,
