@@ -1058,9 +1058,10 @@ Zod, read this section.
 - **Schema.** `internal/config/schema.cue` (`package tessera`) defines
   `#Profile` with the same shape the Zod schema had: closed structs,
   required fields, display-name enums, `#Pattern: string & regexp.Valid`,
-  and the `desk` union on `kind`. Go `Validate` keeps every cross-field
-  rule, so the schema checks shape and `Validate` stays the one copy of each
-  rule.
+  and the `desk` union on `kind`. The schema checks shape only. Every
+  cross-field rule stays in Go `Validate`, as on `main` today, so each rule
+  has one copy. The draft at `e3304b45^` moved some of them into CUE; this
+  design does not.
 - **Loader.** `Parse` compiles the file with `cue.Scope(schema)`, so a file
   with or without `package tessera` loads. It unifies it with `#Profile`,
   validates it as concrete, decodes it into the same structs, then runs
