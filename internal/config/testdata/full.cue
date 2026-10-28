@@ -1,0 +1,44 @@
+package tessera
+
+displays: {
+	g9: {
+		width: 1200
+		weights: {rows: {"2": [1, 1]}}
+	}
+	aw: {
+		width: 900
+		weights: {columns: {"2": [2, 3]}}
+	}
+	laptop: {
+		width: 700
+		weights: {columns: {"2": [1, 2]}}
+	}
+}
+
+windows: {
+	alpha: {app: "Alpha", title: "first", titleInvert: true, spawn: ["open", "alpha"]}
+	beta: {app: "Beta", title: "second", spawn: ["open", "beta"]}
+}
+
+desk: [
+	{display: "g9", label: "primary", kind: "columns", tracks: [["alpha"], ["beta"]], weights: [2, 3]},
+	{display: "laptop", label: "portable", kind: "stack", tracks: [["alpha", "beta"]]},
+]
+
+topologies: [{
+	name: "dual"
+	displays: ["g9", "laptop"]
+	desk: [
+		{display: "g9", label: "primary", kind: "rows", tracks: [["alpha"], ["beta"]]},
+		{display: "laptop", label: "portable", kind: "stack", tracks: [["alpha"]]},
+	]
+}]
+
+weights: {
+	columns: {"2": [1, 1]}
+	rows: {"2": [3, 2]}
+}
+
+deskSlots: [{name: "alpha", onDisplay: "g9"}, {name: "beta"}]
+laptopPinned: ["alpha", "beta"]
+laptopStackApps: ["Background App"]

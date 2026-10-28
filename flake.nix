@@ -46,18 +46,18 @@
             profilePath = lib.mkOption {
               type = lib.types.str;
               # The profile path is exported verbatim and must be absolute.
-              default = "${config.home.homeDirectory}/.config/tessera/profile.json";
-              defaultText = lib.literalExpression ''"''${config.home.homeDirectory}/.config/tessera/profile.json"'';
+              default = "${config.home.homeDirectory}/.config/tessera/profile.cue";
+              defaultText = lib.literalExpression ''"''${config.home.homeDirectory}/.config/tessera/profile.cue"'';
               description = ''
-                Absolute path the `tess` binary loads its profile from at runtime,
-                exported as $TESSERA_PROFILE. This module only points at the
-                deployed path; it does not own or render the profile content.
+                Absolute path to the CUE profile that the `tess` binary loads at runtime,
+                exported as $TESSERA_PROFILE. This module points at the deployed profile;
+                it does not own or render its contents.
 
                 Note the delivery channel: this is set via `home.sessionVariables`,
                 which reaches interactive/login shells but NOT launchd-started
                 daemons (skhd/yabai invoke `tess` from launchd). A daemon-invoked
                 `tess` therefore relies on the binary's own well-known fallback
-                (`$XDG_CONFIG_HOME/tessera/profile.json`, else `~/.config/...`); keep
+                (`$XDG_CONFIG_HOME/tessera/profile.cue`, else `~/.config/tessera/profile.cue`); keep
                 `profilePath` at the default so both channels resolve the same
                 file. A non-default path is honored only for shell-invoked `tess`.
               '';
@@ -74,7 +74,7 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        goToolchain = go-overlay.packages.${system}.go_1_27_2;
+        goToolchain = go-overlay.packages.${system}.go_1_27_3;
         version = pkgs.lib.fileContents ./VERSION;
         yabaiStub = pkgs.writeShellScript "tessera-yabai-stub" ''
           printf '[]\n'
@@ -83,13 +83,17 @@
           pname = "tess";
           inherit version;
           src = ./.;
-          vendorHash = "sha256-acNjymY5I170LrcrshhRk740oZ1LCwFv4lEjKO6qiQk=";
+          vendorHash = "sha256-TmPzS/Ap/LZN6TBUI708NHCoFm3kzFBD/TOVdj8hhyk=";
           env.CGO_ENABLED = "0";
           ldflags = [ "-X main.version=${version}" ];
           go = goToolchain;
           allowGoReference = false;
           doCheck = false;
           doInstallCheck = true;
+          postInstall = ''
+            			mkdir -p $out/share/tessera
+            			cp internal/config/schema.cue $out/share/tessera/schema.cue
+            		  '';
           installCheckPhase = ''
             runHook preInstallCheck
             rc=0
@@ -141,7 +145,7 @@
               ];
             };
             profileVar = eval.config.home.sessionVariables.TESSERA_PROFILE;
-            expected = "/Users/example/.config/tessera/profile.json";
+            expected = "/Users/example/.config/tessera/profile.cue";
             isAbsolute = pkgs.lib.hasPrefix "/" profileVar;
           in
           assert isAbsolute;
