@@ -34,7 +34,8 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
 
   Minimized and floating windows still exist, so they keep their keys.
 - **Storage and concurrency.** A JSON file at `$XDG_CACHE_HOME/yabai/window-slots.json` (`effects.Paths.WindowSlots`) holds `{seq, slots: key → {id, app, seq}}`. A file is needed because CLI commands (`Apply`, `Laptop` in `internal/commands/composite.go`) plan outside the daemon. `Apply` and `laptop` hold different locks, so both also take a dedicated flock (`window-slots.lock`). They wait for it, bounded by ctx, and hold it from reading memory through planning to writing. This orders the two plans as well as their writes, so an older plan cannot overwrite a newer one. Writes merge only the keys the plan filled, prune against a fresh `QueryWindows`, then write a temp file and rename it.
-- **Unchanged.** `ResolveSlot` (numpad focus, `deskSlots`) still resolves a browser slot by display. `SpawnsNeeded` still counts missing windows and ignores memory. Flex order is untouched.
+- **Unchanged.** `SpawnsNeeded` still counts missing windows and ignores memory. Flex order is untouched.
+- **Non-goal: numpad focus.** `ResolveSlot` (`deskSlots`, `internal/engine/focus.go`) is a separate ordered list. It picks a window by display at focus time and does not read memory. Memory makes the window on each display stable, so `onDisplay` slots find the same window when a display has one candidate. Picking between two stacked browsers on one display stays as it is today. Binding `deskSlots` to slot keys would need its own mapping and is deferred.
 
 ### Alternatives considered
 
