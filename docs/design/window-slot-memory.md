@@ -96,7 +96,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
 - `Interfaces:`
   - `effects.Paths.WindowSlots string`, defaulting to `filepath.Join(cache, "yabai", "window-slots.json")`.
   - `func ReadSlots(path string) (engine.SlotMemory, error)`: a missing file returns empty with no error. A corrupt file is logged and returns empty, so a bad file never blocks layout.
-  - `func LockSlots(ctx context.Context, path string) (unlock func(), err error)`: a blocking flock on `window-slots.lock`, bounded by ctx.
+  - `func LockSlots(ctx context.Context, path string) (unlock func(), err error)`: creates the parent directory, then takes a blocking flock on `window-slots.lock`, bounded by ctx.
   - `func WriteSlots(path string, memory engine.SlotMemory) error`: temp file + rename; creates the parent directory.
   - `Apply` takes `LockSlots` before its post-spawn snapshot. It sets `World.Slots` from `ReadSlots`, runs the plan, and then, still holding the lock:
     1. re-queries windows,
@@ -106,7 +106,8 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
 - Tests:
   - Read/write round trip.
   - A missing file and a corrupt file both return empty.
-  - A second `LockSlots` waits until the first unlocks, and returns ctx's error on timeout.
+  - A second `LockSlots` waits until the first unlocks, and returns ctx's error on timeout. Locking under a parent directory that does not exist yet succeeds.
+  - A fake-driver `Apply` blocks inside planning while it holds the lock. A concurrent `laptop` does not query the world until `Apply` returns. The test also runs with the roles swapped.
   - A fake-driver `Apply` persists slots. A second `Apply` with reshuffled query order places the same windows.
   - A fake-driver `Laptop` run starts from persisted slots, reshuffles query order during convergence, places pinned windows by memory, and persists the result without changing `desk:` keys.
 
