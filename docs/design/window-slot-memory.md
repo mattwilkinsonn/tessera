@@ -105,14 +105,17 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
   - `func ReadSlots(path string) (engine.SlotMemory, error)`: a missing file returns empty with no error. A corrupt file is logged and returns empty, so a bad file never blocks layout.
   - `func LockSlots(ctx context.Context, path string) (unlock func(), err error)`: creates the parent directory, then takes a blocking flock on `window-slots.lock`, bounded by ctx.
   - `func WriteSlots(path string, memory engine.SlotMemory) error`: temp file + rename; creates the parent directory.
-  - `Apply` takes `LockSlots` before its post-spawn snapshot. It sets `World.Slots` from `ReadSlots`, runs the plan, and then, still holding the lock:
+  - `Apply` takes `LockSlots` before its post-spawn snapshot. It sets `World.Slots = PruneSlots(profile, ReadSlots(...), snapshot.Windows)`, so entries for spec drift and reused ids are gone before planning. Then it runs the plan and, still holding the lock:
     1. re-queries windows,
-    2. writes `RecordSlots`, then `PruneSlots`.
-  - `laptop` holds the lock the same way around `RunConverge`, recording `final.Filled`.
+    2. writes `PruneSlots(RecordSlots(World.Slots, filled, ...), fresh)`.
+
+    The pruned memory is the base for recording, so an entry skipped in planning is never written back.
+  - `laptop` holds the lock the same way around `RunConverge`: it prunes against the first snapshot and records `final.Filled` on that base.
   - README gets one line. Memory lives in the cache file and survives tess and daemon restarts. When an app restarts, its windows get new ids, so pruning drops that app's entries and the next layout learns them again. Deleting the file resets everything.
 - Tests:
   - Read/write round trip.
   - A missing file and a corrupt file both return empty.
+  - A title-specific window drifts to another spec and fills that spec's slot, then drifts back. After each run the file holds exactly one key for it.
   - A second `LockSlots` waits until the first unlocks, and returns ctx's error on timeout. Locking under a parent directory that does not exist yet succeeds.
   - A fake-driver `Apply` blocks inside planning while it holds the lock. A concurrent `laptop` does not query the world until `Apply` returns. The test also runs with the roles swapped.
   - A fake-driver `Apply` persists slots. A second `Apply` with reshuffled query order places the same windows.
