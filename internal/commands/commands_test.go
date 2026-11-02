@@ -637,7 +637,7 @@ func testLaptopSkipsWhenMonitorAttached(t *testing.T) {
 }
 
 func TestRules(t *testing.T) {
-	t.Run("removes only auto: rules, re-adds the ported set catch-all first, applies", func(t *testing.T) {
+	t.Run("preserves standard-window management before floating exceptions", func(t *testing.T) {
 		driver := deskWorld()
 		recorder := &ruleRecorder{existing: []wm.Rule{{Label: "auto:old"}, {Label: "manual-keep"}}}
 		withRules := &ruleDriver{Driver: driver, rules: recorder}
@@ -647,13 +647,36 @@ func TestRules(t *testing.T) {
 		if !slices.Equal(recorder.removed, []string{"auto:old"}) {
 			t.Fatalf("removed = %v", recorder.removed)
 		}
-		if len(recorder.added) != 6 || recorder.added[0].Label != "auto:default-laptop-stack" {
-			t.Fatalf("added = %+v; catch-all should be first", recorder.added)
+		if len(recorder.added) != 8 || recorder.added[0].Label != "auto:default-laptop-stack" {
+			t.Fatalf("added = %+v; default-laptop rule should be first", recorder.added)
 		}
-		for _, label := range []string{"auto:code", "auto:akiflow", "auto:linear", "auto:finder", "auto:akiflow-dialog"} {
+		for _, label := range []string{"auto:code", "auto:akiflow", "auto:linear", "auto:manage-standard", "auto:finder", "auto:akiflow-dialog", "auto:system-settings"} {
 			if !slices.ContainsFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label }) {
 				t.Errorf("missing rule %q", label)
 			}
+		}
+		standardIndex := slices.IndexFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == "auto:manage-standard" })
+		if standardIndex < 0 {
+			t.Fatal("missing auto:manage-standard")
+		}
+		for _, label := range []string{"auto:finder", "auto:akiflow-dialog", "auto:system-settings"} {
+			exceptionIndex := slices.IndexFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label })
+			if exceptionIndex < 0 {
+				continue
+			}
+			if standardIndex >= exceptionIndex {
+				t.Errorf("auto:manage-standard index %d should precede %s index %d", standardIndex, label, exceptionIndex)
+			}
+			if exception := recorder.added[exceptionIndex]; exception.Manage == nil || *exception.Manage {
+				t.Errorf("%s = %+v; want manage off", label, exception)
+			}
+		}
+		if settings := recorder.added[len(recorder.added)-1]; settings.Label != "auto:system-settings" || settings.App != "^System Settings$" {
+			t.Errorf("last rule = %+v; want the System Settings exception", settings)
+		}
+		standard := recorder.added[standardIndex]
+		if standard.App != "^.*$" || standard.Subrole != "AXStandardWindow" || standard.Manage == nil || !*standard.Manage {
+			t.Errorf("auto:manage-standard = %+v; want standard windows managed on", standard)
 		}
 		if recorder.applied != 1 {
 			t.Fatalf("apply calls = %d", recorder.applied)

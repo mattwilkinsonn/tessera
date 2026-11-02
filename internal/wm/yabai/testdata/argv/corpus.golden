@@ -299,6 +299,14 @@ space=2
 -m
 rule
 --add
+label=auto:manage-standard
+app=^.*$
+subrole=AXStandardWindow
+manage=on
+
+-m
+rule
+--add
 label=auto:akiflow-dialog
 app=^Akiflow$
 subrole=AXDialog
