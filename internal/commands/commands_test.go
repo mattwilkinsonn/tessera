@@ -647,10 +647,10 @@ func TestRules(t *testing.T) {
 		if !slices.Equal(recorder.removed, []string{"auto:old"}) {
 			t.Fatalf("removed = %v", recorder.removed)
 		}
-		if len(recorder.added) != 7 || recorder.added[0].Label != "auto:default-laptop-stack" {
+		if len(recorder.added) != 8 || recorder.added[0].Label != "auto:default-laptop-stack" {
 			t.Fatalf("added = %+v; default-laptop rule should be first", recorder.added)
 		}
-		for _, label := range []string{"auto:code", "auto:akiflow", "auto:linear", "auto:manage-standard", "auto:finder", "auto:akiflow-dialog"} {
+		for _, label := range []string{"auto:code", "auto:akiflow", "auto:linear", "auto:manage-standard", "auto:finder", "auto:akiflow-dialog", "auto:system-settings"} {
 			if !slices.ContainsFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label }) {
 				t.Errorf("missing rule %q", label)
 			}
@@ -659,7 +659,7 @@ func TestRules(t *testing.T) {
 		if standardIndex < 0 {
 			t.Fatal("missing auto:manage-standard")
 		}
-		for _, label := range []string{"auto:finder", "auto:akiflow-dialog"} {
+		for _, label := range []string{"auto:finder", "auto:akiflow-dialog", "auto:system-settings"} {
 			exceptionIndex := slices.IndexFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label })
 			if standardIndex >= exceptionIndex {
 				t.Errorf("auto:manage-standard index %d should precede %s index %d", standardIndex, label, exceptionIndex)
