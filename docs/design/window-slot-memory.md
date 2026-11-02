@@ -65,7 +65,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
   - `World` gains `Slots SlotMemory`.
   - `func SlotKeys(mode string, display config.DisplayName, names []string) []SlotKey`: k counts per name within the list.
   - `func Reserve(profile *config.Profile, memory SlotMemory, keys []SlotKey, displays string, windows []wm.Window) map[int]SlotKey`
-    - It skips an entry whose window no longer matches its key's spec.
+    - It skips an entry whose live window has a different `App` than the stored one, or no longer matches its key's spec. The pruning rules therefore apply before planning as well as after.
     - When an id is remembered by two of `keys`, the entry whose `Displays` equals `displays` wins, then the higher `Seq`.
   - `func NewClaimSet(profile *config.Profile, memory SlotMemory, reserved map[int]SlotKey) *ClaimSet`
   - `func (c *ClaimSet) ClaimSlot(windows []wm.Window, key SlotKey, name string, preferDisplay mo.Option[int]) (int, bool)`
@@ -77,6 +77,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
   - A reserved window is never taken by another key, including a fallback on another display (an empty AW slot cannot take a window a G9 key reserves).
   - With two active keys remembering one window, the entry recorded under the current display set gets it, even when the other has a higher `Seq`. With neither or both matching, the higher `Seq` gets it. The losing key claims normally.
   - A remembered Ghostty window whose title now matches another spec is not reserved and can fill that other spec's slot.
+  - A reused id whose app changed, but still matches the spec's app regex, is not reserved.
   - With empty memory, claims match today's output (existing `TestDeskPlan` stays green).
 
 ### Task 2: plans return filled slots (engine)
