@@ -661,9 +661,18 @@ func TestRules(t *testing.T) {
 		}
 		for _, label := range []string{"auto:finder", "auto:akiflow-dialog", "auto:system-settings"} {
 			exceptionIndex := slices.IndexFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label })
+			if exceptionIndex < 0 {
+				continue
+			}
 			if standardIndex >= exceptionIndex {
 				t.Errorf("auto:manage-standard index %d should precede %s index %d", standardIndex, label, exceptionIndex)
 			}
+			if exception := recorder.added[exceptionIndex]; exception.Manage == nil || *exception.Manage {
+				t.Errorf("%s = %+v; want manage off", label, exception)
+			}
+		}
+		if settings := recorder.added[len(recorder.added)-1]; settings.Label != "auto:system-settings" || settings.App != "^System Settings$" {
+			t.Errorf("last rule = %+v; want the System Settings exception", settings)
 		}
 		standard := recorder.added[standardIndex]
 		if standard.App != "^.*$" || standard.Subrole != "AXStandardWindow" || standard.Manage == nil || !*standard.Manage {
