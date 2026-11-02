@@ -20,7 +20,7 @@ Remember which window last filled each **display slot**. A slot key is `<mode>:<
 
 So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
 
-- **Why keys are per display.** The topologies give one display different desks. For example, the full desk has two browser slots on the AW, but `aw-laptop` uses `#awSolo` with four. Topology selection is `ResolveDesk` in `internal/engine/matcher.go`. A count across the whole plan would move the AW's first slot from occurrence 2 to occurrence 1 when the topology changes. Counting within a display keeps `desk:aw/browser#1` the same slot in every topology that lays out the AW.
+- **Why keys are per display.** The topologies give one display different desks. For example, the full desk has two browser slots on the AW, but `aw-laptop` uses `#awSolo` with four. Topology selection is `ResolveDesk` in `internal/engine/matcher.go`. A count across the whole plan would move the AW's first slot from occurrence 2 to occurrence 1 when the topology changes. Counting within a display keeps `desk:aw/browser#1` the same slot in every topology that lays out the AW. Validation allows the base desk to hold two layouts for one display. In that case k counts across them in desk order, so every key in a plan names one slot.
 - **Why keys carry the mode.** The desk's `#laptopStack` and the laptop-only `laptopPinned` both lay out the laptop display. If they shared keys, a window that led the laptop in laptop mode would be pulled into the desk's laptop stack on the way back. With separate namespaces, laptop mode never changes desk memory, so desktop → laptop → desktop restores the desk exactly.
 - **Claiming.** A plan reserves the windows its own keys remember. A window is reserved only while it still matches the spec its key names (`matchesSpec`, `internal/engine/model.go`), so a title-specific window whose title drifts is not held. When two active keys remember the same window, the most recently recorded entry wins; the other key counts as unremembered for this plan. Then, for each key in plan order:
   1. Take the remembered window if it is a live, unclaimed candidate (not minimized or floating). Memory beats `preferDisplay`, because honouring the remembered slot is the point of the feature.
@@ -80,7 +80,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
 
 - `Interfaces:`
   - `func DeskPlan(profile *config.Profile, world World) ([]Op, map[SlotKey]int)`
-    - `buildDesks` and `deskTracks` (`desk.go`) build keys per display with `SlotKeys("desk", layout.Display, flatten(layout.Tracks))`.
+    - `buildDesks` (`desk.go`) builds keys per display once, with `SlotKeys("desk", display, names)`, where `names` concatenates the tracks of every present layout for that display in desk order. `deskTracks` consumes the keys in the same order.
   - `ConvergeState` gains `Filled map[SlotKey]int`.
     - `stepPinned` (`laptop.go`) claims `laptopPinned` with `SlotKeys("laptop", config.DisplayLaptop, profile.LaptopPinned)` and records into `Filled`.
   - `func PruneSlots(profile *config.Profile, memory SlotMemory, windows []wm.Window) SlotMemory`
@@ -88,6 +88,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
 - Tests:
   - Full desk → `aw-laptop` → full desk with the same windows and reshuffled query order. Each AW and G9 browser returns to its slot.
   - Desk → laptop-only → desk returns every desk slot, including the desk's laptop stack.
+  - A desk with two layouts on one display, both naming `browser`, gets distinct keys and keeps each window in its slot.
   - Prune drops dead ids, app-changed ids, and spec-mismatched entries. It keeps minimized and floating windows.
   - Record overwrites only filled keys and stamps them with a fresh `Seq`.
 
