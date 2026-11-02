@@ -87,7 +87,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
   - `func PruneSlots(profile *config.Profile, memory SlotMemory, windows []wm.Window) SlotMemory`
   - `func RecordSlots(memory SlotMemory, filled map[SlotKey]int, windows []wm.Window) SlotMemory`: bumps `Seq`, stamps each filled key with it, and leaves other keys alone.
 - Tests:
-  - Full desk → `aw-laptop` → full desk with the same windows and reshuffled query order. Each AW and G9 browser returns to its slot.
+  - Full desk → `aw-laptop` → full desk with the same windows and reshuffled query order. The AW's first two browser slots keep their windows across all three steps. The browsers the full desk had on the G9 return to their G9 slots in step 3, even though `aw-laptop` laid them out on the AW in step 2.
   - Desk → laptop-only → desk returns every desk slot, including the desk's laptop stack.
   - A desk with two layouts on one display, both naming `browser`, gets distinct keys and keeps each window in its slot.
   - Prune drops dead ids, app-changed ids, and spec-mismatched entries. It keeps minimized and floating windows.
