@@ -12,27 +12,9 @@ The record follows each **Recommendation**. A **load-bearing** question
 changes the plan if the answer differs.
 
 1. **Which window manager.** *Load-bearing.*
-   - (a) **komorebi.** It has stacks, run-time named workspaces, ratios, a
-     state query and push events. No command takes a window handle (Open
-     Question 2).
-   - (b) **GlazeWM** (GPL-3.0). Every command takes `--id`, but it has no
-     stack and only config-declared workspaces. The laptop home would
-     become a monocle column, which changes the engine.
-   - (c) **A native tiler.** `architecture.md` keeps tess a WM driver.
-
-   A stack is required (`wm.TargetStack` in `DeskPlan`, `wm.LayoutStack`
-   in `LaptopConvergeStep`). The Komorebi License 2.0.0 "does not permit
-   any kind of commercial use (i.e. using `komorebi` at work)". The
-   per-person Individual Commercial Use License costs $10 a month or $110
-   a year for Windows, or $15 a month or $180 a year with macOS
-   ([lgug2z.com/software/komorebi](https://lgug2z.com/software/komorebi/)).
-   tess ships no komorebi code, so its MIT licence is unaffected
-   *[INFERENCE: not legal advice]*.
-
-   **Recommendation: (a), with a commercial licence for work use.**
-   **Decision needed:** confirm komorebi, and confirm the licence covers
-   your use. Reopen this with (b) only if W4 check 5 fails and one of
-   checks 1–4 fails too (W4 outcomes table).
+   **Resolved: (a).** Personal use is non-commercial. Work use needs
+   komorebi's Individual Commercial Use License. Reopen this with (b) only
+   if W4 check 5 fails and one of checks 1–4 fails too (W4 outcomes table).
 
 2. **Changing a window or workspace that has no focus** (depends on 1).
    *Load-bearing.* komorebi commands act on the focused window or take a
@@ -60,33 +42,31 @@ changes the plan if the answer differs.
    and checks 1–4 pass, window moves also use (d). If check 2 fails, no
    operation uses `ApplyState` (§ Guarded state).
 
-3. **`wm.RuleOps`** (depends on 1). *Not load-bearing: no task depends on
-   it.* (a) Skip it in v1, and copy `auto:` rules into `komorebi.json` by
-   hand; (b) clear and re-add all rules, which wipes static ones; (c) rules
-   scoped to tess workspaces. **Recommendation: (a) now, (c) once rules
-   come from the profile.**
+3. **`wm.RuleOps`** (depends on 1).
+   **Resolved: (c).** W5 sets rules only on tess-labelled workspaces. Rules
+   on other workspaces, static ones included, stay.
 4. **Window `App` identity.** *Not load-bearing: no Windows profile exists
    yet.* (a) The exe stem (`Code`); (b) the full exe name; (c) the window
    class. **Recommendation: (a).**
-5. **Display identity.** *Not load-bearing: (b) is additive.* (a) Keep
-   width matching, since the profile is per machine; (b) an optional
-   `deviceId` on `DisplaySpec`. **Recommendation: (a).**
-6. **Supervision.** *Not load-bearing: it changes only W7's install files.*
-   (a) komorebi autostarts, and a shipped Task Scheduler XML runs the
-   daemon; (b) the daemon starts komorebi; (c) a Startup-folder shortcut,
-   which never restarts. **Recommendation: (a).**
+5. **Display identity.** *Not load-bearing: (b) is additive.*
+   **Resolved: (b).** A `deviceId` tells apart two displays of one width.
+   A spec without it keeps width matching.
+6. **Supervision.** *Not load-bearing: it changes W6 and W7.*
+   **Resolved: (b).** The daemon starts komorebi, restarts it after a
+   crash, and stops only a komorebi it started.
 7. **Race detector in Windows CI.** *Not load-bearing: a CI setting.*
-   (a) `-race` with cgo and the runner's gcc; (b) no `-race`, since the
-   ubuntu job races the same code. **Recommendation: (b).**
+   **Resolved: (b).** Windows tests run without `-race`; Ubuntu races the
+   same code.
 8. **Distributing `tess.exe`.** *Not load-bearing: it can be added any
-   time.* (a) `go install` plus a CI artifact; (b) goreleaser and Scoop
-   now. **Recommendation: (a).**
+   time.*
+   **Resolved: (b).** GoReleaser publishes Windows archives and a Scoop
+   manifest with each release.
 
 ## Problem / Intent
 
 `tess` runs only on macOS. Its driver is yabai, and its daemon needs `nc`,
 `launchctl` and an `O_NOFOLLOW` signal guard. This record adds a Windows
-backend with the same profile JSON, engine and commands, driving komorebi
+backend with the same CUE profile, engine and commands, driving komorebi
 behind `wm.Driver`.
 
 ## Approach
@@ -223,11 +203,14 @@ true})`.
   reader makes it drop tess's commands. The accept loop waits only on
   `Accept`, and each connection is read to EOF (16 MiB cap) in its own
   goroutine.
-- **Stop.** `komorebic stop` sends an empty connection. The driver
-  re-subscribes with a 1–30 s backoff, then sends `EventDisplayMoved`.
-- **Crash.** A crash sends nothing, so the driver also re-subscribes every
-  30 s, which komorebi treats as idempotent *[INFERENCE: a restart within
-  30 s lays out nothing until the next event; W8 checks this]*.
+- **Stop.** `komorebic stop` sends an empty connection and exits 0. The
+  daemon does not restart komorebi. The driver re-subscribes with a 1–30 s
+  backoff, so a later `komorebic start` reconnects and sends
+  `EventDisplayMoved`.
+- **Crash.** A crash sends nothing. The daemon restarts a komorebi it
+  started after a non-zero exit. The driver also re-subscribes every 30 s,
+  which komorebi treats as idempotent, so a komorebi tess did not start is
+  picked up too *[INFERENCE: W8 checks this]*.
 
 | komorebi `event` | tess event | Hub channel |
 | --- | --- | --- |
@@ -246,9 +229,18 @@ The signal guard covers events that tess itself causes.
 
 ### Supervision
 
-`Options.Bootstrap` is false on Windows, so `launchd.go` does not run.
-The nudge is a no-op. A shipped task, `docs/windows/tess-daemon.xml`,
-runs the daemon at logon, registered with
+The daemon starts komorebi if it is not running and owns only a process it
+started. It restarts that process after an unexpected exit, but not after
+the empty-connection signal and clean exit from `komorebic stop`. On daemon
+exit, it stops komorebi only if it started it. The `komorebi` launch uses
+`os/exec` at one site with `//nolint:depguard // start and supervise komorebi on Windows`.
+
+`Options.Bootstrap` enables platform WM startup. On macOS,
+`launchd.go` kickstarts an already-loaded yabai or skhd agent, or bootstraps
+its installed agent. It boots out only agents it bootstrapped. launchd
+restarts those agents.
+The shipped Task Scheduler task, `docs/windows/tess-daemon.xml`, runs the
+daemon at logon, registered with
 `schtasks /Create /TN "tessera daemon" /XML …` *[INFERENCE: for the
 current user; W8 checks this]*. Its settings replace defaults that would
 stop the daemon silently (`evidence.md` § Task Scheduler):
@@ -262,7 +254,7 @@ stop the daemon silently (`evidence.md` § Task Scheduler):
 | `ExecutionTimeLimit` | `PT0S` | the default stops it after 72 hours |
 | `RestartOnFailure` | `Count` 10, `Interval` `PT1M` | both are required; one minute is the minimum |
 
-A clean exit returns 0 and is not restarted. `tess daemon` frees its
+A clean daemon exit returns 0 and is not restarted. `tess daemon` frees its
 console when it is alone there, and logs to
 `os.UserCacheDir()\tessera\daemon.log` *[INFERENCE: a window can still
 flash at logon; W8 checks this]*.
@@ -277,7 +269,7 @@ points the driver at the stub. Event tests use `net.Pipe` inside
 
 ## Global Constraints
 
-- **Toolchain.** `go 1.27` (1.27.2 in CI), and Windows build 10.0.17063+
+- **Toolchain.** `go 1.27` (1.27.3 in CI), and Windows build 10.0.17063+
   for AF_UNIX. komorebi has no version floor: the feature probe enforces
   the `State` shape, and v0.1.41 is the oldest tested release.
 - **No cgo.** `CGO_ENABLED=0`; Win32 calls use `golang.org/x/sys/windows`
@@ -325,7 +317,7 @@ Interfaces:
   type backend struct {
   	Driver    wm.Driver
   	Nudge     effects.Nudger
-  	Bootstrap bool // launchd bootstrap of the WM services; false on Windows
+  	Bootstrap bool // start the WM: launchd agents on macOS, komorebi on Windows
   }
 
   func newBackend() (backend, error)
@@ -342,7 +334,7 @@ guard test shows that `SuppressSignals` refuses a directory, and that
 
 ### W2 — Windows CI
 
-A `windows` job on `windows-latest` (`actions/setup-go@v6`, `1.27.2`) runs
+A `windows` job on `windows-latest` (`actions/setup-go@v6`, `1.27.3`) runs
 build, vet and test without `-race`. The ubuntu job adds
 `GOOS=windows go vet ./...` and `GOOS=windows golangci-lint run`. From W7
 on, the Windows job uploads `tess.exe`.
@@ -382,6 +374,8 @@ shape. Record the answers in `evidence.md` § Spike results.
 | 6 | notification framing and size; `komorebic stop` against `taskkill /F` | one connection, no newline; an empty connection against none |
 | 7 | settle time after `WorkspaceLayout` and after a focus sequence | sets `SettleUnit` |
 | 8 | a GUI launcher spawned with no window flag | no console flash |
+| 9 | a socket-sent `NamedWorkspaceRule` on a tess-labelled workspace | it matches the intended exe *[INFERENCE: socket rules use `MatchingStrategy::Legacy`]* |
+| 10 | `ClearNamedWorkspaceRules` on one tess workspace | rules on other workspaces stay |
 
 Interfaces: `evidence.md` § Spike results, and the scrubbed fixtures
 `state-desk.json`, `state-laptop.json` and `notification-*.json` in
@@ -402,12 +396,29 @@ uses the "2 fails" row. A recorded window loss never passes check 2.
 
 ### W5 — `internal/wm/komorebi`
 
-Build the client, normalization, § Operations, the feature probe, the
-driver lock, and the stub server and corpus.
+Build the client, normalization, § Operations, `wm.RuleOps`, the feature
+probe, the driver lock, and the stub server and corpus.
 
 Interfaces:
 
-- `func New(dataDir string) *Driver`, which implements `wm.Driver`.
+- `func New(dataDir string) *Driver`, which implements `wm.Driver` and
+  `wm.RuleOps`.
+- `wm.RuleOps` uses `NamedWorkspaceRule`, `InitialNamedWorkspaceRule` and
+  `ClearNamedWorkspaceRules`, only on tess-labelled workspaces. It never
+  sends `ClearAllWorkspaceRules`, which also clears static config rules.
+  The named clear removes every rule on that workspace, static ones too,
+  so tess owns all rules on its workspaces (`evidence.md` § Rules,
+  windows and monitors). The Windows rule set matches Code, Linear and
+  Akiflow by exe. It drops the macOS catch-all, Finder and AXDialog rules.
+- `internal/config/schema.cue` adds an optional `deviceId` to each display
+  spec, and `internal/config` adds `DisplaySpec.DeviceID`.
+  `wm.Display.DeviceID` carries komorebi's `Monitor.device_id`. W5 also
+  adds `uuid` to the yabai display query and `RawYabaiDisplay`, so macOS
+  fills it too *[INFERENCE: the UUID stays stable across reconnects]*.
+  When `deviceId` is set, `engine.ResolveDisplay` matches only that
+  device. A missing device does not match, like a missing width; it never
+  falls back to a different display. Without `deviceId`, width matching
+  is unchanged.
 - `func DataDir() (string, error)` returns `TESS_KOMOREBI_DIR` if set.
   Otherwise it returns `os.UserCacheDir()` joined with `komorebi`, and
   passes that function's error through.
@@ -441,14 +452,25 @@ Gate:
 - An unknown `State` member survives a guarded edit byte for byte.
 - A fixture with a required member removed gives an error that names it.
   A full-shape fixture passes whatever release it came from.
+- A profile `deviceId` picks the right monitor when two widths match, and
+  an absent device matches nothing.
+- `wm.RuleOps` goldens send only named-workspace rule messages, never
+  `ClearAllWorkspaceRules`.
 
 ### W6 — `wm.EventStream` and the daemon
 
 Interfaces:
 
-- `wm.EventStream` (§ Push events).
+- `wm.EventStream` (§ Push events). The channel closes on context cancel or
+  the empty connection sent by a clean `komorebic stop`.
 - `daemon.Options.Events wm.EventStream`. A nil value keeps today's
   behaviour.
+- `wm.ProcessSupervisor` provides `Start(ctx) (started bool, exited <-chan
+  error, err error)` and `Stop(ctx) error`. `daemon.Options.Supervisor`
+  carries it. `Start` leaves an existing komorebi process unowned; a
+  process started by the daemon reports its exit error, with nil for clean
+  exit. `daemon.Run` restarts only a supervised process that exits with an
+  error, and stops only a process it started.
 - The unexported
   `func forwardEvents(ctx context.Context, events <-chan wm.Event, h *Hub)`.
   `Run` calls `Events` before `Serve`, runs `forwardEvents` beside it, and
@@ -462,8 +484,10 @@ Gate, under `synctest.Test`:
 - 100 notification writes complete while nobody reads the channel.
 - `Manage` runs flex work once after `FlexQuiet`. One more monitor runs
   display work once after `DisplayQuiet`. An unmapped event runs nothing.
-- An empty connection, then two refused dials and one accepted dial, give
-  one subscribe message and one `EventDisplayMoved`.
+- An empty connection closes the event channel and does not trigger a
+  process restart; a crash reports an error and restarts an owned process.
+- Two refused dials and one accepted dial give one subscribe message and
+  one `EventDisplayMoved`.
 - After 30 s, a second subscribe message appears.
 - Cancelling ctx closes the listener and the channel, and `Run` returns.
 
@@ -472,34 +496,47 @@ Gate, under `synctest.Test`:
 Interfaces:
 
 - `cmd/tess/backend_windows.go`: `newBackend` returns
-  `komorebi.New(dataDir)`, a no-op nudge and `Bootstrap: false`.
+  `komorebi.New(dataDir)`, a no-op nudge, `Bootstrap: true` and a
+  `wm.ProcessSupervisor` for komorebi.
 - `main.go` sets `daemon.Options.Events` when the driver asserts to
-  `wm.EventStream`.
+  `wm.EventStream`, passes the supervisor, and sets `Bootstrap` from the
+  backend and `!command.NoBootstrap`.
 - `cmd/tess/console_windows.go`: `func daemonLog() (*os.File, error)`
   frees the console and opens the log. `console_other.go` returns
   `os.Stderr`. `main.go` calls it before `daemon.Run`, points `slog` at
   it, and joins its `Close` error into the exit error.
-- `docs/windows/tess-daemon.xml` (§ Supervision).
-- A README section for Windows: komorebi (v0.1.41 is the oldest tested) and
-  `komorebic enable-autostart`; the profile path
-  (`%USERPROFILE%\.config\tessera\profile.json` or `$TESSERA_PROFILE`);
-  exe-stem `app` patterns and Windows `spawn` argv; registering the task;
-  `tess rules` doing nothing; and the komorebi licence.
+- The Task Scheduler task in `docs/windows/tess-daemon.xml` (§ Supervision).
+- `.goreleaser.yaml` adds `windows/amd64` and `windows/arm64` ZIP archives
+  for `tess.exe` to the versioned release created by
+  `.github/workflows/release.yml`. The OSS GoReleaser `scoops:` publisher
+  publishes a manifest to a separate bucket repository under the same
+  owner. The owner must create that repository and a write token before
+  enabling publication.
+- The README documents Scoop installation, komorebi setup, the
+  `%USERPROFILE%\.config\tessera\profile.cue` path or
+  `TESSERA_PROFILE`, exe-stem `app` patterns, Windows `spawn` argv, task
+  registration, the komorebi licence, and that tess owns every rule on a
+  tess workspace, so static rules belong on other workspaces.
+- Winget is out of scope. A later release can add GoReleaser's winget
+  publisher, which opens a pull request to Microsoft's `winget-pkgs`.
 
-Gate: the W2 jobs pass with `./cmd/tess`. On Windows CI, `tess --version`
+Gate: W2 passes with `./cmd/tess`. On Windows CI, `tess --version`
 prints the version, and `tess wake` with no daemon exits 1 with
-`tess: daemon not running`.
+`tess: daemon not running`. `goreleaser release --snapshot --clean` in CI
+builds both Windows ZIPs and a Scoop manifest that points at them.
 
 ### W8 — Live smoke (manual)
 
-Install `tess.exe`, register the task, and check that:
+Install `tess.exe` from the Scoop bucket, register the task, and check that:
 
 - `tess apply` on the desk matches the profile;
 - unplugging runs the laptop converge through the daemon;
 - opening and closing a window converges the grid again;
-- after `komorebic stop` and `start`, tess re-subscribes and lays out the
-  desktop without `tess wake`;
-- after `taskkill /F` and a restart, tess re-subscribes within 30 s;
+- `komorebic stop` closes the event stream and does not restart komorebi;
+- `komorebic start` reconnects and runs layout without `tess wake`;
+- a `taskkill /F` crash of a daemon-started komorebi process causes a
+  restart and a display relayout within 30 s;
+- the daemon stops komorebi on exit only if it started it;
 - a daemon killed with a non-zero exit restarts within a minute, and
   `schtasks /Query /TN "tessera daemon" /XML` shows the shipped settings;
 - no console stays open after logon.
@@ -513,7 +550,7 @@ smoke.
 - [ ] W2 — Windows CI job
 - [ ] W3 — shared `internal/wm/spawn`
 - [ ] W4 — komorebi spike and fixtures
-- [ ] W5 — `internal/wm/komorebi` driver
-- [ ] W6 — `wm.EventStream` and daemon forwarding
-- [ ] W7 — Windows composition, console, task XML, README
+- [ ] W5 — `internal/wm/komorebi` driver, rules and `deviceId`
+- [ ] W6 — `wm.EventStream`, komorebi supervision and daemon forwarding
+- [ ] W7 — Windows composition, console, task XML, goreleaser and Scoop, README
 - [ ] W8 — live smoke

@@ -151,8 +151,8 @@ match UnixStream::connect(path) {
   repeat is harmless. `AddSubscriberSocketWithOptions` adds
   `filter_state_changes`.
 - `WindowManager::stop` (`window_manager.rs`) connects to each subscriber,
-  calls `shutdown(Shutdown::Both)`, removes `komorebi.sock` and exits. The
-  Ctrl-C path in `main.rs` dumps state and does the same.
+  calls `shutdown(Shutdown::Both)`, removes `komorebi.sock` and exits with
+  status 0. The Ctrl-C path in `main.rs` dumps state and does the same.
 - `WindowManagerEvent` (`window_manager_event.rs`) has Destroy,
   FocusChange, Hide, Cloak, Minimize, Show, Uncloak, MoveResizeStart,
   MoveResizeEnd, MouseCapture, Manage, Unmanage, Raise and TitleUpdate.
@@ -164,11 +164,15 @@ match UnixStream::connect(path) {
 
 - `GlobalState.workspace_rules` (`komorebi/src/state.rs`) lists the
   workspace rules. `ClearNamedWorkspaceRules`, `NamedWorkspaceRule` and
-  `InitialNamedWorkspaceRule` exist. A rule sent over the socket uses
-  `MatchingStrategy::Legacy` (`process_command.rs`), which is
-  `title.starts_with(&identifier.id) || title.ends_with(&identifier.id)`
-  (`window.rs`), not a regex. `ClearAllWorkspaceRules` also clears the
-  static config's rules until komorebi reloads it.
+  `InitialNamedWorkspaceRule` look up the named workspace and limit the
+  action to its rule entries (`process_command.rs`). Socket rules set
+  `MatchingStrategy::Legacy`. In `window.rs`, that strategy checks whether
+  the title starts or ends with the identifier; it is not a regex. The exe
+  property emitted in state is a filename such as `Code.exe`, so W4 check 8
+  must verify the actual exe match.
+  `ClearAllWorkspaceRules` clears the complete runtime rule list, including
+  rules loaded from static config; komorebi does not restore them until
+  reload. Do not use it to replace tess rules.
 - `commands.Rules` installs macOS rules: a `^.*$` catch-all to the laptop
   space, `Code` and `Linear` to displays, and `Finder` and an `AXDialog`
   subrole as unmanaged. The catch-all, `Finder` and `AXDialog` have no
@@ -176,8 +180,15 @@ match UnixStream::connect(path) {
 - `impl Serialize for Window` (`window.rs`) emits `exe` (for example
   `Code.exe`), `class` and `title`. `Monitor` (`monitor.rs`) has
   `size: Rect`, `device_id` and `serial_number_id`.
-  `engine.ResolveDisplay` matches when
+  `engine.ResolveDisplay` currently matches when
   `display.Frame.W == float64(spec.Width)` (`internal/engine/matcher.go`).
+- Yabai's display serializer emits `uuid` when the `uuid` display property
+  is selected (`display.c`). `CGDisplayCreateUUIDFromDisplayID` supplies
+  it. `RawYabaiDisplay` currently parses `index`, `frame` and `spaces`
+  only (`internal/wm/yabai/normalize.go`); W5 can add a `uuid` field and
+  request it in the display query. This is a stable device identity
+  *[INFERENCE: the project must confirm the field remains stable across
+  reconnects on supported hardware]*.
 - `komorebi-layouts/src/custom_layout.rs` gives a width only to
   `Column::Primary` (`ColumnWidth::WidthPercentage`).
 
