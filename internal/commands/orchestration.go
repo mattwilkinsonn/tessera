@@ -80,6 +80,10 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 			return err
 		}
 	}
+	on := true
+	if err := ops.Add(ctx, wm.Rule{Label: "auto:manage-standard", App: "^.*$", Subrole: "AXStandardWindow", Manage: &on}); err != nil {
+		return err
+	}
 	manage := false
 	if err := ops.Add(ctx, wm.Rule{Label: "auto:finder", App: "^Finder$", Manage: &manage}); err != nil {
 		return err

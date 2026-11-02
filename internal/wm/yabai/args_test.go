@@ -47,6 +47,7 @@ func TestYabaiArgs(t *testing.T) {
 	display := 1
 	space := 2
 	manage := false
+	manageOn := true
 	tests := []struct {
 		name string
 		got  []string
@@ -88,6 +89,7 @@ func TestYabaiArgs(t *testing.T) {
 		{name: "add display rule", got: RuleAddArgs(RuleAdd{Label: "auto:code", App: "^Code$", Display: &display}), want: []string{"-m", "rule", "--add", "label=auto:code", "app=^Code$", "display=1"}},
 		{name: "add space rule", got: RuleAddArgs(RuleAdd{Label: "auto:default", App: "^.*$", Space: &space}), want: []string{"-m", "rule", "--add", "label=auto:default", "app=^.*$", "space=2"}},
 		{name: "add manage rule", got: RuleAddArgs(RuleAdd{Label: "auto:akiflow-dialog", App: "^Akiflow$", Subrole: "AXDialog", Manage: &manage}), want: []string{"-m", "rule", "--add", "label=auto:akiflow-dialog", "app=^Akiflow$", "subrole=AXDialog", "manage=off"}},
+		{name: "add standard-window manage rule", got: RuleAddArgs(RuleAdd{Label: "auto:manage-standard", App: "^.*$", Subrole: "AXStandardWindow", Manage: &manageOn}), want: []string{"-m", "rule", "--add", "label=auto:manage-standard", "app=^.*$", "subrole=AXStandardWindow", "manage=on"}},
 		{name: "apply rules", got: RuleApplyArgs(), want: []string{"-m", "rule", "--apply"}},
 		{name: "add labelled signal", got: SignalAddArgs(wm.EventDisplayAdded, "tessera-display_added", "echo display_added | nc -U /tmp/tessera-daemon.sock"), want: []string{"-m", "signal", "--add", "event=display_added", "label=tessera-display_added", "action=echo display_added | nc -U /tmp/tessera-daemon.sock"}},
 	}
@@ -394,6 +396,7 @@ func TestArgvCorpus(t *testing.T) {
 		RuleListArgs(), RuleRemoveArgs("auto:code"), RuleAddArgs(RuleAdd{Label: "auto:code", App: "^Code$"}),
 		RuleAddArgs(RuleAdd{Label: "auto:code", App: "^Code$", Display: new(1)}),
 		RuleAddArgs(RuleAdd{Label: "auto:default", App: "^.*$", Space: new(2)}),
+		RuleAddArgs(RuleAdd{Label: "auto:manage-standard", App: "^.*$", Subrole: "AXStandardWindow", Manage: new(true)}),
 		RuleAddArgs(RuleAdd{Label: "auto:akiflow-dialog", App: "^Akiflow$", Subrole: "AXDialog", Manage: new(false)}),
 		RuleApplyArgs(), SignalAddArgs(wm.EventDisplayAdded, "tessera-display_added", "echo display_added | nc -U /tmp/tessera-daemon.sock"),
 	}
