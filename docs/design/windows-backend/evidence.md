@@ -166,10 +166,10 @@ match UnixStream::connect(path) {
   workspace rules. `ClearNamedWorkspaceRules`, `NamedWorkspaceRule` and
   `InitialNamedWorkspaceRule` look up the named workspace and limit the
   action to its rule entries (`process_command.rs`). Socket rules set
-  `MatchingStrategy::Legacy`. In `window.rs`, that strategy checks whether
-  the title starts or ends with the identifier; it is not a regex. The exe
-  property emitted in state is a filename such as `Code.exe`, so W4 check 8
-  must verify the actual exe match.
+  `MatchingStrategy::Legacy`. In `window.rs` (`should_act_individual`),
+  `Legacy` matches `Title` and `Class` by prefix or suffix, and `Exe` and
+  `Path` by equality; it is not a regex. `Exe` is the file name, such as
+  `Code.exe`. W4 check 9 confirms this live.
   `ClearAllWorkspaceRules` clears the complete runtime rule list, including
   rules loaded from static config; komorebi does not restore them until
   reload. Do not use it to replace tess rules.

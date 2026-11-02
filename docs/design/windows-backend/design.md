@@ -374,7 +374,7 @@ shape. Record the answers in `evidence.md` § Spike results.
 | 6 | notification framing and size; `komorebic stop` against `taskkill /F` | one connection, no newline; an empty connection against none |
 | 7 | settle time after `WorkspaceLayout` and after a focus sequence | sets `SettleUnit` |
 | 8 | a GUI launcher spawned with no window flag | no console flash |
-| 9 | a socket-sent `NamedWorkspaceRule` on a tess-labelled workspace | it matches the intended exe *[INFERENCE: socket rules use `MatchingStrategy::Legacy`]* |
+| 9 | a socket-sent `NamedWorkspaceRule` with an `Exe` identifier such as `Code.exe` on a tess-labelled workspace | the window lands there; a window whose title merely contains `Code.exe` does not |
 | 10 | `ClearNamedWorkspaceRules` on one tess workspace | rules on other workspaces stay |
 
 Interfaces: `evidence.md` § Spike results, and the scrubbed fixtures
@@ -408,17 +408,20 @@ Interfaces:
   sends `ClearAllWorkspaceRules`, which also clears static config rules.
   The named clear removes every rule on that workspace, static ones too,
   so tess owns all rules on its workspaces (`evidence.md` § Rules,
-  windows and monitors). The Windows rule set matches Code, Linear and
-  Akiflow by exe. It drops the macOS catch-all, Finder and AXDialog rules.
+  windows and monitors). The Windows rule set sends `Exe` identifiers,
+  the app stem plus `.exe`, for Code, Linear and Akiflow. `Legacy` matches
+  `Exe` by equality. It drops the macOS catch-all, Finder and AXDialog
+  rules.
 - `internal/config/schema.cue` adds an optional `deviceId` to each display
   spec, and `internal/config` adds `DisplaySpec.DeviceID`.
   `wm.Display.DeviceID` carries komorebi's `Monitor.device_id`. W5 also
   adds `uuid` to the yabai display query and `RawYabaiDisplay`, so macOS
   fills it too *[INFERENCE: the UUID stays stable across reconnects]*.
-  When `deviceId` is set, `engine.ResolveDisplay` matches only that
-  device. A missing device does not match, like a missing width; it never
-  falls back to a different display. Without `deviceId`, width matching
-  is unchanged.
+  `engine.displayNameForWidth` becomes `displayNameFor(profile, display)`,
+  which matches `deviceId` first and width only for a spec without one.
+  `ResolveDisplay`, `ResolveDesk` (topology) and `displayOfSpace`
+  (per-display weights) all use it. A set `deviceId` that no display has
+  matches nothing; it never falls back to another display of that width.
 - `func DataDir() (string, error)` returns `TESS_KOMOREBI_DIR` if set.
   Otherwise it returns `os.UserCacheDir()` joined with `komorebi`, and
   passes that function's error through.
@@ -452,8 +455,10 @@ Gate:
 - An unknown `State` member survives a guarded edit byte for byte.
 - A fixture with a required member removed gives an error that names it.
   A full-shape fixture passes whatever release it came from.
-- A profile `deviceId` picks the right monitor when two widths match, and
-  an absent device matches nothing.
+- Two displays of one width with distinct `deviceId`s resolve to the right
+  names in `ResolveDisplay`, select the right `ResolveDesk` topology, and
+  get each display's weights through `displayOfSpace`. An absent device
+  matches nothing.
 - `wm.RuleOps` goldens send only named-workspace rule messages, never
   `ClearAllWorkspaceRules`.
 
@@ -506,12 +511,15 @@ Interfaces:
   `os.Stderr`. `main.go` calls it before `daemon.Run`, points `slog` at
   it, and joins its `Close` error into the exit error.
 - The Task Scheduler task in `docs/windows/tess-daemon.xml` (§ Supervision).
-- `.goreleaser.yaml` adds `windows/amd64` and `windows/arm64` ZIP archives
-  for `tess.exe` to the versioned release created by
-  `.github/workflows/release.yml`. The OSS GoReleaser `scoops:` publisher
-  publishes a manifest to a separate bucket repository under the same
-  owner. The owner must create that repository and a write token before
-  enabling publication.
+- `.goreleaser.yaml` builds `tess.exe` for `windows/amd64` and
+  `windows/arm64` as ZIP archives, with `release.mode: append`. Its
+  OSS `scoops:` publisher pushes a manifest to a separate bucket
+  repository under the same owner.
+- `.github/workflows/release.yml` keeps `gh release create` for a new
+  `VERSION`, then checks out that tag with full history and runs
+  `goreleaser release --clean`. It uploads to the existing release and
+  pushes the manifest with a bucket token secret. The owner creates the
+  bucket repository and that secret first.
 - The README documents Scoop installation, komorebi setup, the
   `%USERPROFILE%\.config\tessera\profile.cue` path or
   `TESSERA_PROFILE`, exe-stem `app` patterns, Windows `spawn` argv, task
@@ -522,8 +530,10 @@ Interfaces:
 
 Gate: W2 passes with `./cmd/tess`. On Windows CI, `tess --version`
 prints the version, and `tess wake` with no daemon exits 1 with
-`tess: daemon not running`. `goreleaser release --snapshot --clean` in CI
-builds both Windows ZIPs and a Scoop manifest that points at them.
+`tess: daemon not running`. `goreleaser check` and
+`goreleaser release --snapshot --clean` pass in CI and build both ZIPs and
+a manifest that points at them. The first tagged release after W7 has both
+ZIPs attached, and the bucket has its manifest.
 
 ### W8 — Live smoke (manual)
 
