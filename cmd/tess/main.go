@@ -42,11 +42,8 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 				}
 				profile = loaded
 			}
-			paths, err := effects.DefaultPaths(ctx)
-			if err != nil {
-				return 1, err
-			}
-			return commands.Run(ctx, profile, command, yabai.New(yabaiPath()), commands.Env{Paths: paths, Stderr: stderr})
+			// Unset paths resolve lazily, so commands that need none skip getconf.
+			return commands.Run(ctx, profile, command, yabai.New(yabaiPath()), commands.Env{Stderr: stderr})
 		},
 		DaemonOptions: func(ctx context.Context, command commands.DaemonCommand) (daemon.Options, error) {
 			home, err := os.UserHomeDir()

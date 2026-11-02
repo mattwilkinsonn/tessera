@@ -10,7 +10,7 @@ import (
 )
 
 func TestResolveTempDir(t *testing.T) {
-	t.Run("Darwin user temp dir ignores TMPDIR", func(t *testing.T) {
+	t.Run("the darwin user temp dir wins over tmpdir", func(t *testing.T) {
 		got := resolveTempDir("darwin", "/tmp/from-TMPDIR", func() (string, error) {
 			return "/private/var/folders/user/T/", nil
 		})
@@ -19,7 +19,7 @@ func TestResolveTempDir(t *testing.T) {
 		}
 	})
 
-	t.Run("Darwin lookup failure falls back to TMPDIR", func(t *testing.T) {
+	t.Run("a failed darwin lookup falls back to tmpdir", func(t *testing.T) {
 		got := resolveTempDir("darwin", "/tmp/from-TMPDIR", func() (string, error) {
 			return "", errors.New("getconf unavailable")
 		})
@@ -28,7 +28,7 @@ func TestResolveTempDir(t *testing.T) {
 		}
 	})
 
-	t.Run("non-Darwin uses TMPDIR without querying getconf", func(t *testing.T) {
+	t.Run("other platforms use tmpdir without running getconf", func(t *testing.T) {
 		called := false
 		got := resolveTempDir("linux", "/tmp/from-TMPDIR", func() (string, error) {
 			called = true

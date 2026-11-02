@@ -67,7 +67,7 @@ type serveResult struct{ err error }
 
 func startServe(ctx context.Context, ln net.Listener, h *Hub, wake func(context.Context) error) <-chan serveResult {
 	done := make(chan serveResult, 1)
-	go func() { done <- serveResult{Serve(ctx, ln, h, wake)} }()
+	go func() { done <- serveResult{Serve(ctx, ln, h, Wakes{Run: wake})} }()
 	return done
 }
 
@@ -115,6 +115,29 @@ func TestServeDebouncesAndWakes(t *testing.T) {
 		})
 	})
 
+	t.Run("drops unknown lines and closes silent connections after one second", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			ln := newPipeListener()
+			var display, flex recorder
+			done := startServe(ctx, ln, NewHub(display.work, flex.work), noWake)
+			ln.send(t, "bogus")
+			silent := ln.dial()
+			start := time.Now()
+			_, err := io.ReadAll(silent)
+			assert.NilError(t, err)
+			assert.Equal(t, time.Since(start), time.Second)
+			assert.NilError(t, silent.Close())
+			<-time.After(time.Minute)
+			synctest.Wait()
+			assert.Equal(t, len(display.elapsed(start))+len(flex.elapsed(start)), 0)
+			cancel()
+			assert.NilError(t, (<-done).err)
+		})
+	})
+}
+
+func TestServeStartupReadiness(t *testing.T) {
 	t.Run("startup wake waits for readiness while socket wakes run at once", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -131,7 +154,7 @@ func TestServeDebouncesAndWakes(t *testing.T) {
 				}
 			}
 			done := make(chan error, 1)
-			go func() { done <- serve(ctx, ln, NewHub(idle, idle), wake, startupReady) }()
+			go func() { done <- Serve(ctx, ln, NewHub(idle, idle), Wakes{Run: wake, Ready: startupReady}) }()
 			synctest.Wait()
 			assert.Equal(t, len(wakes), 0, "startup wake ran before readiness")
 			ln.send(t, "wake")
@@ -153,7 +176,7 @@ func TestServeDebouncesAndWakes(t *testing.T) {
 			wake := func(context.Context) error { wakes <- struct{}{}; return errors.New("cascade failed") }
 			startupReady := func(context.Context) error { return errors.New("yabai not ready") }
 			done := make(chan error, 1)
-			go func() { done <- serve(ctx, ln, NewHub(idle, idle), wake, startupReady) }()
+			go func() { done <- Serve(ctx, ln, NewHub(idle, idle), Wakes{Run: wake, Ready: startupReady}) }()
 			synctest.Wait()
 			assert.Equal(t, len(wakes), 0, "startup wake ran after failed readiness")
 			ln.send(t, "wake")
@@ -163,24 +186,20 @@ func TestServeDebouncesAndWakes(t *testing.T) {
 		})
 	})
 
-	t.Run("drops unknown lines and closes silent connections after one second", func(t *testing.T) {
+	t.Run("cancel during readiness returns without a startup wake", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
-			ln := newPipeListener()
-			var display, flex recorder
-			done := startServe(ctx, ln, NewHub(display.work, flex.work), noWake)
-			ln.send(t, "bogus")
-			silent := ln.dial()
-			start := time.Now()
-			_, err := io.ReadAll(silent)
-			assert.NilError(t, err)
-			assert.Equal(t, time.Since(start), time.Second)
-			assert.NilError(t, silent.Close())
-			<-time.After(time.Minute)
+			woke := false
+			wake := func(context.Context) error { woke = true; return errors.New("cascade failed") }
+			startupReady := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+			done := make(chan error, 1)
+			go func() {
+				done <- Serve(ctx, newPipeListener(), NewHub(idle, idle), Wakes{Run: wake, Ready: startupReady})
+			}()
 			synctest.Wait()
-			assert.Equal(t, len(display.elapsed(start))+len(flex.elapsed(start)), 0)
 			cancel()
-			assert.NilError(t, (<-done).err)
+			assert.NilError(t, <-done)
+			assert.Assert(t, !woke, "startup wake ran after cancel")
 		})
 	})
 }
@@ -210,7 +229,7 @@ func TestServeTimesOutAndCancelsWork(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			}
-			err := Serve(t.Context(), newPipeListener(), NewHub(idle, idle), wedged)
+			err := Serve(t.Context(), newPipeListener(), NewHub(idle, idle), Wakes{Run: wedged})
 			assert.Assert(t, errors.Is(err, context.DeadlineExceeded), "Serve() = %v", err)
 		})
 	})

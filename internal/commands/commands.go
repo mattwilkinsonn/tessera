@@ -79,7 +79,8 @@ func Run(ctx context.Context, profile *config.Profile, command Command, driver w
 
 func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger, io.Writer, error) {
 	paths := env.Paths
-	if paths.ApplyLock == "" || paths.LaptopLock == "" || paths.SignalGuard == "" || paths.FlexOrder == "" || paths.DaemonSocket == "" {
+	missing := paths.ApplyLock == "" || paths.LaptopLock == "" || paths.SignalGuard == "" || paths.FlexOrder == "" || paths.DaemonSocket == ""
+	if missing {
 		defaults, err := effects.DefaultPaths(ctx)
 		if err != nil {
 			return effects.Paths{}, nil, nil, fmt.Errorf("resolving default paths: %w", err)

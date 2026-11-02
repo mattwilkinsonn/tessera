@@ -118,6 +118,8 @@ func StartupReadiness(driver wm.Driver) func(context.Context) error {
 	}
 }
 
+// waitForYabai polls query until it succeeds or timeout passes. The bound holds
+// only if query honours ctx, as the yabai driver's exec.CommandContext does.
 func waitForYabai(ctx context.Context, query func(context.Context) error, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -175,7 +177,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 			}
 		}))
 	}
-	if err := serve(ctx, socketOnly{ln}, NewHub(opts.Display, opts.Flex, hubOpts...), opts.Wake, opts.WakeReady); err != nil {
+	if err := Serve(ctx, socketOnly{ln}, NewHub(opts.Display, opts.Flex, hubOpts...), Wakes{Run: opts.Wake, Ready: opts.WakeReady}); err != nil {
 		return err
 	}
 	if len(owned) == 0 {
