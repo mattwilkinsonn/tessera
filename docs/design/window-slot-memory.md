@@ -25,7 +25,9 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
 - **Claiming.** A plan reserves the windows its own keys remember. A window is reserved only while it still matches the spec its key names (`matchesSpec`, `internal/engine/model.go`), so a title-specific window whose title drifts is not held. Sometimes two active keys remember the same window, for example when an AW-only topology moved a G9 window into an AW slot that is also active on the full desk. Then the entry recorded under the plan's own display set wins, and the higher sequence number breaks a remaining tie. The losing key counts as unremembered for this plan. Returning to a display set therefore restores that set's own layout. Then, for each key in plan order:
   1. Take the remembered window if it is a live, unclaimed candidate (not minimized or floating). Memory beats `preferDisplay`, because honouring the remembered slot is the point of the feature.
   2. Otherwise take an unclaimed candidate that no key in this plan reserves, keeping today's display preference.
-  3. Otherwise leave the slot empty for this run. A window reserved by a later key is never taken. So minimizing the window in slot 1 empties slot 1 and leaves slot 2 alone. Today a minimized window is not laid out either.
+  3. Otherwise leave the slot empty for this run. A reserved window is never taken by another key, on any display, so minimizing the window in slot 1 empties slot 1 and leaves slot 2 alone. Today a minimized window is not laid out either.
+
+  So within one display set, two entries never share a window. A conflict needs entries recorded under two different display sets, which is the case the display-set rule settles.
 - **Recording.** After a plan's ops succeed, the command records key → window id for every slot that was filled. Each entry is stamped with the plan's display set (sorted profile display names, e.g. `aw,laptop`) and a sequence number the file increments. A window can hold one key per topology, for example `desk:g9/browser#1` and `desk:aw/browser#3`.
 - **Pruning.** An entry is dropped when:
   - its window id no longer exists,
@@ -72,7 +74,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
   - A remembered window wins its key whatever the query order.
   - Memory beats `preferDisplay`.
   - With slot 1's window minimized and slot 2's live, slot 1 is empty and slot 2 keeps its window.
-  - A reserved window is never taken by an earlier key.
+  - A reserved window is never taken by another key, including a fallback on another display (an empty AW slot cannot take a window a G9 key reserves).
   - With two active keys remembering one window, the entry recorded under the current display set gets it, even when the other has a higher `Seq`. With neither or both matching, the higher `Seq` gets it. The losing key claims normally.
   - A remembered Ghostty window whose title now matches another spec is not reserved and can fill that other spec's slot.
   - With empty memory, claims match today's output (existing `TestDeskPlan` stays green).
@@ -88,7 +90,8 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
   - `func RecordSlots(memory SlotMemory, filled map[SlotKey]int, displays string, windows []wm.Window) SlotMemory`: bumps `Seq`, stamps each filled key with it and `displays`, and leaves other keys alone.
 - Tests:
   - Full desk → `aw-laptop` → full desk with the same windows and reshuffled query order. The AW's first two browser slots keep their windows across all three steps. The browsers the full desk had on the G9 return to their G9 slots in step 3, even though `aw-laptop` laid them out on the AW in step 2.
-  - The same round trip where an AW browser is closed before step 2, so a G9 window fills `desk:aw/browser#2` in step 2. In step 3 that window returns to its G9 slot, and `desk:aw/browser#2` claims normally.
+  - The same round trip where an AW browser closes during step 2, so a G9 window fills `desk:aw/browser#2` under `aw,laptop`. In step 3 (`aw,g9,laptop`) that window returns to its G9 slot, and `desk:aw/browser#2` claims normally.
+  - Repeated full-desk runs with one AW browser closed never move a G9 window to the AW: the empty AW slot stays empty, or takes an unreserved window.
   - Desk → laptop-only → desk returns every desk slot, including the desk's laptop stack.
   - A desk with two layouts on one display, both naming `browser`, gets distinct keys and keeps each window in its slot.
   - Prune drops dead ids, app-changed ids, and spec-mismatched entries. It keeps minimized and floating windows.
