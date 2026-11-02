@@ -104,7 +104,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
     1. re-queries windows,
     2. writes `RecordSlots`, then `PruneSlots`.
   - `laptop` holds the lock the same way around `RunConverge`, recording `final.Filled`.
-  - README gets one line on where memory lives and that it resets on app restart.
+  - README gets one line. Memory lives in the cache file and survives tess and daemon restarts. When an app restarts, its windows get new ids, so pruning drops that app's entries and the next layout learns them again. Deleting the file resets everything.
 - Tests:
   - Read/write round trip.
   - A missing file and a corrupt file both return empty.
@@ -112,6 +112,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
   - A fake-driver `Apply` blocks inside planning while it holds the lock. A concurrent `laptop` does not query the world until `Apply` returns. The test also runs with the roles swapped.
   - A fake-driver `Apply` persists slots. A second `Apply` with reshuffled query order places the same windows.
   - A fake-driver `Laptop` run starts from persisted slots, reshuffles query order during convergence, places pinned windows by memory, and persists the result without changing `desk:` keys.
+  - After an app restart (same app, new window ids), a fake-driver `Apply` drops the old entries, lays the new windows out as today, and records their keys.
 
 ## Tasks
 
