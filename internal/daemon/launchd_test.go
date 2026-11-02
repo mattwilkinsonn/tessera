@@ -268,6 +268,7 @@ func TestRun(t *testing.T) {
 				Services:  []Candidates{{yabai}, {skhd}},
 				Display:   idle,
 				Flex:      idle,
+				WakeReady: func(context.Context) error { return nil },
 				Wake: func(context.Context) error {
 					woke <- struct{}{}
 					return nil
@@ -310,6 +311,7 @@ func TestRun(t *testing.T) {
 				Services:  []Candidates{{skhd}},
 				Display:   idle,
 				Flex:      idle,
+				WakeReady: func(context.Context) error { return nil },
 				Wake: func(context.Context) error {
 					woke <- struct{}{}
 					return nil
@@ -340,6 +342,7 @@ func TestRun(t *testing.T) {
 				Launchctl: lc,
 				Display:   idle,
 				Flex:      idle,
+				WakeReady: func(context.Context) error { return nil },
 				Wake: func(context.Context) error {
 					woke <- struct{}{}
 					return nil

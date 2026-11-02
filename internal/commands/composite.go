@@ -26,7 +26,7 @@ const (
 
 // Apply lays out each present display and nudges sketchybar once.
 func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
-	paths, nudge, stderr, err := normalizedEnv(env)
+	paths, nudge, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func Laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 }
 
 func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env, explicit bool) (LaptopResult, error) {
-	paths, nudge, stderr, err := normalizedEnv(env)
+	paths, nudge, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
 		return "", err
 	}

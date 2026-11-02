@@ -18,13 +18,30 @@ const (
 	wakeMessage = "wake"
 )
 
-// Serve runs the wake routine at startup and dispatches one line per connection until ctx ends.
+// Serve runs the startup wake and dispatches one line per connection until ctx ends.
 // It closes ln and waits for every goroutine it started. A wedged work call or accept failure ends it with that error.
 func Serve(ctx context.Context, ln net.Listener, h *Hub, wake func(context.Context) error) error {
+	return serve(ctx, ln, h, wake, nil)
+}
+
+func serve(ctx context.Context, ln net.Listener, h *Hub, wake, startupReady func(context.Context) error) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wakes := make(chan struct{}, 1)
-	wakes <- struct{}{}
+	if startupReady != nil {
+		wg.Go(func() {
+			if err := startupReady(ctx); err != nil {
+				slog.WarnContext(ctx, "skipping startup wake; a later wake retries", "error", err)
+				return
+			}
+			select {
+			case <-ctx.Done():
+			case wakes <- struct{}{}:
+			}
+		})
+	} else {
+		wakes <- struct{}{}
+	}
 	acceptErr := make(chan error, 1)
 
 	wg.Go(func() {

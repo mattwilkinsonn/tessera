@@ -1,12 +1,44 @@
 package effects
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestResolveTempDir(t *testing.T) {
+	t.Run("Darwin user temp dir ignores TMPDIR", func(t *testing.T) {
+		got := resolveTempDir("darwin", "/tmp/from-TMPDIR", func() (string, error) {
+			return "/private/var/folders/user/T/", nil
+		})
+		if want := filepath.Clean("/private/var/folders/user/T"); got != want {
+			t.Fatalf("resolveTempDir() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("Darwin lookup failure falls back to TMPDIR", func(t *testing.T) {
+		got := resolveTempDir("darwin", "/tmp/from-TMPDIR", func() (string, error) {
+			return "", errors.New("getconf unavailable")
+		})
+		if got != "/tmp/from-TMPDIR" {
+			t.Fatalf("resolveTempDir() = %q, want TMPDIR fallback", got)
+		}
+	})
+
+	t.Run("non-Darwin uses TMPDIR without querying getconf", func(t *testing.T) {
+		called := false
+		got := resolveTempDir("linux", "/tmp/from-TMPDIR", func() (string, error) {
+			called = true
+			return "/private/var/folders/user/T", nil
+		})
+		if got != "/tmp/from-TMPDIR" || called {
+			t.Fatalf("resolveTempDir() = %q, resolver called %t", got, called)
+		}
+	})
+}
 
 func TestIsQuiet(t *testing.T) {
 	t.Run("age exactly equal to the window counts as quiet", func(t *testing.T) {
