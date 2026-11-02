@@ -520,6 +520,9 @@ Interfaces:
   `goreleaser release --clean`. It uploads to the existing release and
   pushes the manifest with a bucket token secret. The owner creates the
   bucket repository and that secret first.
+- `.github/workflows/ci.yml` adds a step with
+  `goreleaser/goreleaser-action` that runs `goreleaser check` and
+  `goreleaser release --snapshot --clean` on each PR.
 - The README documents Scoop installation, komorebi setup, the
   `%USERPROFILE%\.config\tessera\profile.cue` path or
   `TESSERA_PROFILE`, exe-stem `app` patterns, Windows `spawn` argv, task
