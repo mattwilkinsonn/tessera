@@ -16,11 +16,13 @@ import (
 )
 
 const (
-	ncPath          = "/usr/bin/nc"
-	signalPrefix    = "tessera-"
-	barEvent        = "yabai_spaces_changed"
-	displaySettled  = "display_relatch"
-	bootoutDeadline = 5 * time.Second
+	ncPath                   = "/usr/bin/nc"
+	signalPrefix             = "tessera-"
+	barEvent                 = "yabai_spaces_changed"
+	displaySettled           = "display_relatch"
+	bootoutDeadline          = 5 * time.Second
+	startupReadinessTimeout  = 60 * time.Second
+	startupReadinessInterval = 250 * time.Millisecond
 )
 
 // RegisterSignals labels every placement signal with a socket notifier and the sketchybar pair with its trigger.
@@ -71,7 +73,7 @@ func FlexWork(profile *config.Profile, driver wm.Driver, env commands.Env) Work 
 		}
 		guard := env.Paths.SignalGuard
 		if guard == "" {
-			defaults, err := effects.DefaultPaths()
+			defaults, err := effects.DefaultPaths(ctx)
 			if err != nil {
 				return Settled, fmt.Errorf("resolving default paths: %w", err)
 			}
@@ -105,6 +107,37 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 	}
 }
 
+// StartupReadiness waits for yabai to answer a display query before the daemon's
+// first wake. At login launchd can start the daemon before yabai serves queries.
+func StartupReadiness(driver wm.Driver) func(context.Context) error {
+	return func(ctx context.Context) error {
+		return waitForYabai(ctx, func(ctx context.Context) error {
+			_, err := driver.QueryDisplays(ctx)
+			return err
+		}, startupReadinessTimeout)
+	}
+}
+
+// waitForYabai polls query until it succeeds or timeout passes. The bound holds
+// only if query honours ctx, as the yabai driver's exec.CommandContext does.
+func waitForYabai(ctx context.Context, query func(context.Context) error, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(startupReadinessInterval)
+	defer ticker.Stop()
+	for {
+		err := query(ctx)
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("yabai not ready: %w", errors.Join(err, ctx.Err()))
+		case <-ticker.C:
+		}
+	}
+}
+
 // Options configures Run.
 type Options struct {
 	Socket    string
@@ -115,6 +148,7 @@ type Options struct {
 	Display   Work
 	Flex      Work
 	Wake      func(context.Context) error
+	WakeReady func(context.Context) error
 	Nudge     effects.Nudger
 }
 
@@ -143,7 +177,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 			}
 		}))
 	}
-	if err := Serve(ctx, socketOnly{ln}, NewHub(opts.Display, opts.Flex, hubOpts...), opts.Wake); err != nil {
+	if err := Serve(ctx, socketOnly{ln}, NewHub(opts.Display, opts.Flex, hubOpts...), Wakes{Run: opts.Wake, Ready: opts.WakeReady}); err != nil {
 		return err
 	}
 	if len(owned) == 0 {

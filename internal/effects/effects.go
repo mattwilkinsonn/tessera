@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec" //nolint:depguard // Sketchybar is an intentional subprocess seam.
+	"os/exec" //nolint:depguard // Sketchybar and Darwin temp-dir discovery are intentional subprocess seams.
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -34,8 +35,29 @@ type Paths struct {
 	DaemonSocket string
 }
 
+func darwinUserTempDir(ctx context.Context) (string, error) {
+	output, err := exec.CommandContext(ctx, "/usr/bin/getconf", "DARWIN_USER_TEMP_DIR").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// resolveTempDir prefers the per-user Darwin temp dir: launchd agents and shells
+// can carry different $TMPDIR values, and the socket must be the same for both.
+func resolveTempDir(goos, fallback string, lookupDarwin func() (string, error)) string {
+	if goos != "darwin" {
+		return fallback
+	}
+	dir, err := lookupDarwin()
+	if err != nil || dir == "" {
+		return fallback
+	}
+	return filepath.Clean(dir)
+}
+
 // DefaultPaths returns the paths shared by commands and the daemon.
-func DefaultPaths() (Paths, error) {
+func DefaultPaths(ctx context.Context) (Paths, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Paths{}, err
@@ -44,7 +66,7 @@ func DefaultPaths() (Paths, error) {
 	if cache == "" {
 		cache = filepath.Join(home, ".cache")
 	}
-	tmpDir := os.TempDir()
+	tmpDir := resolveTempDir(runtime.GOOS, os.TempDir(), func() (string, error) { return darwinUserTempDir(ctx) })
 	return Paths{
 		ApplyLock:    filepath.Join(tmpDir, "tessera-apply.lock"),
 		LaptopLock:   filepath.Join(tmpDir, "tessera-laptop.lock"),

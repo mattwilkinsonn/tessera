@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -76,26 +77,19 @@ func Run(ctx context.Context, profile *config.Profile, command Command, driver w
 	}
 }
 
-func normalizedEnv(env Env) (effects.Paths, effects.Nudger, io.Writer, error) {
-	defaults, err := effects.DefaultPaths()
-	if err != nil {
-		return effects.Paths{}, nil, nil, fmt.Errorf("resolving default paths: %w", err)
-	}
+func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger, io.Writer, error) {
 	paths := env.Paths
-	if paths.ApplyLock == "" {
-		paths.ApplyLock = defaults.ApplyLock
-	}
-	if paths.LaptopLock == "" {
-		paths.LaptopLock = defaults.LaptopLock
-	}
-	if paths.SignalGuard == "" {
-		paths.SignalGuard = defaults.SignalGuard
-	}
-	if paths.FlexOrder == "" {
-		paths.FlexOrder = defaults.FlexOrder
-	}
-	if paths.DaemonSocket == "" {
-		paths.DaemonSocket = defaults.DaemonSocket
+	missing := paths.ApplyLock == "" || paths.LaptopLock == "" || paths.SignalGuard == "" || paths.FlexOrder == "" || paths.DaemonSocket == ""
+	if missing {
+		defaults, err := effects.DefaultPaths(ctx)
+		if err != nil {
+			return effects.Paths{}, nil, nil, fmt.Errorf("resolving default paths: %w", err)
+		}
+		paths.ApplyLock = cmp.Or(paths.ApplyLock, defaults.ApplyLock)
+		paths.LaptopLock = cmp.Or(paths.LaptopLock, defaults.LaptopLock)
+		paths.SignalGuard = cmp.Or(paths.SignalGuard, defaults.SignalGuard)
+		paths.FlexOrder = cmp.Or(paths.FlexOrder, defaults.FlexOrder)
+		paths.DaemonSocket = cmp.Or(paths.DaemonSocket, defaults.DaemonSocket)
 	}
 	nudge := env.Nudge
 	if nudge == nil {

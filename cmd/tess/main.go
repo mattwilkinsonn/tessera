@@ -42,11 +42,8 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 				}
 				profile = loaded
 			}
-			paths, err := effects.DefaultPaths()
-			if err != nil {
-				return 1, err
-			}
-			return commands.Run(ctx, profile, command, yabai.New(yabaiPath()), commands.Env{Paths: paths, Stderr: stderr})
+			// Unset paths resolve lazily, so commands that need none skip getconf.
+			return commands.Run(ctx, profile, command, yabai.New(yabaiPath()), commands.Env{Stderr: stderr})
 		},
 		DaemonOptions: func(ctx context.Context, command commands.DaemonCommand) (daemon.Options, error) {
 			home, err := os.UserHomeDir()
@@ -57,7 +54,7 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 			if err != nil {
 				return daemon.Options{}, err
 			}
-			paths, err := effects.DefaultPaths()
+			paths, err := effects.DefaultPaths(ctx)
 			if err != nil {
 				return daemon.Options{}, err
 			}
@@ -71,6 +68,7 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 				Services:  daemon.DefaultServices(home),
 				Display:   daemon.DisplayWork(profile, driver, env),
 				Flex:      daemon.FlexWork(profile, driver, env),
+				WakeReady: daemon.StartupReadiness(driver),
 				Wake:      daemon.WakeRoutine(profile, driver, env, paths.DaemonSocket),
 				Nudge:     effects.NudgeSketchybar,
 			}, nil

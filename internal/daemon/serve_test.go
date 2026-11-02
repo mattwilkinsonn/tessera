@@ -67,7 +67,7 @@ type serveResult struct{ err error }
 
 func startServe(ctx context.Context, ln net.Listener, h *Hub, wake func(context.Context) error) <-chan serveResult {
 	done := make(chan serveResult, 1)
-	go func() { done <- serveResult{Serve(ctx, ln, h, wake)} }()
+	go func() { done <- serveResult{Serve(ctx, ln, h, Wakes{Run: wake})} }()
 	return done
 }
 
@@ -137,6 +137,73 @@ func TestServeDebouncesAndWakes(t *testing.T) {
 	})
 }
 
+func TestServeStartupReadiness(t *testing.T) {
+	t.Run("startup wake waits for readiness while socket wakes run at once", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			ln := newPipeListener()
+			wakes := make(chan struct{}, 4)
+			wake := func(context.Context) error { wakes <- struct{}{}; return errors.New("cascade failed") }
+			ready := make(chan struct{})
+			startupReady := func(ctx context.Context) error {
+				select {
+				case <-ready:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			done := make(chan error, 1)
+			go func() { done <- Serve(ctx, ln, NewHub(idle, idle), Wakes{Run: wake, Ready: startupReady}) }()
+			synctest.Wait()
+			assert.Equal(t, len(wakes), 0, "startup wake ran before readiness")
+			ln.send(t, "wake")
+			<-wakes
+			close(ready)
+			<-wakes
+			synctest.Wait()
+			assert.Equal(t, len(wakes), 0)
+			cancel()
+			assert.NilError(t, <-done)
+		})
+	})
+
+	t.Run("failed readiness skips the startup wake and keeps serving", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			ln := newPipeListener()
+			wakes := make(chan struct{}, 4)
+			wake := func(context.Context) error { wakes <- struct{}{}; return errors.New("cascade failed") }
+			startupReady := func(context.Context) error { return errors.New("yabai not ready") }
+			done := make(chan error, 1)
+			go func() { done <- Serve(ctx, ln, NewHub(idle, idle), Wakes{Run: wake, Ready: startupReady}) }()
+			synctest.Wait()
+			assert.Equal(t, len(wakes), 0, "startup wake ran after failed readiness")
+			ln.send(t, "wake")
+			<-wakes
+			cancel()
+			assert.NilError(t, <-done)
+		})
+	})
+
+	t.Run("cancel during readiness returns without a startup wake", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			woke := false
+			wake := func(context.Context) error { woke = true; return errors.New("cascade failed") }
+			startupReady := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+			done := make(chan error, 1)
+			go func() {
+				done <- Serve(ctx, newPipeListener(), NewHub(idle, idle), Wakes{Run: wake, Ready: startupReady})
+			}()
+			synctest.Wait()
+			cancel()
+			assert.NilError(t, <-done)
+			assert.Assert(t, !woke, "startup wake ran after cancel")
+		})
+	})
+}
+
 func TestServeTimesOutAndCancelsWork(t *testing.T) {
 	t.Run("a timeout ends Serve", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -162,7 +229,7 @@ func TestServeTimesOutAndCancelsWork(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			}
-			err := Serve(t.Context(), newPipeListener(), NewHub(idle, idle), wedged)
+			err := Serve(t.Context(), newPipeListener(), NewHub(idle, idle), Wakes{Run: wedged})
 			assert.Assert(t, errors.Is(err, context.DeadlineExceeded), "Serve() = %v", err)
 		})
 	})
@@ -335,6 +402,35 @@ func TestWakeRoutine(t *testing.T) {
 					assert.Equal(t, space.Layout, wm.LayoutStack)
 				}
 			}
+		})
+	})
+}
+
+func TestWaitForYabai(t *testing.T) {
+	t.Run("returns once a display query succeeds", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			calls := 0
+			start := time.Now()
+			err := waitForYabai(t.Context(), func(context.Context) error {
+				calls++
+				if calls < 4 {
+					return errors.New("yabai not ready")
+				}
+				return nil
+			}, time.Minute)
+			assert.NilError(t, err)
+			assert.Equal(t, calls, 4)
+			assert.Equal(t, time.Since(start), 3*startupReadinessInterval)
+		})
+	})
+
+	t.Run("gives up at the bound with the last query error", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			start := time.Now()
+			err := waitForYabai(t.Context(), func(context.Context) error { return errors.New("no socket") }, time.Second)
+			assert.ErrorContains(t, err, "no socket")
+			assert.Assert(t, errors.Is(err, context.DeadlineExceeded))
+			assert.Equal(t, time.Since(start), time.Second)
 		})
 	})
 }

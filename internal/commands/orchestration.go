@@ -152,7 +152,7 @@ func RunFlexConverge(ctx context.Context, profile *config.Profile, driver wm.Dri
 
 // Wake asks a running daemon to run its wake routine.
 func Wake(ctx context.Context, _ *config.Profile, _ wm.Driver, env Env, sock string) error {
-	paths, _, stderr, err := normalizedEnv(env)
+	paths, _, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
 		return err
 	}

@@ -252,6 +252,36 @@ func TestBootout(t *testing.T) {
 	})
 }
 
+func TestRunStartupWakeWaitsForWakeReady(t *testing.T) {
+	path := filepath.Join(shortDir(t), "d.sock")
+	ctx, cancel := context.WithCancel(t.Context())
+	asked, release := make(chan struct{}), make(chan struct{})
+	woke := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			Socket:  path,
+			Display: idle,
+			Flex:    idle,
+			WakeReady: func(context.Context) error {
+				close(asked)
+				<-release
+				return nil
+			},
+			Wake: func(context.Context) error {
+				woke <- struct{}{}
+				return nil
+			},
+		})
+	}()
+	<-asked
+	assert.Equal(t, len(woke), 0, "startup wake ran before WakeReady returned")
+	close(release)
+	<-woke
+	cancel()
+	assert.NilError(t, <-done)
+}
+
 func TestRun(t *testing.T) {
 	t.Run("with one service loaded and the other bootstrapped, clean shutdown boots out exactly the bootstrapped one", func(t *testing.T) {
 		path := filepath.Join(shortDir(t), "d.sock")
