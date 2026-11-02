@@ -1,0 +1,570 @@
+# Design — A Windows backend for `tess`
+
+*Design record for running `tess` on Windows. It builds on
+[`go-port/design.md`](../go-port/design.md) and
+[`architecture.md`](../architecture.md), and it edits no frozen record. The
+upstream evidence, the cross-compile probe and the rejected alternatives
+are in [`evidence.md`](evidence.md).*
+
+## Open Questions
+
+All questions are resolved. A **load-bearing** question would have changed
+the plan with a different answer.
+
+1. **Which window manager.** *Load-bearing.*
+   **Resolved: (a).** Personal use is non-commercial. Work use needs
+   komorebi's Individual Commercial Use License. Reopen this with (b) only
+   if W4 check 5 fails and one of checks 1–4 fails too (W4 outcomes table).
+
+2. **Changing a window or workspace that has no focus** (depends on 1).
+   *Load-bearing.* komorebi commands act on the focused window or take a
+   monitor and workspace index. None reorders workspaces, and
+   `CloseWorkspace` refuses a named one. `ApplyState` can do both, but it
+   is a restore path. It fails silently, drops windows managed after the
+   query, and hides and restores every workspace. komorebi also drops
+   messages while busy or paused (`evidence.md` § ApplyState).
+   - (a) **Raw `ApplyState` for all structure.** A silent failure repeats
+     until `convergeIterationCap`.
+   - (b) **Focus-then-act for everything.** It still needs `ApplyState` to
+     destroy and reorder.
+   - (c) **Commands first.** Index commands where they exist,
+     focus-then-act for window moves, and (d) only for `DestroySpace` and
+     `MoveSpaceToIndex`.
+   - (d) **Guarded `ApplyState` for all structure** (§ Guarded state).
+
+   **Resolved: (c).** Most mutations are window moves, and (c) gives
+   each a checkable command. The full-desktop `ApplyState` runs only for
+   the two operations with no command: in the laptop reconcile and order
+   phases, and in `teardownSpaces`. A check query ends every mutation, so
+   a dropped message is an error, not a loop. The cost: focus moves
+   visibly, and keys typed during a daemon converge can land in the wrong
+   window. W4 picks any fallback (W4 outcomes table). If check 5 fails
+   and checks 1–4 pass, window moves also use (d). If check 2 fails, no
+   operation uses `ApplyState` (§ Guarded state).
+
+3. **`wm.RuleOps`** (depends on 1).
+   **Resolved: (c).** W5 sets rules only on tess-labelled workspaces. Rules
+   on other workspaces, static ones included, stay.
+4. **Window `App` identity.** *Not load-bearing: no Windows profile exists
+   yet.* (a) The exe stem (`Code`); (b) the full exe name; (c) the window
+   class. **Resolved: (a).** Every Electron window has the class
+   `Chrome_WidgetWin_1`, so (c) cannot tell apps apart.
+5. **Display identity.** *Not load-bearing: (b) is additive.*
+   **Resolved: (b).** A `deviceId` tells apart two displays of one width.
+   A spec without it keeps width matching.
+6. **Supervision.** *Not load-bearing: it changes W6 and W7.*
+   **Resolved: (b).** The daemon starts komorebi, restarts it after a
+   crash, and stops only a komorebi it started.
+7. **Race detector in Windows CI.** *Not load-bearing: a CI setting.*
+   **Resolved: (b).** Windows tests run without `-race`; Ubuntu races the
+   same code.
+8. **Distributing `tess.exe`.** *Not load-bearing: it can be added any
+   time.*
+   **Resolved: (b).** GoReleaser publishes Windows archives and a Scoop
+   manifest with each release. Winget comes later.
+
+## Problem / Intent
+
+`tess` runs only on macOS. Its driver is yabai, and its daemon needs `nc`,
+`launchctl` and an `O_NOFOLLOW` signal guard. This record adds a Windows
+backend with the same CUE profile, engine and commands, driving komorebi
+behind `wm.Driver`.
+
+## Approach
+
+Most of tess is portable. A Windows build fails only in
+`SuppressSignals`, and tests fail only in three packages. AF_UNIX,
+`gofrs/flock` and SIGTERM at logoff work on Windows, so the daemon socket,
+locks and shutdown do not change (`evidence.md` § Cross-compile, § Go on
+Windows). The work is a driver, a push-event seam and small splits.
+
+### Platform splits
+
+- **Signal guard.** `SuppressSignals` moves unchanged to `guard_unix.go`.
+  `guard_windows.go` rejects a non-regular file and writes the stamp with
+  `0o600`. The Windows temp dir is per user *[INFERENCE]*, and NTFS has no
+  FIFOs, so the unix link and owner checks are not needed.
+- **Guard path.** `signalGuardPath()` keeps `/tmp/yabai-apply.guard` on
+  unix and uses `os.TempDir()\tessera-apply.guard` on Windows. No other
+  path changes.
+- **Composition root.** `cmd/tess/backend_other.go` holds yabai,
+  sketchybar and launchd. `backend_windows.go` holds komorebi.
+- **Tests.** FIFO and SIGTERM cases move to `//go:build unix` files.
+  `cli_test.go` uses a per-platform temp root and an `.exe` stub
+  *[INFERENCE: `CreateProcess` needs it; W2 proves it]*.
+
+### The komorebi driver
+
+`internal/wm/komorebi` is a pure-Go `wm.Driver`. Like `komorebi-client`,
+it writes one JSON `SocketMessage` per connection to
+`%LOCALAPPDATA%\komorebi\komorebi.sock`, and never runs `komorebic`.
+
+**Normalization** maps one `State` query to a `wm.World`:
+
+| tess | komorebi |
+| --- | --- |
+| `Display.Idx` | monitor ring index + 1, so `DisplaySelector.Index` stays 1-based |
+| `Display.Frame` | `Monitor.size` |
+| `Display.SpaceIDs` | the monitor's workspaces in ring order; `[0]` is the home space |
+| `Space.Label` | `Workspace.name` |
+| `Space.Layout` | `stack` for one container of more than one window; `float` when `tile` is false; else `bsp` |
+| `Window.ID` | `hwnd` (an `isize`; fits Go's `int` on amd64 and arm64) |
+| `Window.App` | the exe stem (Open Question 4) |
+| `Window.Floating` | the window is in `floating_windows` |
+| `Window.Visible` | its workspace is its monitor's focused workspace |
+| `Window.SplitType` | always `none` |
+| `Window.Sticky`, `Window.Minimized` | false *[INFERENCE: minimized windows leave the rings; W4 checks this]* |
+
+**Space IDs.** The driver owns `SpaceID` (`architecture.md` D1): a named
+workspace is `name:<label>`, an unnamed one `pos:<device_id>:<index>`.
+`LabelSpace` records the old ID as an alias, so a create, label, layout
+sequence survives the rename. A shifted positional ID can only make the
+converger skip a stray (`ConvergeState.DestroyTried`). `DestroySpaceOp`
+reads its ID from the current snapshot, so it never hits the wrong space.
+
+**Operations.** Each mutating method takes one path (Open Question 2):
+*index*; *workspace focus* (`FocusMonitorWorkspaceNumber`, act,
+restore); *window focus* (§ Focus, act, restore); or *guarded state*. A
+*focused* method returns `ErrNotFocused` unless `winID` has focus. Every
+mutating path ends with a `State` check that returns `ErrNotApplied` if
+the effect is missing.
+
+| `wm.Driver` method | komorebi | Path |
+| --- | --- | --- |
+| `Query*` | `State` | — |
+| `CreateSpace(displayIdx)` | `EnsureWorkspaces(m, n+1)`, then `WorkspaceName(m, n, "tess-new-<n>")` | index |
+| `DestroySpace` | remove the workspace | guarded state |
+| `LabelSpace` | `WorkspaceName(m, w, label)`, plus an alias | index |
+| `SetSpaceLayout` | `bsp`: `WorkspaceLayout(m, w, BSP)` and `WorkspaceTiling(m, w, true)`. `float`: `WorkspaceTiling(m, w, false)`. `stack`: `StackAll`, then `ToggleWorkspaceWindowContainerBehaviour` when the workspace is not `Append` *[INFERENCE: W4 check 4]* | index; `stack` uses workspace focus |
+| `MoveSpaceToIndex` | reorder within the monitor; a target on another monitor is an error | guarded state |
+| `BalanceSpace` | `LayoutRatios([], [])`, because `null` keeps the old ratios *[INFERENCE: W4 check 3]* | workspace focus |
+| `RealizeSpaceLayout` | `stack`: `StackAll`. `columns` and `rows`: `UnstackAll` and `WorkspaceLayout(m, w, Columns or Rows)`; `Promote` each track's first window in reverse track order; `StackWindow(Left or Up)` each later window of a track; then `LayoutRatios` with `w[i]/sum(w)` for the first `min(len-1, 5)` tracks, logging a warning when komorebi will clamp or drop a ratio | workspace focus, then window focus |
+| `MoveWindowToSpace` | `UnstackWindow` when the window shares a container, then `SendContainerToMonitorWorkspaceNumber(m, w)` | window focus |
+| `StackOnto` | `ErrUnsupported`; only drivers and their tests call it | — |
+| `MoveWindowToDisplay` | `MoveContainerToMonitorNumber(idx-1)`, or `CycleMoveContainerToMonitor` | focused |
+| `SetSplitRatio(win, 0.5)` | `LayoutRatios([], [])` on `win`'s workspace (the only call site is `ResetSplits`); any other ratio is `ErrUnsupported` | workspace focus |
+| `ToggleSplit` | `ErrUnsupported`; never called, because every window reports `SplitNone` | — |
+| `ToggleFloat` | `ToggleFloat` | focused |
+| `ArmInsert` | `PreselectDirection(dir)` | focused |
+| `ResizeWindow(edge, dx, dy)` | `ResizeWindowEdge(direction, Increase or Decrease)` by the sign of the delta | focused |
+| `SwapWindows`, `WarpWindow` | `MoveWindow(dir)` | focused |
+| `FocusWindow(id)` | § Focus | — |
+| `FocusWindowDir` | `FocusWindow(dir)`; `CycleStack` for `stack.next` and `stack.prev`; `FocusStackWindow(0 or n-1)` for `stack.first` and `stack.last` | focused |
+| `FocusDisplay` | `FocusMonitorNumber(idx-1)` or `CycleFocusMonitor` | index |
+| `SpawnWindow` | `spawn.Run` (§ Shared spawn) | — |
+| `SettleUnit` | 150 ms until W4 check 7 measures it | — |
+
+**Focus.** Windows refuses the foreground to a process with no recent
+input. Like komorebi's `raise_and_focus_window`, the driver sends an empty
+`SendInput`, then `SetForegroundWindow`, via `NewLazySystemDLL`. It polls
+`State` for one second, then returns `ErrFocusRefused`. The calls sit
+behind an unexported `foregrounder`, which tests replace.
+
+**Guarded state.** Under the driver lock, `DestroySpace` and
+`MoveSpaceToIndex` query `State`, edit one workspace in an
+`encoding/json/v2` value tree, send `ApplyState`, and query again. Unknown
+members pass through unchanged. A missing change returns `ErrNotApplied`,
+and the converge stops. The lock serializes tess, not komorebi. A window
+that komorebi starts to manage between query and apply is absent from the
+sent state, and tess cannot see it to merge it in. If W4 check 2 fails,
+neither method uses `ApplyState`. `DestroySpace` renames the workspace to
+`tess-free-<n>`, which `Normalize` hides and `CreateSpace` reuses.
+`MoveSpaceToIndex` swaps the two labels with `WorkspaceName` and moves
+their windows by focus-then-act, and the converge re-applies each layout
+*[INFERENCE: W5 golden-tests it]*. If that swap fails W8, it returns
+`ErrUnsupported`, and the order phase needs its own engine record.
+
+**Feature probe.** komorebi reports no usable version, so the probe checks
+shape, not version. On first use the driver checks that every `State`
+member it uses exists, and names a missing one. An older release with the
+same shape passes. The error cites v0.1.41 (2026-05-03) only as the
+oldest tested release.
+
+### Push events
+
+komorebi writes one notification per change to a subscriber socket, with
+no newline, so the daemon's line protocol cannot read it. The driver owns
+the transport behind a new optional interface:
+
+```go
+// EventStream is a WM that pushes events. The driver owns the transport, framing and reconnect.
+type EventStream interface {
+	// Events subscribes and returns the mapped events. The channel closes when ctx ends.
+	// When the WM comes back after it stopped, the driver subscribes again and sends EventDisplayMoved.
+	Events(ctx context.Context) (<-chan Event, error)
+}
+```
+
+`daemon.Run` calls `Events` before `Serve` and forwards each event to
+`Hub.Notify`. The driver binds `DATA_DIR\tessera.sock` and sends
+`AddSubscriberSocketWithOptions("tessera.sock", {filter_state_changes:
+true})`.
+
+- **Drain at once.** komorebi writes while holding its lock, so a slow
+  reader makes it drop tess's commands. The accept loop waits only on
+  `Accept`, and each connection is read to EOF (16 MiB cap) in its own
+  goroutine.
+- **Stop.** `komorebic stop` sends an empty connection and exits 0. The
+  daemon does not restart komorebi. The driver re-subscribes with a 1–30 s
+  backoff, so a later `komorebic start` reconnects and sends
+  `EventDisplayMoved`.
+- **Crash.** A crash sends nothing. The daemon restarts a komorebi it
+  started after a non-zero exit. The driver also re-subscribes every 30 s,
+  which komorebi treats as idempotent, so a komorebi tess did not start is
+  picked up too *[INFERENCE: W8 checks this]*.
+
+| komorebi `event` | tess event | Hub channel |
+| --- | --- | --- |
+| `WindowManager(Manage)`, `WindowManager(Show)` | `window_created` | flex |
+| `WindowManager(Unmanage)`, `WindowManager(Destroy)` | `window_destroyed` | flex |
+| `Monitor(DisplayConnectionChange)` | `display_added` or `display_removed` by monitor count against the previous notification; `display_moved` when the count is unchanged | display |
+| `Monitor(ResolutionScalingChanged)`, `Monitor(WorkAreaChanged)` | `display_moved` | display |
+| anything else | none | — |
+
+The signal guard covers events that tess itself causes.
+
+### Shared spawn
+
+`yabai.Driver.SpawnWindow` does not depend on the WM. It moves to
+`internal/wm/spawn` as `Run`, and both drivers call it.
+
+### Supervision
+
+The daemon starts komorebi if it is not running and owns only a process it
+started. It restarts that process after an unexpected exit, but not after
+the empty-connection signal and clean exit from `komorebic stop`. On daemon
+exit, it stops komorebi only if it started it. The `komorebi` launch uses
+`os/exec` at one site with `//nolint:depguard // start and supervise komorebi on Windows`.
+
+`Options.Bootstrap` enables platform WM startup. On macOS,
+`launchd.go` kickstarts an already-loaded yabai or skhd agent, or bootstraps
+its installed agent. It boots out only agents it bootstrapped. launchd
+restarts those agents.
+The shipped Task Scheduler task, `docs/windows/tess-daemon.xml`, runs the
+daemon at logon, registered with
+`schtasks /Create /TN "tessera daemon" /XML …` *[INFERENCE: for the
+current user; W8 checks this]*. Its settings replace defaults that would
+stop the daemon silently (`evidence.md` § Task Scheduler):
+
+| Element | Value | Why |
+| --- | --- | --- |
+| `LogonTrigger` | the current user's logon | start only for this user |
+| `Principal/LogonType` | `InteractiveToken` | run on the user's desktop, so spawned windows show |
+| `MultipleInstancesPolicy` | `IgnoreNew` | one daemon; the socket lock also refuses a second |
+| `DisallowStartIfOnBatteries`, `StopIfGoingOnBatteries` | `false` | the default stops a laptop's daemon |
+| `ExecutionTimeLimit` | `PT0S` | the default stops it after 72 hours |
+| `RestartOnFailure` | `Count` 10, `Interval` `PT1M` | both are required; one minute is the minimum |
+
+A clean daemon exit returns 0 and is not restarted. `tess daemon` frees its
+console when it is alone there, and logs to
+`os.UserCacheDir()\tessera\daemon.log` *[INFERENCE: a window can still
+flash at logon; W8 checks this]*.
+
+### Tests
+
+A Go stub, `testdata/stubkomorebi`, serves `komorebi.sock` from synthetic
+fixtures and logs each message. Goldens in `testdata/messages/` hold the
+expected sequences, like the stub-yabai corpus. `TESS_KOMOREBI_DIR`
+points the driver at the stub. Event tests use `net.Pipe` inside
+`synctest.Test`.
+
+## Global Constraints
+
+- **Toolchain.** `go 1.27` (1.27.3 in CI), and Windows build 10.0.17063+
+  for AF_UNIX. komorebi has no version floor: the feature probe enforces
+  the `State` shape, and v0.1.41 is the oldest tested release.
+- **No cgo.** `CGO_ENABLED=0`; Win32 calls use `golang.org/x/sys/windows`
+  or `NewLazySystemDLL`.
+- **Import rules**, added to `go-port/design.md` § Module layout: only
+  `cmd/tess` imports `wm/komorebi`; `wm/spawn` imports no internal
+  package, and only drivers import it; `wm` still imports none.
+- **Concurrency.** Driver methods are safe for concurrent use: the daemon
+  runs display and flex work in parallel, and hotkeys start processes. One
+  driver lock spans each mutating path from first query to last check,
+  including each focus sequence through its restore. It is a `sync.Mutex`
+  plus a `gofrs/flock` lock on `DATA_DIR\tessera-driver.lock`, taken with
+  the call's context and a 2 s limit. Single-message calls take it too.
+  It guards the alias map and the last monitor count.
+- **Dependencies.** No new module; `golang.org/x/sys` becomes direct.
+- **Licences.** No komorebi or GlazeWM source or schema is copied in.
+- **Public repo.** No private repository names, paths or issue IDs, and no
+  real titles, user paths or serials in fixtures.
+- **House rules** (`go-port/design.md`): errors wrapped, never discarded;
+  `os/exec` only at a `//nolint:depguard // <reason>` site; `exhaustive`
+  over komorebi event switches; `gotest.tools/v3` and `synctest`, never
+  `time.Sleep`.
+
+## Plan
+
+Each task is one commit with its tests. W1–W3 do not depend on the WM
+choice. W4 and W8 are manual, on a Windows host.
+
+### W1 — Portable build
+
+Do § Platform splits.
+
+Interfaces:
+
+- `func SuppressSignals(path string) error` keeps its signature. Its
+  bodies are in `internal/effects/guard_unix.go` and `guard_windows.go`.
+- The unexported `func signalGuardPath() string`, in both guard files,
+  feeds `DefaultPaths`.
+- `effects_unix_test.go`, `yabai/args_unix_test.go` and
+  `cli/cli_unix_test.go` carry `//go:build unix`.
+- `cmd/tess`:
+
+  ```go
+  // backend is the per-OS composition; backend_other.go and backend_windows.go define newBackend.
+  type backend struct {
+  	Driver    wm.Driver
+  	Nudge     effects.Nudger
+  	Bootstrap bool // start the WM: launchd agents on macOS, komorebi on Windows
+  }
+
+  func newBackend() (backend, error)
+  ```
+
+  W1 adds only `backend_other.go`. `main.go` passes `b.Nudge` to
+  `commands.Env.Nudge` and `daemon.Options.Nudge`, and sets
+  `daemon.Options.Bootstrap = b.Bootstrap && !command.NoBootstrap`.
+
+Gate: `GOOS=windows go build` and `go vet` pass for all but `cmd/tess`.
+`go test -race ./...` passes unchanged on macOS and Linux. A Windows
+guard test shows that `SuppressSignals` refuses a directory, and that
+`SignalsSuppressed` reads its stamp as fresh.
+
+### W2 — Windows CI
+
+A `windows` job on `windows-latest` (`actions/setup-go@v6`, `1.27.3`) runs
+build, vet and test without `-race`. The ubuntu job adds
+`GOOS=windows go vet ./...` and `GOOS=windows golangci-lint run`. From W7
+on, the Windows job uploads `tess.exe`.
+
+Interfaces: `.github/workflows/ci.yml`. The Windows steps skip
+`./cmd/tess` until W7.
+
+Gate: both jobs are green on the W1 head.
+
+### W3 — `internal/wm/spawn`
+
+Interfaces: `func Run(ctx context.Context, argv []string, wait
+time.Duration) error` takes today's `SpawnWindow` body and its helpers
+(`spawnResult`, `discardSpawnStderr`). yabai's `SpawnWindow` becomes
+`return spawn.Run(ctx, argv, d.spawnWait)`.
+
+Gate: the moved spawn tests pass on both jobs. The stub-yabai corpus does
+not change.
+
+### W4 — komorebi spike (manual)
+
+Run komorebi v0.1.41 or later with a throwaway program in the W5 client
+shape. Record the answers in `evidence.md` § Spike results.
+
+| # | Check | Expected |
+| --- | --- | --- |
+| 1 | `State` shape: `Ring<T>`, `Rect` as edges or size, physical pixels | sets `Normalize` and Open Question 5 |
+| 2 | guarded `ApplyState` removes and reorders one workspace, and keeps unknown members | yes |
+| 2a | a window closed between query and apply | no change; `ErrNotApplied` |
+| 2b | a window that komorebi starts to manage between query and apply | still managed after the apply with no user action; a dropped window fails check 2 |
+| 2c | an apply while a monitor connects or disconnects | `ErrNotApplied` |
+| 2d | where focus lands; how much the desktop flickers | record |
+| 2e | a message while paused, or while the lock is held over 1 s | dropped; the check query catches it |
+| 3 | `LayoutRatios([], [])`; `LayoutRatios(null, null)` | equal widths; old ratios kept |
+| 4 | `Append` keeps new windows in the home stack | yes |
+| 5 | focus from the daemon after a hotplug with no input; time until `State` shows it; `Promote` and `StackWindow(Left)`; where typed keys land | the foreground moves within 1 s |
+| 6 | notification framing and size; `komorebic stop` against `taskkill /F` | one connection, no newline; an empty connection against none |
+| 7 | settle time after `WorkspaceLayout` and after a focus sequence | sets `SettleUnit` |
+| 8 | a GUI launcher spawned with no window flag | no console flash |
+| 9 | a socket-sent `NamedWorkspaceRule` with an `Exe` identifier such as `Code.exe` on a tess-labelled workspace | the window lands there; a window whose title merely contains `Code.exe` does not |
+| 10 | `ClearNamedWorkspaceRules` on one tess workspace | rules on other workspaces stay |
+
+Interfaces: `evidence.md` § Spike results, and the scrubbed fixtures
+`state-desk.json`, `state-laptop.json` and `notification-*.json` in
+`internal/wm/komorebi/testdata/`.
+
+**Outcomes.** `evidence.md` § Spike results names the row that applies:
+
+| W4 result | Plan |
+| --- | --- |
+| all pass | Open Question 2 (c) as written |
+| 2 fails, 5 passes | no `ApplyState`: retire pool and label swap (§ Guarded state) |
+| 1, 3 or 4 fails, 5 passes | adjust that operation in W5; the path is unchanged |
+| 5 fails, 1–4 pass | Open Question 2 (d): the window-focus methods move to guarded state |
+| 5 fails, and one of 1–4 fails | reopen Open Question 1 with (b) |
+
+Gate: every check has an observed answer. Check 2 passes, or the driver
+uses the "2 fails" row. A recorded window loss never passes check 2.
+
+### W5 — `internal/wm/komorebi`
+
+Build the client, normalization, § Operations, `wm.RuleOps`, the feature
+probe, the driver lock, and the stub server and corpus.
+
+Interfaces:
+
+- `func New(dataDir string) *Driver`, which implements `wm.Driver` and
+  `wm.RuleOps`.
+- `wm.RuleOps` uses `NamedWorkspaceRule`, `InitialNamedWorkspaceRule` and
+  `ClearNamedWorkspaceRules`, only on tess-labelled workspaces. It never
+  sends `ClearAllWorkspaceRules`, which also clears static config rules.
+  The named clear removes every rule on that workspace, static ones too,
+  so tess owns all rules on its workspaces (`evidence.md` § Rules,
+  windows and monitors). The Windows rule set sends `Exe` identifiers,
+  the app stem plus `.exe`, for Code, Linear and Akiflow. `Legacy` matches
+  `Exe` by equality. It drops the macOS catch-all, Finder and AXDialog
+  rules.
+- `internal/config/schema.cue` adds an optional `deviceId` to each display
+  spec, and `internal/config` adds `DisplaySpec.DeviceID`.
+  `wm.Display.DeviceID` carries komorebi's `Monitor.device_id`. W5 also
+  adds `uuid` to the yabai display query and `RawYabaiDisplay`, so macOS
+  fills it too *[INFERENCE: the UUID stays stable across reconnects]*.
+  `engine.displayNameForWidth` becomes `displayNameFor(profile, display)`,
+  which matches `deviceId` first and width only for a spec without one.
+  `ResolveDisplay`, `ResolveDesk` (topology) and `displayOfSpace`
+  (per-display weights) all use it. A set `deviceId` that no display has
+  matches nothing; it never falls back to another display of that width.
+- `func DataDir() (string, error)` returns `TESS_KOMOREBI_DIR` if set.
+  Otherwise it returns `os.UserCacheDir()` joined with `komorebi`, and
+  passes that function's error through.
+- The errors:
+
+  ```go
+  var (
+  	ErrNotFocused   = errors.New("komorebi acts on the focused window")
+  	ErrUnsupported  = errors.New("komorebi has no equivalent")
+  	ErrNotApplied   = errors.New("komorebi did not apply the change")
+  	ErrFocusRefused = errors.New("windows refused the foreground change")
+  )
+  ```
+
+- The unexported `type foregrounder func(hwnd int) error`, in
+  `foreground_windows.go` and `foreground_other.go`. Tests use
+  `newDriver(dataDir, lockPath string, fg foregrounder) *Driver`.
+- The pure
+  `func Normalize(state jsontext.Value, aliases map[wm.SpaceID]wm.SpaceID) (wm.World, error)`.
+
+Gate:
+
+- Each method has a corpus golden, and each W4 fixture snapshots to the
+  expected `wm.World`.
+- `LaptopConvergeStep` and `DeskPlan`, through `RunConverge` and
+  `RunPlan` on the stub, reach a fixed point within
+  `convergeIterationCap`.
+- An ignored message gives `ErrNotApplied`, and `RunConverge` stops at
+  once.
+- Under `-race`, concurrent mutating calls never interleave messages.
+- An unknown `State` member survives a guarded edit byte for byte.
+- A fixture with a required member removed gives an error that names it.
+  A full-shape fixture passes whatever release it came from.
+- Two displays of one width with distinct `deviceId`s resolve to the right
+  names in `ResolveDisplay`, select the right `ResolveDesk` topology, and
+  get each display's weights through `displayOfSpace`. An absent device
+  matches nothing.
+- `wm.RuleOps` goldens send only named-workspace rule messages, never
+  `ClearAllWorkspaceRules`.
+
+### W6 — `wm.EventStream` and the daemon
+
+Interfaces:
+
+- `wm.EventStream` (§ Push events). The channel closes on context cancel or
+  the empty connection sent by a clean `komorebic stop`.
+- `daemon.Options.Events wm.EventStream`. A nil value keeps today's
+  behaviour.
+- `wm.ProcessSupervisor` provides `Start(ctx) (started bool, exited <-chan
+  error, err error)` and `Stop(ctx) error`. `daemon.Options.Supervisor`
+  carries it. `Start` leaves an existing komorebi process unowned; a
+  process started by the daemon reports its exit error, with nil for clean
+  exit. `daemon.Run` restarts only a supervised process that exits with an
+  error, and stops only a process it started.
+- The unexported
+  `func forwardEvents(ctx context.Context, events <-chan wm.Event, h *Hub)`.
+  `Run` calls `Events` before `Serve`, runs `forwardEvents` beside it, and
+  waits for it on return. An `Events` error ends `Run` at startup.
+- The komorebi test seams
+  `listen func(ctx context.Context) (net.Listener, error)` and
+  `dial func(ctx context.Context) (net.Conn, error)`.
+
+Gate, under `synctest.Test`:
+
+- 100 notification writes complete while nobody reads the channel.
+- `Manage` runs flex work once after `FlexQuiet`. One more monitor runs
+  display work once after `DisplayQuiet`. An unmapped event runs nothing.
+- An empty connection closes the event channel and does not trigger a
+  process restart; a crash reports an error and restarts an owned process.
+- Two refused dials and one accepted dial give one subscribe message and
+  one `EventDisplayMoved`.
+- After 30 s, a second subscribe message appears.
+- Cancelling ctx closes the listener and the channel, and `Run` returns.
+
+### W7 — Windows composition and docs
+
+Interfaces:
+
+- `cmd/tess/backend_windows.go`: `newBackend` returns
+  `komorebi.New(dataDir)`, a no-op nudge, `Bootstrap: true` and a
+  `wm.ProcessSupervisor` for komorebi.
+- `main.go` sets `daemon.Options.Events` when the driver asserts to
+  `wm.EventStream`, passes the supervisor, and sets `Bootstrap` from the
+  backend and `!command.NoBootstrap`.
+- `cmd/tess/console_windows.go`: `func daemonLog() (*os.File, error)`
+  frees the console and opens the log. `console_other.go` returns
+  `os.Stderr`. `main.go` calls it before `daemon.Run`, points `slog` at
+  it, and joins its `Close` error into the exit error.
+- The Task Scheduler task in `docs/windows/tess-daemon.xml` (§ Supervision).
+- `.goreleaser.yaml` builds `tess.exe` for `windows/amd64` and
+  `windows/arm64` as ZIP archives, with `release.mode: append`. Its
+  OSS `scoops:` publisher pushes a manifest to a separate bucket
+  repository under the same owner.
+- `.github/workflows/release.yml` keeps `gh release create` for a new
+  `VERSION`, then checks out that tag with full history and runs
+  `goreleaser release --clean`. It uploads to the existing release and
+  pushes the manifest with a bucket token secret. The owner creates the
+  bucket repository and that secret first.
+- `.github/workflows/ci.yml` adds a step with
+  `goreleaser/goreleaser-action` that runs `goreleaser check` and
+  `goreleaser release --snapshot --clean` on each PR.
+- The README documents Scoop installation, komorebi setup, the
+  `%USERPROFILE%\.config\tessera\profile.cue` path or
+  `TESSERA_PROFILE`, exe-stem `app` patterns, Windows `spawn` argv, task
+  registration, the komorebi licence, and that tess owns every rule on a
+  tess workspace, so static rules belong on other workspaces.
+- Winget is out of scope. A later release can add GoReleaser's winget
+  publisher, which opens a pull request to Microsoft's `winget-pkgs`.
+
+Gate: W2 passes with `./cmd/tess`. On Windows CI, `tess --version`
+prints the version, and `tess wake` with no daemon exits 1 with
+`tess: daemon not running`. `goreleaser check` and
+`goreleaser release --snapshot --clean` pass in CI and build both ZIPs and
+a manifest that points at them. The first tagged release after W7 has both
+ZIPs attached, and the bucket has its manifest.
+
+### W8 — Live smoke (manual)
+
+Install `tess.exe` from the Scoop bucket, register the task, and check that:
+
+- `tess apply` on the desk matches the profile;
+- unplugging runs the laptop converge through the daemon;
+- opening and closing a window converges the grid again;
+- `komorebic stop` closes the event stream and does not restart komorebi;
+- `komorebic start` reconnects and runs layout without `tess wake`;
+- a `taskkill /F` crash of a daemon-started komorebi process causes a
+  restart and a display relayout within 30 s;
+- the daemon stops komorebi on exit only if it started it;
+- a daemon killed with a non-zero exit restarts within a minute, and
+  `schtasks /Query /TN "tessera daemon" /XML` shows the shipped settings;
+- no console stays open after logon.
+
+Interfaces: none. Gate: each check is recorded in `evidence.md` § Live
+smoke.
+
+## Tasks
+
+- [ ] W1 — portable build and backend seam
+- [ ] W2 — Windows CI job
+- [ ] W3 — shared `internal/wm/spawn`
+- [ ] W4 — komorebi spike and fixtures
+- [ ] W5 — `internal/wm/komorebi` driver, rules and `deviceId`
+- [ ] W6 — `wm.EventStream`, komorebi supervision and daemon forwarding
+- [ ] W7 — Windows composition, console, task XML, goreleaser and Scoop, README
+- [ ] W8 — live smoke
