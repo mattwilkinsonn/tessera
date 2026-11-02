@@ -682,11 +682,32 @@ func TestRules(t *testing.T) {
 			t.Fatalf("apply calls = %d", recorder.applied)
 		}
 	})
+	t.Run("places only standard windows so dialogs open where they were raised", testRulesPlaceOnlyStandardWindows)
 	t.Run("no-op when the backend has no rules capability", func(t *testing.T) {
 		if err := Rules(t.Context(), testProfile(t), fake.New(fake.Seed{})); err != nil {
 			t.Fatal(err)
 		}
 	})
+}
+
+func testRulesPlaceOnlyStandardWindows(t *testing.T) {
+	recorder := &ruleRecorder{}
+	if err := Rules(t.Context(), testProfile(t), &ruleDriver{Driver: deskWorld(), rules: recorder}); err != nil {
+		t.Fatal(err)
+	}
+	placed := 0
+	for _, rule := range recorder.added {
+		if rule.Space == nil && rule.Display == nil {
+			continue
+		}
+		placed++
+		if rule.Subrole != "AXStandardWindow" {
+			t.Errorf("%s subrole = %q; want AXStandardWindow", rule.Label, rule.Subrole)
+		}
+	}
+	if placed != 4 {
+		t.Errorf("placement rules = %d; want 4", placed)
+	}
 }
 
 type ruleRecorder struct {
