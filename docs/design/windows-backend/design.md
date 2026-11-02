@@ -8,8 +8,8 @@ are in [`evidence.md`](evidence.md).*
 
 ## Open Questions
 
-The record follows each **Recommendation**. A **load-bearing** question
-changes the plan if the answer differs.
+All questions are resolved. A **load-bearing** question would have changed
+the plan with a different answer.
 
 1. **Which window manager.** *Load-bearing.*
    **Resolved: (a).** Personal use is non-commercial. Work use needs
@@ -32,7 +32,7 @@ changes the plan if the answer differs.
      `MoveSpaceToIndex`.
    - (d) **Guarded `ApplyState` for all structure** (§ Guarded state).
 
-   **Recommendation: (c).** Most mutations are window moves, and (c) gives
+   **Resolved: (c).** Most mutations are window moves, and (c) gives
    each a checkable command. The full-desktop `ApplyState` runs only for
    the two operations with no command: in the laptop reconcile and order
    phases, and in `teardownSpaces`. A check query ends every mutation, so
@@ -47,7 +47,8 @@ changes the plan if the answer differs.
    on other workspaces, static ones included, stay.
 4. **Window `App` identity.** *Not load-bearing: no Windows profile exists
    yet.* (a) The exe stem (`Code`); (b) the full exe name; (c) the window
-   class. **Recommendation: (a).**
+   class. **Resolved: (a).** Every Electron window has the class
+   `Chrome_WidgetWin_1`, so (c) cannot tell apps apart.
 5. **Display identity.** *Not load-bearing: (b) is additive.*
    **Resolved: (b).** A `deviceId` tells apart two displays of one width.
    A spec without it keeps width matching.
@@ -60,7 +61,7 @@ changes the plan if the answer differs.
 8. **Distributing `tess.exe`.** *Not load-bearing: it can be added any
    time.*
    **Resolved: (b).** GoReleaser publishes Windows archives and a Scoop
-   manifest with each release.
+   manifest with each release. Winget comes later.
 
 ## Problem / Intent
 
