@@ -115,7 +115,7 @@ So `desk:g9/browser#1` is the first browser slot on the G9 at the desk.
 - Tests:
   - Read/write round trip.
   - A missing file and a corrupt file both return empty.
-  - A title-specific window drifts to another spec and fills that spec's slot, then drifts back. After each run the file holds exactly one key for it.
+  - A title-specific window drifts to another spec and fills that spec's slot, then drifts back. After each run the file holds one key for it under the current display set, and that key's spec matches the window's current title.
   - A second `LockSlots` waits until the first unlocks, and returns ctx's error on timeout. Locking under a parent directory that does not exist yet succeeds.
   - A fake-driver `Apply` blocks inside planning while it holds the lock. A concurrent `laptop` does not query the world until `Apply` returns. The test also runs with the roles swapped.
   - A fake-driver `Apply` persists slots. A second `Apply` with reshuffled query order places the same windows.
