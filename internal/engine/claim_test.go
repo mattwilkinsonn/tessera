@@ -37,7 +37,7 @@ func TestClaimSet(t *testing.T) {
 }
 
 func testClaimSetPrefersTargetDisplay(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	windows := []wm.Window{claimWindow(1, "Arc", "", 2, false, false), claimWindow(2, "Arc", "", 3, false, false)}
 	if got, ok := claims.Claim(windows, "arc", mo.Some(3)); !ok || got != 2 {
 		t.Fatalf("Claim() = %d, %t; want 2, true", got, ok)
@@ -45,7 +45,7 @@ func testClaimSetPrefersTargetDisplay(t *testing.T) {
 }
 
 func testClaimSetFallsBackFromDisplay(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	windows := []wm.Window{claimWindow(1, "Arc", "", 1, false, false), claimWindow(2, "Arc", "", 1, false, false)}
 	if got, ok := claims.Claim(windows, "arc", mo.Some(9)); !ok || got != 1 {
 		t.Fatalf("Claim() = %d, %t; want 1, true", got, ok)
@@ -53,7 +53,7 @@ func testClaimSetFallsBackFromDisplay(t *testing.T) {
 }
 
 func testClaimSetSkipsClaimedCandidate(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	windows := []wm.Window{claimWindow(1, "Arc", "", 3, false, false), claimWindow(2, "Arc", "", 5, false, false)}
 	first, firstOK := claims.Claim(windows, "arc", mo.Some(3))
 	if !firstOK || first != 1 {
@@ -65,7 +65,7 @@ func testClaimSetSkipsClaimedCandidate(t *testing.T) {
 }
 
 func testClaimSetExhaustsCandidates(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	windows := []wm.Window{claimWindow(1, "Arc", "", 1, false, false), claimWindow(2, "Arc", "", 1, false, false)}
 	first, firstOK := claims.Claim(windows, "arc", mo.None[int]())
 	second, secondOK := claims.Claim(windows, "arc", mo.None[int]())
@@ -78,7 +78,7 @@ func testClaimSetExhaustsCandidates(t *testing.T) {
 }
 
 func testClaimSetRejectsUnknownNames(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	if _, ok := claims.Claim([]wm.Window{claimWindow(1, "Ghostty", "pc", 1, false, false)}, "arc", mo.None[int]()); ok {
 		t.Fatal("unmatched window claimed")
 	}
@@ -88,7 +88,7 @@ func testClaimSetRejectsUnknownNames(t *testing.T) {
 }
 
 func testClaimSetIgnoresUnavailableWindows(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	windows := []wm.Window{
 		claimWindow(1, "Arc", "", 1, true, false),
 		claimWindow(2, "Arc", "", 1, false, true),
@@ -104,7 +104,7 @@ func testClaimSetSpawnFallbackSkipsClassified(t *testing.T) {
 	spec := profile.Windows["ghostty-wave"]
 	spec.Spawn = []string{"open", "-na", "Ghostty"}
 	profile.Windows["ghostty-wave"] = spec
-	claims := NewClaimSet(profile)
+	claims := NewClaimSet(profile, SlotMemory{}, nil)
 	classified := claimWindow(1, "Ghostty", "mbp", 1, false, false)
 	if _, ok := claims.Claim([]wm.Window{classified}, "ghostty-wave", mo.None[int]()); ok {
 		t.Fatal("fallback claimed window classified by another spec")
@@ -120,7 +120,7 @@ func testClaimSetSpawnFallbackPrefersDisplay(t *testing.T) {
 	spec := profile.Windows["ghostty-wave"]
 	spec.Spawn = []string{"open", "-na", "Ghostty"}
 	profile.Windows["ghostty-wave"] = spec
-	claims := NewClaimSet(profile)
+	claims := NewClaimSet(profile, SlotMemory{}, nil)
 	windows := []wm.Window{claimWindow(1, "Ghostty", "", 1, false, false), claimWindow(2, "Ghostty", "", 3, false, false)}
 	if got, ok := claims.Claim(windows, "ghostty-wave", mo.Some(3)); !ok || got != 2 {
 		t.Fatalf("fallback Claim() = %d, %t; want 2, true", got, ok)
@@ -128,14 +128,14 @@ func testClaimSetSpawnFallbackPrefersDisplay(t *testing.T) {
 }
 
 func testClaimSetDoesNotFallbackWithoutSpawn(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	if _, ok := claims.Claim([]wm.Window{claimWindow(1, "Ghostty", "", 1, false, false)}, "ghostty-wave", mo.None[int]()); ok {
 		t.Fatal("claim unexpectedly used fallback without spawn command")
 	}
 }
 
 func testClaimSetManyPreservesOrder(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	windows := []wm.Window{claimWindow(1, "Arc", "", 1, false, false), claimWindow(2, "Ghostty", "pc | x", 1, false, false), claimWindow(3, "Spotify", "", 1, false, false)}
 	got := claims.ClaimMany(windows, []string{"arc", "discord", "ghostty-wave", "spotify"}, mo.None[int]())
 	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
@@ -144,7 +144,7 @@ func testClaimSetManyPreservesOrder(t *testing.T) {
 }
 
 func testClaimSetReset(t *testing.T) {
-	claims := NewClaimSet(engineTestProfile(t))
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
 	windows := []wm.Window{claimWindow(1, "Arc", "", 1, false, false)}
 	if _, ok := claims.Claim(windows, "arc", mo.None[int]()); !ok {
 		t.Fatal("first claim failed")

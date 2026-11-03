@@ -7,11 +7,40 @@ import (
 )
 
 // NewClaimSet creates a per-plan set of distinct window claims.
-func NewClaimSet(profile *config.Profile) *ClaimSet {
-	return &ClaimSet{profile: profile, claimed: make(map[int]struct{})}
+func NewClaimSet(profile *config.Profile, memory SlotMemory, reserved map[int]SlotKey) *ClaimSet {
+	return &ClaimSet{
+		profile: profile, claimed: make(map[int]struct{}), memory: memory,
+		reserved: reserved,
+	}
 }
 
 func (claims *ClaimSet) Claim(windows []wm.Window, name string, preferDisplay mo.Option[int]) (int, bool) {
+	return claims.claim(windows, "", name, preferDisplay)
+}
+
+// ClaimSlot tries memory first, then avoids windows held for other slots.
+func (claims *ClaimSet) ClaimSlot(windows []wm.Window, key SlotKey, name string, preferDisplay mo.Option[int]) (int, bool) {
+	if ref, exists := claims.memory.Slots[key]; exists {
+		if spec, known := claims.profile.Windows[name]; known {
+			for _, window := range windows {
+				sameID := window.ID == ref.ID
+				sameApp := window.App == ref.App
+				available := !window.Minimized && !window.Floating
+				matchesName := matchesSpec(spec, window.App, window.Title)
+				if !sameID || !sameApp || !available || !matchesName {
+					continue
+				}
+				if _, claimed := claims.claimed[window.ID]; !claimed && claims.reserved[window.ID] == key {
+					claims.claimed[window.ID] = struct{}{}
+					return window.ID, true
+				}
+			}
+		}
+	}
+	return claims.claim(windows, key, name, preferDisplay)
+}
+
+func (claims *ClaimSet) claim(windows []wm.Window, key SlotKey, name string, preferDisplay mo.Option[int]) (int, bool) {
 	spec, exists := claims.profile.Windows[name]
 	if !exists {
 		return 0, false
@@ -25,7 +54,7 @@ func (claims *ClaimSet) Claim(windows []wm.Window, name string, preferDisplay mo
 	if display, preferred := preferDisplay.Get(); preferred {
 		for _, window := range candidates {
 			if window.DisplayIdx == display {
-				if _, claimed := claims.claimed[window.ID]; !claimed {
+				if claims.canClaim(window.ID, key) {
 					claims.claimed[window.ID] = struct{}{}
 					return window.ID, true
 				}
@@ -33,7 +62,7 @@ func (claims *ClaimSet) Claim(windows []wm.Window, name string, preferDisplay mo
 		}
 	}
 	for _, window := range candidates {
-		if _, claimed := claims.claimed[window.ID]; !claimed {
+		if claims.canClaim(window.ID, key) {
 			claims.claimed[window.ID] = struct{}{}
 			return window.ID, true
 		}
@@ -46,6 +75,9 @@ func (claims *ClaimSet) Claim(windows []wm.Window, name string, preferDisplay mo
 		if window.Minimized || window.Floating || !matchesSpec(config.WindowSpec{App: spec.App, AppRE: spec.AppRE}, window.App, window.Title) {
 			continue
 		}
+		if !claims.canClaim(window.ID, key) {
+			continue
+		}
 		if _, classified := claims.profile.Windows[SlugForWindow(claims.profile, window.App, window.Title)]; classified {
 			continue
 		}
@@ -54,7 +86,7 @@ func (claims *ClaimSet) Claim(windows []wm.Window, name string, preferDisplay mo
 	if display, preferred := preferDisplay.Get(); preferred {
 		for _, window := range fallback {
 			if window.DisplayIdx == display {
-				if _, claimed := claims.claimed[window.ID]; !claimed {
+				if claims.canClaim(window.ID, key) {
 					claims.claimed[window.ID] = struct{}{}
 					return window.ID, true
 				}
@@ -62,12 +94,20 @@ func (claims *ClaimSet) Claim(windows []wm.Window, name string, preferDisplay mo
 		}
 	}
 	for _, window := range fallback {
-		if _, claimed := claims.claimed[window.ID]; !claimed {
+		if claims.canClaim(window.ID, key) {
 			claims.claimed[window.ID] = struct{}{}
 			return window.ID, true
 		}
 	}
 	return 0, false
+}
+
+func (claims *ClaimSet) canClaim(id int, key SlotKey) bool {
+	if _, claimed := claims.claimed[id]; claimed {
+		return false
+	}
+	reserved, exists := claims.reserved[id]
+	return !exists || (key != "" && reserved == key)
 }
 
 func (claims *ClaimSet) ClaimMany(windows []wm.Window, names []string, preferDisplay mo.Option[int]) []int {

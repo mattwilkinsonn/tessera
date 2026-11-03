@@ -9,6 +9,7 @@ type World struct {
 	Windows  []wm.Window
 	Spaces   []wm.Space
 	Displays []wm.Display
+	Slots    SlotMemory
 }
 
 func matchesSpec(spec config.WindowSpec, app, title string) bool {

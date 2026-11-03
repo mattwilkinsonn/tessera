@@ -65,16 +65,21 @@ func LaptopConvergeStep(profile *config.Profile, world World, state ConvergeStat
 func stepPinned(profile *config.Profile, world World, state ConvergeState) (ConvergeAction, ConvergeState, bool) {
 	s := state
 	names, labels := profile.LaptopPinned, pinnedLabels(profile.LaptopPinned)
-	claims := NewClaimSet(profile)
+	keys := SlotKeys("laptop", config.DisplayLaptop, names)
+	claims := NewClaimSet(profile, world.Slots, Reserve(profile, world.Slots, keys, DisplaySet(profile, world.Displays), world.Windows))
 	ids := make([]int, len(names))
 	hasID := make([]bool, len(names))
 	claimedIDs := make(map[int]struct{})
 	windows := slices.Clone(world.Windows)
 	slices.SortFunc(windows, func(a, b wm.Window) int { return a.ID - b.ID })
 	for index, name := range names {
-		if id, ok := claims.Claim(windows, name, mo.Some(s.LaptopIdx)); ok {
+		if id, ok := claims.ClaimSlot(windows, keys[index], name, mo.Some(s.LaptopIdx)); ok {
 			ids[index], hasID[index] = id, true
 			claimedIDs[id] = struct{}{}
+			if s.Filled == nil {
+				s.Filled = make(map[SlotKey]int)
+			}
+			s.Filled[keys[index]] = id
 		}
 	}
 	deadCreate := false
@@ -209,7 +214,7 @@ func stepOrder(world World, state ConvergeState) (ConvergeAction, ConvergeState,
 
 func InitialConvergeState(homeSpace wm.SpaceID, persisted []string, reapStrays bool) ConvergeState {
 	return ConvergeState{
-		Phase: PhasePre, ClaimedIDs: make(map[int]struct{}), TargetLabels: make(map[string]struct{}),
+		Phase: PhasePre, ClaimedIDs: make(map[int]struct{}), TargetLabels: make(map[string]struct{}), Filled: make(map[SlotKey]int),
 		HomeSpace: homeSpace, LaptopIdx: -1, PersistedFlexOrder: slices.Clone(persisted),
 		ToPersist: slices.Clone(persisted), ReapStrays: reapStrays, DestroyTried: make(map[wm.SpaceID]struct{}),
 	}

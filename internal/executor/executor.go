@@ -81,11 +81,8 @@ func RunConverge[S any](ctx context.Context, driver wm.Driver, step func(engine.
 			var zero S
 			return zero, err
 		}
-		action, next, done := step(engine.World{
-			Windows:  world.Windows,
-			Spaces:   world.Spaces,
-			Displays: world.Displays,
-		}, state)
+		engineWorld := engine.World{Windows: world.Windows, Spaces: world.Spaces, Displays: world.Displays}
+		action, next, done := step(engineWorld, state)
 		if done {
 			return next, nil
 		}

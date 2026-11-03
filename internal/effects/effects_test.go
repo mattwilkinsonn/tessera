@@ -1,11 +1,15 @@
 package effects
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/mattwilkinsonn/tessera/internal/engine"
+	"gotest.tools/v3/assert"
 )
 
 func TestResolveTempDir(t *testing.T) {
@@ -228,4 +232,45 @@ func TestFlexOrder(t *testing.T) {
 			t.Fatalf("ReadFlexOrder() = %v, %v; want [arc]", got, err)
 		}
 	})
+}
+
+func TestSlotsPersistence(t *testing.T) {
+	t.Run("write then read round-trips memory and creates parent directory", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "nested", "window-slots.json")
+		want := engine.SlotMemory{Seq: 4, Slots: map[engine.SlotKey]engine.WindowRef{
+			"desk:aw/browser#1": {ID: 12, App: "Zen", Displays: "aw,g9", Seq: 4},
+		}}
+		assert.NilError(t, WriteSlots(path, want))
+		got, err := ReadSlots(path)
+		assert.NilError(t, err)
+		assert.DeepEqual(t, got, want)
+	})
+	t.Run("missing and corrupt files return empty memory", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "missing.json")
+		got, err := ReadSlots(missing)
+		assert.NilError(t, err)
+		assert.Equal(t, got.Seq, uint64(0))
+		assert.Equal(t, len(got.Slots), 0)
+		path := filepath.Join(t.TempDir(), "corrupt.json")
+		assert.NilError(t, os.WriteFile(path, []byte("{"), 0o600))
+		got, err = ReadSlots(path)
+		assert.NilError(t, err)
+		assert.Equal(t, got.Seq, uint64(0))
+		assert.Equal(t, len(got.Slots), 0)
+	})
+}
+
+func TestLockSlots(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "nested", "window-slots.json")
+	unlock, err := LockSlots(t.Context(), path)
+	assert.NilError(t, err)
+	lockPath := filepath.Join(filepath.Dir(path), "window-slots.lock")
+	_, acquired, err := AcquireLock(lockPath)
+	assert.NilError(t, err)
+	assert.Assert(t, !acquired)
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	_, err = LockSlots(ctx, path)
+	assert.Assert(t, errors.Is(err, context.DeadlineExceeded), "%v", err)
+	unlock()
 }

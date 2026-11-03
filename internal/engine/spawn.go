@@ -7,7 +7,7 @@ import (
 )
 
 func SpawnsNeeded(profile *config.Profile, names []string, windows []wm.Window) []string {
-	claims := NewClaimSet(profile)
+	claims := NewClaimSet(profile, SlotMemory{}, nil)
 	needed := make([]string, 0)
 	for _, name := range names {
 		spec, exists := profile.Windows[name]

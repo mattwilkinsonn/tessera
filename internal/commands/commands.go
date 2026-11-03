@@ -79,7 +79,7 @@ func Run(ctx context.Context, profile *config.Profile, command Command, driver w
 
 func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger, io.Writer, error) {
 	paths := env.Paths
-	missing := paths.ApplyLock == "" || paths.LaptopLock == "" || paths.SignalGuard == "" || paths.FlexOrder == "" || paths.DaemonSocket == ""
+	missing := paths.ApplyLock == "" || paths.LaptopLock == "" || paths.SignalGuard == "" || paths.FlexOrder == "" || paths.WindowSlots == "" || paths.DaemonSocket == ""
 	if missing {
 		defaults, err := effects.DefaultPaths(ctx)
 		if err != nil {
@@ -89,6 +89,7 @@ func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger,
 		paths.LaptopLock = cmp.Or(paths.LaptopLock, defaults.LaptopLock)
 		paths.SignalGuard = cmp.Or(paths.SignalGuard, defaults.SignalGuard)
 		paths.FlexOrder = cmp.Or(paths.FlexOrder, defaults.FlexOrder)
+		paths.WindowSlots = cmp.Or(paths.WindowSlots, defaults.WindowSlots)
 		paths.DaemonSocket = cmp.Or(paths.DaemonSocket, defaults.DaemonSocket)
 	}
 	nudge := env.Nudge

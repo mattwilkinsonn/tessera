@@ -3,6 +3,9 @@ package effects
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec" //nolint:depguard // Sketchybar and Darwin temp-dir discovery are intentional subprocess seams.
@@ -13,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/mattwilkinsonn/tessera/internal/engine"
 )
 
 // The guard TTL, the H7 quiet windows, and the sketchybar binary.
@@ -29,6 +33,7 @@ type Paths struct {
 	LaptopLock   string
 	SignalGuard  string
 	FlexOrder    string
+	WindowSlots  string
 	DaemonSocket string
 }
 
@@ -69,6 +74,7 @@ func DefaultPaths(ctx context.Context) (Paths, error) {
 		LaptopLock:   filepath.Join(tmpDir, "tessera-laptop.lock"),
 		SignalGuard:  signalGuardPath(),
 		FlexOrder:    filepath.Join(cache, "yabai", "laptop-flex-order"),
+		WindowSlots:  filepath.Join(cache, "yabai", "window-slots.json"),
 		DaemonSocket: filepath.Join(tmpDir, "tessera-daemon.sock"),
 	}, nil
 }
@@ -151,6 +157,92 @@ func WriteFlexOrder(order []string, path string) error {
 	}
 	if err := os.WriteFile(path, []byte(content.String()), 0o600); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ReadSlots reads cached slot memory, treating absent or corrupt state as empty.
+func ReadSlots(path string) (engine.SlotMemory, error) {
+	empty := engine.SlotMemory{Slots: make(map[engine.SlotKey]engine.WindowRef)}
+	//nolint:gosec // Slot memory uses the caller-selected cache path.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return empty, nil
+		}
+		return engine.SlotMemory{}, fmt.Errorf("reading slot memory: %w", err)
+	}
+	var memory engine.SlotMemory
+	if err := json.Unmarshal(data, &memory); err != nil {
+		slog.Warn("ignoring corrupt window slot memory", "path", path, "error", err)
+		return empty, nil
+	}
+	if memory.Slots == nil {
+		memory.Slots = make(map[engine.SlotKey]engine.WindowRef)
+	}
+	return memory, nil
+}
+
+// LockSlots blocks until it holds the slot-memory flock or ctx ends.
+// The caller holds it from reading memory through writing it, so two plans never interleave.
+func LockSlots(ctx context.Context, path string) (func(), error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, fmt.Errorf("creating slot memory directory: %w", err)
+	}
+	lock := flock.New(filepath.Join(dir, "window-slots.lock"))
+	if _, err := lock.TryLockContext(ctx, 25*time.Millisecond); err != nil {
+		return nil, fmt.Errorf("locking window slot memory: %w", err)
+	}
+	return func() {
+		if err := lock.Unlock(); err != nil {
+			slog.Error("unlocking window slot memory", "path", path, "error", err)
+		}
+	}, nil
+}
+
+// WriteSlots atomically replaces cached slot memory after creating its parent.
+func WriteSlots(path string, memory engine.SlotMemory) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("creating slot memory directory: %w", err)
+	}
+	data, err := json.Marshal(memory)
+	if err != nil {
+		return fmt.Errorf("encoding slot memory: %w", err)
+	}
+	file, err := os.CreateTemp(dir, ".window-slots-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temporary slot memory: %w", err)
+	}
+	defer func() {
+		if err := os.Remove(file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("removing temporary slot memory", "path", file.Name(), "error", err)
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			return errors.Join(fmt.Errorf("setting slot memory permissions: %w", err), fmt.Errorf("closing slot memory temporary file: %w", closeErr))
+		}
+		return fmt.Errorf("setting slot memory permissions: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			return errors.Join(fmt.Errorf("writing slot memory: %w", err), fmt.Errorf("closing slot memory temporary file: %w", closeErr))
+		}
+		return fmt.Errorf("writing slot memory: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			return errors.Join(fmt.Errorf("syncing slot memory: %w", err), fmt.Errorf("closing slot memory temporary file: %w", closeErr))
+		}
+		return fmt.Errorf("syncing slot memory: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("closing slot memory temporary file: %w", err)
+	}
+	if err := os.Rename(file.Name(), path); err != nil {
+		return fmt.Errorf("replacing slot memory: %w", err)
 	}
 	return nil
 }
