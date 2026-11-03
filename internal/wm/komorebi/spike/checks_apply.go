@@ -21,19 +21,28 @@ func (r *runner) checkApplyState(ctx context.Context, spaces spikeSpaces) error 
 	if err != nil {
 		return err
 	}
+	root, err := decodeObject(state)
+	if err != nil {
+		return fmt.Errorf("decoding guarded ApplyState input: %w", err)
+	}
+	unknownValue, err := json.Marshal(map[string]string{"preserve": spaces.spaces[0].name})
+	if err != nil {
+		return fmt.Errorf("encoding unknown ApplyState member: %w", err)
+	}
+	root["spike_unknown"] = jsontext.Value(unknownValue)
+	state, err = json.Marshal(root)
+	if err != nil {
+		return fmt.Errorf("encoding guarded ApplyState input: %w", err)
+	}
 	modified, err := reorderAndRemoveSpikeWorkspace(state, spaces, 0, 1, 2)
 	if err != nil {
 		return err
 	}
-	root, err := decodeObject(modified)
+	transformed, err := decodeObject(modified)
 	if err != nil {
-		return fmt.Errorf("decoding guarded ApplyState value: %w", err)
+		return fmt.Errorf("decoding guarded ApplyState output: %w", err)
 	}
-	root["spike_unknown"] = jsontext.Value(`{"preserve":true}`)
-	modified, err = json.Marshal(root)
-	if err != nil {
-		return fmt.Errorf("encoding guarded ApplyState value: %w", err)
-	}
+	unknownPreserved := bytes.Equal(transformed["spike_unknown"], unknownValue)
 	if err := r.prompt("Check 2 uses only three empty workspaces created by this program. Do not put personal windows there."); err != nil {
 		return err
 	}
@@ -53,7 +62,8 @@ func (r *runner) checkApplyState(ctx context.Context, spaces spikeSpaces) error 
 	reordered := firstIndex >= 0 && secondIndex == firstIndex+1
 	thirdExists := hasWorkspace(after, spaces.spaces[2].name)
 	passed := reordered && !thirdExists
-	r.record("2", fmt.Sprintf("reordered=%t removed=%t unknown_member_sent=%t", reordered, !thirdExists, bytes.Contains(modified, []byte(`"spike_unknown"`))), passed, "only the three newly created empty spike workspaces were edited")
+	r.record("2", fmt.Sprintf("reordered=%t removed=%t", reordered, !thirdExists), passed, "only the three newly created empty spike workspaces were edited")
+	r.record("2 unknown", fmt.Sprintf("unknown_member_preserved=%t", unknownPreserved), unknownPreserved, "a unique unknown member present before transformation must survive in the ApplyState payload")
 	if err := r.checkClosedWindow(ctx, spaces); err != nil {
 		return err
 	}
@@ -63,9 +73,15 @@ func (r *runner) checkApplyState(ctx context.Context, spaces spikeSpaces) error 
 	if err := r.checkMonitorHotplug(ctx); err != nil {
 		return err
 	}
-	if err := r.observe("2d", "ApplyState focus and flicker", "Record the focused spike workspace, visible flicker, and any focus changes observed. Do not record titles.", "manual observation"); err != nil {
+	focusDestination, err := r.readObservationText("Check 2d: record where focus landed after ApplyState. Use only the spike workspace number or outside.")
+	if err != nil {
 		return err
 	}
+	flicker, err := r.readObservationText("Check 2d: record visible flicker or focus changes during ApplyState. Do not record titles.")
+	if err != nil {
+		return err
+	}
+	r.record("2d", fmt.Sprintf("focus_destination=%s; flicker=%s", focusDestination, flicker), true, "separate manual observations; no titles recorded")
 	return r.checkDroppedMessage(ctx, spaces)
 }
 
@@ -94,7 +110,19 @@ func (r *runner) checkClosedWindow(ctx context.Context, spaces spikeSpaces) erro
 		r.record("2a", "test window remained managed after close", false, "close one test window before applying the stale State")
 		return nil
 	}
-	if err := r.send(ctx, komorebi.ApplyState(before)); err != nil {
+	fresh, err := r.state(ctx)
+	if err != nil {
+		return err
+	}
+	payload, safe, err := prepareStaleWorkspaceApply(before, fresh, spaces, 0)
+	if err != nil {
+		return err
+	}
+	if !safe {
+		r.record("2a", "outside_spike_workspaces_changed=true; ApplyState=aborted", false, "do not apply a stale full State after unrelated changes")
+		return nil
+	}
+	if err := r.send(ctx, komorebi.ApplyState(payload)); err != nil {
 		return err
 	}
 	after, err := r.state(ctx)
@@ -121,7 +149,19 @@ func (r *runner) checkNewManagedWindow(ctx context.Context, spaces spikeSpaces) 
 	if err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.ApplyState(before)); err != nil {
+	fresh, err := r.state(ctx)
+	if err != nil {
+		return err
+	}
+	payload, safe, err := prepareStaleWorkspaceApply(before, fresh, spaces, 1)
+	if err != nil {
+		return err
+	}
+	if !safe {
+		r.record("2b", "outside_spike_workspaces_changed=true; ApplyState=aborted", false, "do not apply a stale full State after unrelated changes")
+		return nil
+	}
+	if err := r.send(ctx, komorebi.ApplyState(payload)); err != nil {
 		return err
 	}
 	after, err := r.state(ctx)
@@ -168,7 +208,7 @@ func (r *runner) checkDroppedMessage(ctx context.Context, spaces spikeSpaces) er
 	if err != nil {
 		return err
 	}
-	_, workspaces, err := monitorWorkspaces(state, spaces.monitorIndex)
+	_, workspaces, err := monitorWorkspacesFor(state, spaces)
 	if err != nil {
 		return err
 	}
@@ -184,18 +224,21 @@ func (r *runner) checkDroppedMessage(ctx context.Context, spaces spikeSpaces) er
 	if err := r.prompt("Pause komorebi with its normal control. The program sends WorkspaceLayout only to its spike workspace."); err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.WorkspaceLayout(spaces.monitorIndex, index, layout)); err != nil {
+	if _, err := r.sendIndexedWorkspace(ctx, spaces, 0, func(monitorIndex, workspaceIndex int) komorebi.SocketMessage {
+		return komorebi.WorkspaceLayout(monitorIndex, workspaceIndex, layout)
+	}); err != nil {
 		return err
 	}
 	after, err := r.state(ctx)
 	if err != nil {
 		return err
 	}
-	_, workspaces, err = monitorWorkspaces(after, spaces.monitorIndex)
+	_, workspaces, err = monitorWorkspacesFor(after, spaces)
 	if err != nil {
 		return err
 	}
-	dropped := bytes.Equal(workspaceLayout(workspaces.Elements[index]), beforeLayout)
+	index = findWorkspaceIndex(workspaces, spaces.spaces[0].name)
+	dropped := index >= 0 && bytes.Equal(workspaceLayout(workspaces.Elements[index]), beforeLayout)
 	r.record("2e", fmt.Sprintf("layout_unchanged=%t", dropped), dropped, "a paused message is dropped and State confirms no change")
 	return r.prompt("Resume komorebi with its normal control, then press Enter.")
 }
@@ -207,18 +250,23 @@ func (r *runner) checkRatios(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.prompt("Put at least two disposable windows in the focused spike workspace."); err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.LayoutRatios([]float32{}, []float32{})); err != nil {
+	if err := r.send(ctx, komorebi.LayoutRatios([]float32{0.7}, []float32{})); err != nil {
 		return err
 	}
-	if err := r.observe("3a", "LayoutRatios([], [])", "Observe whether empty ratios give equal widths. Record y or n.", "manual observation"); err != nil {
+	if err := r.observe("3b setup", "LayoutRatios([0.7], [])", "Observe and record the known non-equal primary width before testing null ratios.", "known non-equal ratio established"); err != nil {
 		return err
 	}
 	if err := r.send(ctx, komorebi.LayoutRatios(nil, nil)); err != nil {
 		return err
 	}
-	return r.observe("3b", "LayoutRatios(null, null)", "Observe whether null ratios keep the old widths. Record y or n.", "manual observation")
+	if err := r.observe("3b", "LayoutRatios(null, null)", "Observe whether null ratios keep the known non-equal widths. Record y or n.", "manual observation"); err != nil {
+		return err
+	}
+	if err := r.send(ctx, komorebi.LayoutRatios([]float32{}, []float32{})); err != nil {
+		return err
+	}
+	return r.observe("3a", "LayoutRatios([], [])", "Observe whether empty ratios give equal widths. Record y or n.", "manual observation")
 }
-
 func (r *runner) checkAppendBehavior(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.focusSpace(ctx, spaces, 0); err != nil {
 		return err
@@ -264,7 +312,7 @@ func (r *runner) checkAppendBehavior(ctx context.Context, spaces spikeSpaces) er
 	if err := r.prompt("Open two disposable app windows on the focused spike workspace."); err != nil {
 		return err
 	}
-	if _, err := r.waitForWindowCount(ctx, spaces.spaces[0].name, 2); err != nil {
+	if err := r.waitForWindowCount(ctx, spaces.spaces[0].name, 2); err != nil {
 		return err
 	}
 	state, err = r.state(ctx)

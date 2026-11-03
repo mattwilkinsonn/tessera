@@ -13,7 +13,7 @@ func scrubJSON(source []byte) ([]byte, error) {
 	if err := json.Unmarshal(source, &value); err != nil {
 		return nil, fmt.Errorf("decoding fixture for scrubbing: %w", err)
 	}
-	windowNumber, deviceNumber := 0, 0
+	windowNumber, handleNumber, deviceNumber := 0, 0, 0
 	devices := make(map[string]string)
 	var scrub func(any, string)
 	scrub = func(value any, parentKey string) {
@@ -21,9 +21,12 @@ func scrubJSON(source []byte) ([]byte, error) {
 		case map[string]any:
 			for key, child := range item {
 				switch key {
-				case "title", "hwnd":
+				case "title":
 					windowNumber++
 					item[key] = fmt.Sprintf("window-%d", windowNumber)
+				case "hwnd":
+					handleNumber++
+					item[key] = handleNumber
 				case "exe":
 					if executable, ok := child.(string); ok {
 						item[key] = filepath.Base(executable)

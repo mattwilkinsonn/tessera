@@ -22,32 +22,20 @@ func (r *runner) checkFocus(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.focusSpace(ctx, spaces, 1); err != nil {
 		return err
 	}
-	if err := r.prompt("Connect or disconnect an external monitor without further input. Do not disconnect the monitor holding the spike workspaces. Press Enter after the display settles."); err != nil {
-		return err
-	}
 	if err := r.prompt("Put two disposable windows in the focused spike workspace. Press Enter when both are managed."); err != nil {
 		return err
 	}
-	if _, err := r.waitForWindowCount(ctx, spaces.spaces[1].name, 2); err != nil {
+	if err := r.waitForWindowCount(ctx, spaces.spaces[1].name, 2); err != nil {
 		return err
 	}
-	state, err := r.state(ctx)
+	if err := r.prompt("Connect or disconnect an external monitor without further input. Do not disconnect the monitor holding the spike workspaces. Press Enter after the display settles."); err != nil {
+		return err
+	}
+	started, err := r.sendIndexedWorkspace(ctx, spaces, 1, komorebi.FocusMonitorWorkspaceNumber)
 	if err != nil {
 		return err
 	}
-	monitorIndex, workspaces, err := monitorWorkspacesFor(state, spaces)
-	if err != nil {
-		return err
-	}
-	workspaceIndex := findWorkspaceIndex(workspaces, spaces.spaces[1].name)
-	if workspaceIndex < 0 {
-		return errors.New("check 5 could not find its spike workspace")
-	}
-	started := time.Now()
-	if err := r.send(ctx, komorebi.FocusMonitorWorkspaceNumber(monitorIndex, workspaceIndex)); err != nil {
-		return err
-	}
-	latency, focused, err := r.waitForFocusedWorkspace(ctx, spaces, 1, time.Second)
+	latency, focused, err := r.waitForFocusedWorkspaceSince(ctx, spaces, 1, started, time.Second)
 	if err != nil {
 		return err
 	}
@@ -68,9 +56,8 @@ func (r *runner) checkFocus(ctx context.Context, spaces spikeSpaces) error {
 	if err != nil {
 		return err
 	}
-	elapsed := time.Since(started)
-	observed := fmt.Sprintf("State_focus_latency=%s focused=%t foreground_within_1s=%s key_landed=%s", latency.Round(time.Millisecond), focused, foreground, landed)
-	r.record("5", observed, focused && elapsed <= time.Second && foreground == "y", "also records where a test key landed after Promote and StackWindow(Left)")
+	r.record("5 foreground", "foreground_within_1s="+foreground, foreground == "y", "foreground observation is separate from the State focus timer")
+	r.record("5", fmt.Sprintf("State_focus_latency=%s focused=%t key_landed=%s", latency.Round(time.Millisecond), focused, landed), focused && latency <= time.Second, "State polling starts just before FocusMonitorWorkspaceNumber and ends when State shows the target")
 	return nil
 }
 
@@ -104,19 +91,9 @@ func (r *runner) checkSubscriber(ctx context.Context, spaces spikeSpaces) error 
 	if err := r.focusSpace(ctx, spaces, 2); err != nil {
 		return err
 	}
-	state, err := r.state(ctx)
-	if err != nil {
-		return err
-	}
-	monitorIndex, workspaces, err := monitorWorkspacesFor(state, spaces)
-	if err != nil {
-		return err
-	}
-	workspaceIndex := findWorkspaceIndex(workspaces, spaces.spaces[2].name)
-	if workspaceIndex < 0 {
-		return errors.New("check 6 could not find its spike workspace")
-	}
-	if err := r.send(ctx, komorebi.WorkspaceLayout(monitorIndex, workspaceIndex, komorebi.LayoutColumns)); err != nil {
+	if _, err := r.sendIndexedWorkspace(ctx, spaces, 2, func(monitorIndex, workspaceIndex int) komorebi.SocketMessage {
+		return komorebi.WorkspaceLayout(monitorIndex, workspaceIndex, komorebi.LayoutColumns)
+	}); err != nil {
 		return err
 	}
 	if err := unixListener.SetDeadline(time.Now().Add(checkTimeout)); err != nil {
@@ -175,33 +152,40 @@ func (r *runner) checkSettle(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.prompt("Open two disposable app windows on this spike workspace."); err != nil {
 		return err
 	}
-	before, err := r.waitForWindowCount(ctx, spaces.spaces[2].name, 2)
+	if err := r.waitForWindowCount(ctx, spaces.spaces[2].name, 2); err != nil {
+		return err
+	}
+	started, err := r.sendIndexedWorkspace(ctx, spaces, 2, func(monitorIndex, workspaceIndex int) komorebi.SocketMessage {
+		return komorebi.WorkspaceLayout(monitorIndex, workspaceIndex, komorebi.LayoutColumns)
+	})
 	if err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.WorkspaceLayout(spaces.monitorIndex, spaces.spaces[2].index, komorebi.LayoutColumns)); err != nil {
-		return err
-	}
-	layoutDuration, err := r.waitForStateChange(ctx, before, time.Second)
+	layoutDuration, layoutSettled, err := r.waitForStableWindowRectangles(ctx, spaces, 2, started, time.Second)
 	if err != nil {
 		return err
 	}
-	before, err = r.state(ctx)
-	if err != nil {
-		return err
+	if !layoutSettled {
+		r.record("7", fmt.Sprintf("WorkspaceLayout did not settle within one second (%s)", layoutDuration.Round(time.Millisecond)), false, "window rectangles did not stabilize across consecutive State samples")
+		return nil
 	}
+	focusStarted := time.Now()
 	if err := r.send(ctx, komorebi.Promote()); err != nil {
 		return err
 	}
 	if err := r.send(ctx, komorebi.StackWindow(komorebi.DirectionLeft)); err != nil {
 		return err
 	}
-	focusDuration, err := r.waitForStateChange(ctx, before, time.Second)
+	focusDuration, focusSettled, err := r.waitForStableWindowRectangles(ctx, spaces, 2, focusStarted, time.Second)
 	if err != nil {
 		return err
 	}
-	passed := layoutDuration <= time.Second && focusDuration <= time.Second
-	r.record("7", fmt.Sprintf("WorkspaceLayout=%s focus_sequence=%s", layoutDuration.Round(time.Millisecond), focusDuration.Round(time.Millisecond)), passed, "pass when both State changes appear within one second")
+	passed := focusSettled
+	if !focusSettled {
+		r.record("7", fmt.Sprintf("focus sequence did not settle within one second (%s)", focusDuration.Round(time.Millisecond)), false, "window rectangles did not stabilize across consecutive State samples")
+		return nil
+	}
+	r.record("7", fmt.Sprintf("WorkspaceLayout=%s focus_sequence=%s", layoutDuration.Round(time.Millisecond), focusDuration.Round(time.Millisecond)), passed, "window rectangles settled across consecutive State samples")
 	return nil
 }
 

@@ -313,6 +313,176 @@ func monitorWorkspacesFor(state jsontext.Value, spaces spikeSpaces) (int, ringVa
 	}
 	return monitorIndex, workspaces, nil
 }
+func stateOutsideSpikeWorkspaces(state jsontext.Value, spaces spikeSpaces) (jsontext.Value, error) {
+	root, err := decodeObject(state)
+	if err != nil {
+		return nil, fmt.Errorf("decoding State for spike workspace comparison: %w", err)
+	}
+	var monitors ringValue
+	if err := json.Unmarshal(root["monitors"], &monitors); err != nil {
+		return nil, fmt.Errorf("decoding monitor ring for spike workspace comparison: %w", err)
+	}
+	for monitorIndex, monitorValue := range monitors.Elements {
+		monitor, err := decodeObject(monitorValue)
+		if err != nil {
+			return nil, fmt.Errorf("decoding monitor %d for spike workspace comparison: %w", monitorIndex, err)
+		}
+		var workspaces ringValue
+		if err := json.Unmarshal(monitor["workspaces"], &workspaces); err != nil {
+			return nil, fmt.Errorf("decoding monitor %d workspaces for spike workspace comparison: %w", monitorIndex, err)
+		}
+		if sameMonitor(spaces, monitorValue) && (workspaces.Focused < 0 || workspaces.Focused >= len(workspaces.Elements)) {
+			return nil, errors.New("spike monitor focus is out of range during State comparison")
+		}
+		filtered := make([]jsontext.Value, 0, len(workspaces.Elements))
+		focused := -1
+		for index, workspace := range workspaces.Elements {
+			if sameMonitor(spaces, monitorValue) && isSpikeWorkspace(spaces, workspaceName(workspace)) {
+				continue
+			}
+			if index == workspaces.Focused {
+				focused = len(filtered)
+			}
+			filtered = append(filtered, workspace)
+		}
+		workspaces.Elements = filtered
+		workspaces.Focused = focused
+		monitor["workspaces"], err = json.Marshal(workspaces)
+		if err != nil {
+			return nil, fmt.Errorf("encoding monitor %d workspaces for spike workspace comparison: %w", monitorIndex, err)
+		}
+		monitors.Elements[monitorIndex], err = json.Marshal(monitor)
+		if err != nil {
+			return nil, fmt.Errorf("encoding monitor %d for spike workspace comparison: %w", monitorIndex, err)
+		}
+	}
+	root["monitors"], err = json.Marshal(monitors)
+	if err != nil {
+		return nil, fmt.Errorf("encoding monitor ring for spike workspace comparison: %w", err)
+	}
+	result, err := json.Marshal(root)
+	if err != nil {
+		return nil, fmt.Errorf("encoding State for spike workspace comparison: %w", err)
+	}
+	return result, nil
+}
+
+func sameMonitorTopology(left, right jsontext.Value, spaces spikeSpaces) (bool, error) {
+	leftRoot, err := decodeObject(left)
+	if err != nil {
+		return false, fmt.Errorf("decoding snapshot State: %w", err)
+	}
+	rightRoot, err := decodeObject(right)
+	if err != nil {
+		return false, fmt.Errorf("decoding fresh State: %w", err)
+	}
+	var leftMonitors, rightMonitors ringValue
+	if err := json.Unmarshal(leftRoot["monitors"], &leftMonitors); err != nil {
+		return false, fmt.Errorf("decoding snapshot monitor ring: %w", err)
+	}
+	if err := json.Unmarshal(rightRoot["monitors"], &rightMonitors); err != nil {
+		return false, fmt.Errorf("decoding fresh monitor ring: %w", err)
+	}
+	if len(leftMonitors.Elements) != len(rightMonitors.Elements) {
+		return false, nil
+	}
+	leftIndex := findMonitorByIdentity(leftMonitors, spaces)
+	rightIndex := findMonitorByIdentity(rightMonitors, spaces)
+	return leftIndex >= 0 && rightIndex >= 0 && leftIndex == rightIndex, nil
+}
+
+func prepareStaleWorkspaceApply(snapshot, fresh jsontext.Value, spaces spikeSpaces, slot int) (jsontext.Value, bool, error) {
+	sameTopology, err := sameMonitorTopology(snapshot, fresh, spaces)
+	if err != nil {
+		return nil, false, err
+	}
+	if !sameTopology {
+		return nil, false, nil
+	}
+	snapshotOutside, err := stateOutsideSpikeWorkspaces(snapshot, spaces)
+	if err != nil {
+		return nil, false, err
+	}
+	freshOutside, err := stateOutsideSpikeWorkspaces(fresh, spaces)
+	if err != nil {
+		return nil, false, err
+	}
+	if !bytes.Equal(snapshotOutside, freshOutside) {
+		return nil, false, nil
+	}
+	if slot < 0 || slot >= len(spaces.spaces) {
+		return nil, false, errors.New("spike workspace slot is out of range")
+	}
+
+	snapshotRoot, err := decodeObject(snapshot)
+	if err != nil {
+		return nil, false, fmt.Errorf("decoding stale State: %w", err)
+	}
+	var snapshotMonitors ringValue
+	if err := json.Unmarshal(snapshotRoot["monitors"], &snapshotMonitors); err != nil {
+		return nil, false, fmt.Errorf("decoding stale monitor ring: %w", err)
+	}
+	snapshotMonitorIndex := findMonitorByIdentity(snapshotMonitors, spaces)
+	if snapshotMonitorIndex < 0 {
+		return nil, false, errors.New("spike monitor is absent from stale State")
+	}
+	snapshotMonitor, err := decodeObject(snapshotMonitors.Elements[snapshotMonitorIndex])
+	if err != nil {
+		return nil, false, fmt.Errorf("decoding stale spike monitor: %w", err)
+	}
+	var snapshotWorkspaces ringValue
+	if err := json.Unmarshal(snapshotMonitor["workspaces"], &snapshotWorkspaces); err != nil {
+		return nil, false, fmt.Errorf("decoding stale spike workspaces: %w", err)
+	}
+	workspaceName := spaces.spaces[slot].name
+	snapshotWorkspaceIndex := findWorkspaceIndex(snapshotWorkspaces, workspaceName)
+	if snapshotWorkspaceIndex < 0 {
+		return nil, false, fmt.Errorf("spike workspace %q is absent from stale State", workspaceName)
+	}
+
+	freshRoot, err := decodeObject(fresh)
+	if err != nil {
+		return nil, false, fmt.Errorf("decoding fresh State: %w", err)
+	}
+	var freshMonitors ringValue
+	if err := json.Unmarshal(freshRoot["monitors"], &freshMonitors); err != nil {
+		return nil, false, fmt.Errorf("decoding fresh monitor ring: %w", err)
+	}
+	freshMonitorIndex := findMonitorByIdentity(freshMonitors, spaces)
+	if freshMonitorIndex < 0 {
+		return nil, false, errors.New("spike monitor is absent from fresh State")
+	}
+	freshMonitor, err := decodeObject(freshMonitors.Elements[freshMonitorIndex])
+	if err != nil {
+		return nil, false, fmt.Errorf("decoding fresh spike monitor: %w", err)
+	}
+	var freshWorkspaces ringValue
+	if err := json.Unmarshal(freshMonitor["workspaces"], &freshWorkspaces); err != nil {
+		return nil, false, fmt.Errorf("decoding fresh spike workspaces: %w", err)
+	}
+	freshWorkspaceIndex := findWorkspaceIndex(freshWorkspaces, workspaceName)
+	if freshWorkspaceIndex < 0 {
+		return nil, false, fmt.Errorf("spike workspace %q is absent from fresh State", workspaceName)
+	}
+	freshWorkspaces.Elements[freshWorkspaceIndex] = snapshotWorkspaces.Elements[snapshotWorkspaceIndex]
+	freshMonitor["workspaces"], err = json.Marshal(freshWorkspaces)
+	if err != nil {
+		return nil, false, fmt.Errorf("encoding fresh spike workspaces: %w", err)
+	}
+	freshMonitors.Elements[freshMonitorIndex], err = json.Marshal(freshMonitor)
+	if err != nil {
+		return nil, false, fmt.Errorf("encoding fresh spike monitor: %w", err)
+	}
+	freshRoot["monitors"], err = json.Marshal(freshMonitors)
+	if err != nil {
+		return nil, false, fmt.Errorf("encoding fresh monitor ring: %w", err)
+	}
+	result, err := json.Marshal(freshRoot)
+	if err != nil {
+		return nil, false, fmt.Errorf("encoding safe ApplyState payload: %w", err)
+	}
+	return result, true, nil
+}
 
 func workspaceWindowIDs(state jsontext.Value, name string) []string {
 	root, err := decodeObject(state)
@@ -392,6 +562,52 @@ func equalStrings(left, right []string) bool {
 	return true
 }
 
+func workspaceWindowRectangles(value jsontext.Value) map[string]map[string]jsontext.Value {
+	rectangles := make(map[string]map[string]jsontext.Value)
+	var visit func(jsontext.Value)
+	visit = func(value jsontext.Value) {
+		var object map[string]jsontext.Value
+		if err := json.Unmarshal(value, &object); err == nil && object != nil {
+			if len(object["hwnd"]) > 0 && object["rect"].IsValid() {
+				var rectangle map[string]jsontext.Value
+				if err := json.Unmarshal(object["rect"], &rectangle); err == nil && rectangle != nil {
+					rectangles[string(object["hwnd"])] = rectangle
+				}
+			}
+			for _, child := range object {
+				visit(child)
+			}
+			return
+		}
+		var elements []jsontext.Value
+		if err := json.Unmarshal(value, &elements); err == nil {
+			for _, element := range elements {
+				visit(element)
+			}
+		}
+	}
+	visit(value)
+	return rectangles
+}
+
+func equalWindowRectangles(left, right map[string]map[string]jsontext.Value) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for hwnd, leftRect := range left {
+		rightRect, ok := right[hwnd]
+		if !ok || len(leftRect) != len(rightRect) {
+			return false
+		}
+		for key, leftValue := range leftRect {
+			if !bytes.Equal(leftValue, rightRect[key]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (r *runner) waitForNewWindow(ctx context.Context, before jsontext.Value, workspace string) (string, error) {
 	beforeIDs := make(map[string]struct{})
 	for _, identifier := range workspaceWindowIDs(before, workspace) {
@@ -417,23 +633,23 @@ func (r *runner) waitForNewWindow(ctx context.Context, before jsontext.Value, wo
 	return "", errors.New("timed out waiting for a newly managed window in the spike workspace")
 }
 
-func (r *runner) waitForWindowCount(ctx context.Context, workspace string, count int) (jsontext.Value, error) {
+func (r *runner) waitForWindowCount(ctx context.Context, workspace string, count int) error {
 	deadline := time.Now().Add(checkTimeout)
 	for time.Now().Before(deadline) {
 		state, err := r.state(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(workspaceWindowIDs(state, workspace)) >= count {
-			return state, nil
+			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("waiting for spike workspace windows: %w", ctx.Err())
+			return fmt.Errorf("waiting for spike workspace windows: %w", ctx.Err())
 		case <-time.After(pollInterval):
 		}
 	}
-	return nil, fmt.Errorf("spike workspace did not reach %d managed windows", count)
+	return fmt.Errorf("spike workspace did not reach %d managed windows", count)
 }
 
 func workspaceContainerCounts(value jsontext.Value) (int, int) {
@@ -478,24 +694,45 @@ func (r *runner) waitForNoWindows(ctx context.Context, workspace string) error {
 	return errors.New("timed out waiting for disposable spike windows to close")
 }
 
-func (r *runner) waitForStateChange(ctx context.Context, before jsontext.Value, timeout time.Duration) (time.Duration, error) {
-	started := time.Now()
+func (r *runner) waitForStableWindowRectangles(ctx context.Context, spaces spikeSpaces, slot int, started time.Time, timeout time.Duration) (time.Duration, bool, error) {
+	if slot < 0 || slot >= len(spaces.spaces) {
+		return 0, false, errors.New("spike workspace slot is out of range")
+	}
 	deadline := started.Add(timeout)
-	for time.Now().Before(deadline) {
+	var previous map[string]map[string]jsontext.Value
+	stableSamples := 0
+	for {
 		state, err := r.state(ctx)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
-		if !bytes.Equal(state, before) {
-			return time.Since(started), nil
+		_, workspaces, err := monitorWorkspacesFor(state, spaces)
+		if err != nil {
+			return 0, false, err
+		}
+		index := findWorkspaceIndex(workspaces, spaces.spaces[slot].name)
+		if index < 0 {
+			return 0, false, fmt.Errorf("spike workspace %q is not present", spaces.spaces[slot].name)
+		}
+		rectangles := workspaceWindowRectangles(workspaces.Elements[index])
+		if len(rectangles) > 0 && equalWindowRectangles(previous, rectangles) {
+			stableSamples++
+		} else {
+			stableSamples = 1
+		}
+		if len(rectangles) > 0 && stableSamples >= 2 {
+			return time.Since(started), true, nil
+		}
+		if !time.Now().Before(deadline) {
+			return time.Since(started), false, nil
 		}
 		select {
 		case <-ctx.Done():
-			return 0, fmt.Errorf("waiting for komorebi State change: %w", ctx.Err())
-		case <-time.After(pollInterval):
+			return 0, false, fmt.Errorf("waiting for spike window rectangles to settle: %w", ctx.Err())
+		case <-time.After(min(pollInterval, time.Until(deadline))):
 		}
+		previous = rectangles
 	}
-	return 0, errors.New("komorebi State did not change before timeout")
 }
 
 func monitorCount(state jsontext.Value) int {
@@ -510,8 +747,7 @@ func monitorCount(state jsontext.Value) int {
 	return len(monitors.Elements)
 }
 
-func (r *runner) waitForFocusedWorkspace(ctx context.Context, spaces spikeSpaces, slot int, timeout time.Duration) (time.Duration, bool, error) {
-	started := time.Now()
+func (r *runner) waitForFocusedWorkspaceSince(ctx context.Context, spaces spikeSpaces, slot int, started time.Time, timeout time.Duration) (time.Duration, bool, error) {
 	deadline := started.Add(timeout)
 	for time.Now().Before(deadline) {
 		state, err := r.state(ctx)

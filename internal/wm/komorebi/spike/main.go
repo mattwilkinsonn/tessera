@@ -251,22 +251,42 @@ func (r *runner) createSpikeSpaces(ctx context.Context, count int) (spikeSpaces,
 }
 
 func (r *runner) focusSpace(ctx context.Context, spaces spikeSpaces, slot int) error {
+	_, err := r.sendIndexedWorkspace(ctx, spaces, slot, komorebi.FocusMonitorWorkspaceNumber)
+	return err
+}
+
+func (r *runner) sendIndexedWorkspace(ctx context.Context, spaces spikeSpaces, slot int, build func(int, int) komorebi.SocketMessage) (time.Time, error) {
 	if slot < 0 || slot >= len(spaces.spaces) {
-		return fmt.Errorf("spike workspace slot %d is out of range", slot)
+		return time.Time{}, fmt.Errorf("spike workspace slot %d is out of range", slot)
 	}
 	state, err := r.state(ctx)
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 	monitorIndex, workspaces, err := monitorWorkspacesFor(state, spaces)
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
-	index := findWorkspaceIndex(workspaces, spaces.spaces[slot].name)
-	if index < 0 {
-		return fmt.Errorf("spike workspace %q is not present", spaces.spaces[slot].name)
+	workspaceIndex := findWorkspaceIndex(workspaces, spaces.spaces[slot].name)
+	if workspaceIndex < 0 || workspaceName(workspaces.Elements[workspaceIndex]) != spaces.spaces[slot].name {
+		return time.Time{}, fmt.Errorf("spike workspace %q is not present on its original monitor", spaces.spaces[slot].name)
 	}
-	return r.send(ctx, komorebi.FocusMonitorWorkspaceNumber(monitorIndex, index))
+	started := time.Now()
+	if err := r.send(ctx, build(monitorIndex, workspaceIndex)); err != nil {
+		return time.Time{}, err
+	}
+	return started, nil
+}
+
+func (r *runner) readObservationText(prompt string) (string, error) {
+	if _, err := fmt.Fprintln(os.Stdout, prompt); err != nil {
+		return "", fmt.Errorf("writing spike observation prompt: %w", err)
+	}
+	line, err := r.reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("reading spike observation: %w", err)
+	}
+	return strings.TrimSpace(line), nil
 }
 
 func (r *runner) resetSpikeSpaces(ctx context.Context, spaces spikeSpaces) error {
