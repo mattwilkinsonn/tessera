@@ -187,6 +187,13 @@ func (r *runner) createSpikeSpaces(ctx context.Context, count int) (spikeSpaces,
 		OriginalCount: base,
 		Spaces:        make([]spikestate.SpikeSpace, 0, count),
 	}
+	if err := r.send(ctx, komorebi.EnsureWorkspaces(monitorIndex, base+count)); err != nil {
+		return spikeSpaces{}, err
+	}
+	state, err = r.state(ctx)
+	if err != nil {
+		return spikeSpaces{}, err
+	}
 	_, workspaces, err = spikestate.MonitorWorkspaces(state, monitorIndex)
 	if err != nil {
 		return spikeSpaces{}, err

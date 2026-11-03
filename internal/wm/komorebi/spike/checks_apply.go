@@ -263,23 +263,24 @@ func (r *runner) checkRatios(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.prompt("Put at least two disposable windows in the focused spike workspace."); err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.LayoutRatios([]float32{0.7}, []float32{})); err != nil {
+	if ok, err := r.sendFocusedWorkspaceCommand(ctx, spaces, 0, "3b", komorebi.LayoutRatios([]float32{0.7}, []float32{})); err != nil || !ok {
 		return err
 	}
 	if err := r.observe("3b setup", "LayoutRatios([0.7], [])", "Observe and record the known non-equal primary width before testing null ratios.", "known non-equal ratio established"); err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.LayoutRatios(nil, nil)); err != nil {
+	if ok, err := r.sendFocusedWorkspaceCommand(ctx, spaces, 0, "3b", komorebi.LayoutRatios(nil, nil)); err != nil || !ok {
 		return err
 	}
 	if err := r.observe("3b", "LayoutRatios(null, null)", "Observe whether null ratios keep the known non-equal widths. Record y or n.", "manual observation"); err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.LayoutRatios([]float32{}, []float32{})); err != nil {
+	if ok, err := r.sendFocusedWorkspaceCommand(ctx, spaces, 0, "3a", komorebi.LayoutRatios([]float32{}, []float32{})); err != nil || !ok {
 		return err
 	}
 	return r.observe("3a", "LayoutRatios([], [])", "Observe whether empty ratios give equal widths. Record y or n.", "manual observation")
 }
+
 func (r *runner) checkAppendBehavior(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.focusSpace(ctx, spaces, 0); err != nil {
 		return err
@@ -305,7 +306,7 @@ func (r *runner) checkAppendBehavior(ctx context.Context, spaces spikeSpaces) er
 		current = spikestate.RawString(root["new_window_behaviour"])
 	}
 	if current != "Append" {
-		if err := r.send(ctx, komorebi.ToggleWorkspaceWindowContainerBehaviour()); err != nil {
+		if ok, err := r.sendFocusedWorkspaceCommand(ctx, spaces, 0, "4", komorebi.ToggleWorkspaceWindowContainerBehaviour()); err != nil || !ok {
 			return err
 		}
 	}
