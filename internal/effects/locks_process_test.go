@@ -40,11 +40,11 @@ func TestAcquireLockAfterProcessDeath(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := cmd.Wait(); err == nil {
-			t.Fatal("child exited without SIGKILL")
+			t.Fatal("child exited before it was killed")
 		}
 		lock, acquired, err := AcquireLock(path)
 		if err != nil || !acquired {
-			t.Fatalf("AcquireLock() after SIGKILL = %t, %v; want true, nil", acquired, err)
+			t.Fatalf("AcquireLock() after kill = %t, %v; want true, nil", acquired, err)
 		}
 		if err := lock.Unlock(); err != nil {
 			t.Fatal(err)
