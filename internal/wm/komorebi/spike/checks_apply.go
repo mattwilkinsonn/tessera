@@ -11,41 +11,54 @@ import (
 	"fmt"
 
 	"github.com/mattwilkinsonn/tessera/internal/wm/komorebi"
+	"github.com/mattwilkinsonn/tessera/internal/wm/komorebi/spike/spikestate"
 )
 
 func (r *runner) checkApplyState(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.focusSpace(ctx, spaces, 0); err != nil {
 		return err
 	}
-	state, err := r.state(ctx)
+	snapshot, err := r.state(ctx)
 	if err != nil {
 		return err
 	}
-	root, err := decodeObject(state)
-	if err != nil {
-		return fmt.Errorf("decoding guarded ApplyState input: %w", err)
+	if err := r.prompt("Check 2 uses only three empty workspaces created by this program. Do not put personal windows there."); err != nil {
+		return err
 	}
-	unknownValue, err := json.Marshal(map[string]string{"preserve": spaces.spaces[0].name})
+	fresh, err := r.state(ctx)
+	if err != nil {
+		return err
+	}
+	safe, err := spikestate.StatesSafeToApply(snapshot, fresh, spaces)
+	if err != nil {
+		return err
+	}
+	if !safe {
+		r.record("2", "outside_spike_workspaces_changed=true; ApplyState=aborted", false, "do not apply stale State after unrelated changes or monitor topology changes")
+		return nil
+	}
+	unknownValue, err := json.Marshal(map[string]string{"preserve": spaces.Spaces[0].Name})
 	if err != nil {
 		return fmt.Errorf("encoding unknown ApplyState member: %w", err)
 	}
-	root["spike_unknown"] = jsontext.Value(unknownValue)
-	state, err = json.Marshal(root)
+	root, err := spikestate.DecodeObject(fresh)
 	if err != nil {
-		return fmt.Errorf("encoding guarded ApplyState input: %w", err)
+		return fmt.Errorf("decoding fresh guarded ApplyState input: %w", err)
 	}
-	modified, err := reorderAndRemoveSpikeWorkspace(state, spaces, 0, 1, 2)
+	root["spike_unknown"] = jsontext.Value(unknownValue)
+	fresh, err = json.Marshal(root)
+	if err != nil {
+		return fmt.Errorf("encoding fresh guarded ApplyState input: %w", err)
+	}
+	modified, err := spikestate.ReorderAndRemoveSpikeWorkspace(fresh, spaces, 0, 1, 2)
 	if err != nil {
 		return err
 	}
-	transformed, err := decodeObject(modified)
+	transformed, err := spikestate.DecodeObject(modified)
 	if err != nil {
 		return fmt.Errorf("decoding guarded ApplyState output: %w", err)
 	}
 	unknownPreserved := bytes.Equal(transformed["spike_unknown"], unknownValue)
-	if err := r.prompt("Check 2 uses only three empty workspaces created by this program. Do not put personal windows there."); err != nil {
-		return err
-	}
 	if err := r.send(ctx, komorebi.ApplyState(modified)); err != nil {
 		return err
 	}
@@ -53,14 +66,14 @@ func (r *runner) checkApplyState(ctx context.Context, spaces spikeSpaces) error 
 	if err != nil {
 		return err
 	}
-	_, workspaces, err := monitorWorkspacesFor(after, spaces)
+	_, workspaces, err := spikestate.MonitorWorkspacesFor(after, spaces)
 	if err != nil {
 		return err
 	}
-	firstIndex := findWorkspaceIndex(workspaces, spaces.spaces[1].name)
-	secondIndex := findWorkspaceIndex(workspaces, spaces.spaces[0].name)
+	firstIndex := spikestate.FindWorkspaceIndex(workspaces, spaces.Spaces[1].Name)
+	secondIndex := spikestate.FindWorkspaceIndex(workspaces, spaces.Spaces[0].Name)
 	reordered := firstIndex >= 0 && secondIndex == firstIndex+1
-	thirdExists := hasWorkspace(after, spaces.spaces[2].name)
+	thirdExists := spikestate.HasWorkspace(after, spaces.Spaces[2].Name)
 	passed := reordered && !thirdExists
 	r.record("2", fmt.Sprintf("reordered=%t removed=%t", reordered, !thirdExists), passed, "only the three newly created empty spike workspaces were edited")
 	r.record("2 unknown", fmt.Sprintf("unknown_member_preserved=%t", unknownPreserved), unknownPreserved, "a unique unknown member present before transformation must survive in the ApplyState payload")
@@ -93,7 +106,7 @@ func (r *runner) checkClosedWindow(ctx context.Context, spaces spikeSpaces) erro
 	if err != nil {
 		return err
 	}
-	windowIDs := workspaceWindowIDs(before, spaces.spaces[0].name)
+	windowIDs := spikestate.WorkspaceWindowIDs(before, spaces.Spaces[0].Name)
 	if len(windowIDs) == 0 {
 		r.record("2a", "no test window in the spike workspace", false, "add a disposable test window only to the named spike workspace and rerun check 2a")
 		return nil
@@ -105,7 +118,7 @@ func (r *runner) checkClosedWindow(ctx context.Context, spaces spikeSpaces) erro
 	if err != nil {
 		return err
 	}
-	closedIDs := workspaceWindowIDs(closedState, spaces.spaces[0].name)
+	closedIDs := spikestate.WorkspaceWindowIDs(closedState, spaces.Spaces[0].Name)
 	if len(closedIDs) >= len(windowIDs) {
 		r.record("2a", "test window remained managed after close", false, "close one test window before applying the stale State")
 		return nil
@@ -114,7 +127,7 @@ func (r *runner) checkClosedWindow(ctx context.Context, spaces spikeSpaces) erro
 	if err != nil {
 		return err
 	}
-	payload, safe, err := prepareStaleWorkspaceApply(before, fresh, spaces, 0)
+	payload, safe, err := spikestate.PrepareSelectedWorkspaceApply(before, fresh, spaces, 0)
 	if err != nil {
 		return err
 	}
@@ -129,7 +142,7 @@ func (r *runner) checkClosedWindow(ctx context.Context, spaces spikeSpaces) erro
 	if err != nil {
 		return err
 	}
-	unchanged := equalStrings(workspaceWindowIDs(after, spaces.spaces[0].name), closedIDs)
+	unchanged := spikestate.EqualStrings(spikestate.WorkspaceWindowIDs(after, spaces.Spaces[0].Name), closedIDs)
 	r.record("2a", fmt.Sprintf("post_close_window_ids_unchanged=%t", unchanged), unchanged, "ApplyState must be ignored when a sent window has closed")
 	return nil
 }
@@ -145,7 +158,7 @@ func (r *runner) checkNewManagedWindow(ctx context.Context, spaces spikeSpaces) 
 	if err := r.prompt("Open one disposable app window on the focused spike workspace. Wait until komorebi manages it, then press Enter."); err != nil {
 		return err
 	}
-	newID, err := r.waitForNewWindow(ctx, before, spaces.spaces[1].name)
+	newID, err := r.waitForNewWindow(ctx, before, spaces.Spaces[1].Name)
 	if err != nil {
 		return err
 	}
@@ -153,7 +166,7 @@ func (r *runner) checkNewManagedWindow(ctx context.Context, spaces spikeSpaces) 
 	if err != nil {
 		return err
 	}
-	payload, safe, err := prepareStaleWorkspaceApply(before, fresh, spaces, 1)
+	payload, safe, err := spikestate.PrepareSelectedWorkspaceApply(before, fresh, spaces, 1)
 	if err != nil {
 		return err
 	}
@@ -168,7 +181,7 @@ func (r *runner) checkNewManagedWindow(ctx context.Context, spaces spikeSpaces) 
 	if err != nil {
 		return err
 	}
-	preserved := workspaceHasWindowID(after, spaces.spaces[1].name, newID)
+	preserved := spikestate.WorkspaceHasWindowID(after, spaces.Spaces[1].Name, newID)
 	r.record("2b", fmt.Sprintf("new_window_still_managed=%t", preserved), preserved, "a newly managed window must remain after ApplyState")
 	return nil
 }
@@ -178,7 +191,7 @@ func (r *runner) checkMonitorHotplug(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	beforeCount := monitorCount(before)
+	beforeCount := spikestate.MonitorCount(before)
 	if err := r.prompt("Connect or disconnect one monitor now, then press Enter. Keep test windows inside spike workspaces."); err != nil {
 		return err
 	}
@@ -186,7 +199,7 @@ func (r *runner) checkMonitorHotplug(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	changedCount := monitorCount(changed)
+	changedCount := spikestate.MonitorCount(changed)
 	if changedCount == beforeCount {
 		r.record("2c", fmt.Sprintf("monitor_count=%d (unchanged)", beforeCount), false, "the monitor count must differ for this check")
 		return nil
@@ -198,8 +211,8 @@ func (r *runner) checkMonitorHotplug(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	preserved := monitorCount(after) == changedCount
-	r.record("2c", fmt.Sprintf("before=%d hotplug=%d after_apply=%d", beforeCount, changedCount, monitorCount(after)), preserved, "ApplyState must be ignored when monitor counts differ")
+	preserved := spikestate.MonitorCount(after) == changedCount
+	r.record("2c", fmt.Sprintf("before=%d hotplug=%d after_apply=%d", beforeCount, changedCount, spikestate.MonitorCount(after)), preserved, "ApplyState must be ignored when monitor counts differ")
 	return nil
 }
 
@@ -208,15 +221,15 @@ func (r *runner) checkDroppedMessage(ctx context.Context, spaces spikeSpaces) er
 	if err != nil {
 		return err
 	}
-	_, workspaces, err := monitorWorkspacesFor(state, spaces)
+	_, workspaces, err := spikestate.MonitorWorkspacesFor(state, spaces)
 	if err != nil {
 		return err
 	}
-	index := findWorkspaceIndex(workspaces, spaces.spaces[0].name)
+	index := spikestate.FindWorkspaceIndex(workspaces, spaces.Spaces[0].Name)
 	if index < 0 {
 		return errors.New("check 2e could not find its spike workspace")
 	}
-	beforeLayout := workspaceLayout(workspaces.Elements[index])
+	beforeLayout := spikestate.WorkspaceLayout(workspaces.Elements[index])
 	layout := komorebi.LayoutColumns
 	if string(beforeLayout) == `"Columns"` {
 		layout = komorebi.LayoutRows
@@ -233,12 +246,12 @@ func (r *runner) checkDroppedMessage(ctx context.Context, spaces spikeSpaces) er
 	if err != nil {
 		return err
 	}
-	_, workspaces, err = monitorWorkspacesFor(after, spaces)
+	_, workspaces, err = spikestate.MonitorWorkspacesFor(after, spaces)
 	if err != nil {
 		return err
 	}
-	index = findWorkspaceIndex(workspaces, spaces.spaces[0].name)
-	dropped := index >= 0 && bytes.Equal(workspaceLayout(workspaces.Elements[index]), beforeLayout)
+	index = spikestate.FindWorkspaceIndex(workspaces, spaces.Spaces[0].Name)
+	dropped := index >= 0 && bytes.Equal(spikestate.WorkspaceLayout(workspaces.Elements[index]), beforeLayout)
 	r.record("2e", fmt.Sprintf("layout_unchanged=%t", dropped), dropped, "a paused message is dropped and State confirms no change")
 	return r.prompt("Resume komorebi with its normal control, then press Enter.")
 }
@@ -275,21 +288,21 @@ func (r *runner) checkAppendBehavior(ctx context.Context, spaces spikeSpaces) er
 	if err != nil {
 		return err
 	}
-	_, workspaces, err := monitorWorkspaces(state, spaces.monitorIndex)
+	_, workspaces, err := spikestate.MonitorWorkspaces(state, spaces.MonitorIndex)
 	if err != nil {
 		return err
 	}
-	index := findWorkspaceIndex(workspaces, spaces.spaces[0].name)
+	index := spikestate.FindWorkspaceIndex(workspaces, spaces.Spaces[0].Name)
 	if index < 0 {
 		return errors.New("check 4 could not find its spike workspace")
 	}
-	current := workspaceBehaviour(workspaces.Elements[index])
+	current := spikestate.WorkspaceBehaviour(workspaces.Elements[index])
 	if current == "" {
-		root, err := decodeObject(state)
+		root, err := spikestate.DecodeObject(state)
 		if err != nil {
 			return fmt.Errorf("decoding global window behavior: %w", err)
 		}
-		current = rawString(root["new_window_behaviour"])
+		current = spikestate.RawString(root["new_window_behaviour"])
 	}
 	if current != "Append" {
 		if err := r.send(ctx, komorebi.ToggleWorkspaceWindowContainerBehaviour()); err != nil {
@@ -300,34 +313,34 @@ func (r *runner) checkAppendBehavior(ctx context.Context, spaces spikeSpaces) er
 	if err != nil {
 		return err
 	}
-	_, workspaces, err = monitorWorkspaces(state, spaces.monitorIndex)
+	_, workspaces, err = spikestate.MonitorWorkspaces(state, spaces.MonitorIndex)
 	if err != nil {
 		return err
 	}
-	index = findWorkspaceIndex(workspaces, spaces.spaces[0].name)
-	if index < 0 || workspaceBehaviour(workspaces.Elements[index]) != "Append" {
+	index = spikestate.FindWorkspaceIndex(workspaces, spaces.Spaces[0].Name)
+	if index < 0 || spikestate.WorkspaceBehaviour(workspaces.Elements[index]) != "Append" {
 		r.record("4", "Append could not be selected on the spike workspace", false, "do not test window placement until Append is confirmed")
 		return nil
 	}
 	if err := r.prompt("Open two disposable app windows on the focused spike workspace."); err != nil {
 		return err
 	}
-	if err := r.waitForWindowCount(ctx, spaces.spaces[0].name, 2); err != nil {
+	if err := r.waitForWindowCount(ctx, spaces.Spaces[0].Name, 2); err != nil {
 		return err
 	}
 	state, err = r.state(ctx)
 	if err != nil {
 		return err
 	}
-	_, workspaces, err = monitorWorkspaces(state, spaces.monitorIndex)
+	_, workspaces, err = spikestate.MonitorWorkspaces(state, spaces.MonitorIndex)
 	if err != nil {
 		return err
 	}
-	index = findWorkspaceIndex(workspaces, spaces.spaces[0].name)
+	index = spikestate.FindWorkspaceIndex(workspaces, spaces.Spaces[0].Name)
 	if index < 0 {
 		return errors.New("check 4 lost its spike workspace")
 	}
-	containers, windows := workspaceContainerCounts(workspaces.Elements[index])
+	containers, windows := spikestate.WorkspaceContainerCounts(workspaces.Elements[index])
 	passed := containers == 1 && windows >= 2
 	r.record("4", fmt.Sprintf("containers=%d windows=%d", containers, windows), passed, "new windows should append to their home stack")
 	return nil

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/wm/komorebi"
+	"github.com/mattwilkinsonn/tessera/internal/wm/komorebi/spike/spikestate"
 )
 
 func (r *runner) checkFocus(ctx context.Context, spaces spikeSpaces) error {
@@ -25,7 +26,7 @@ func (r *runner) checkFocus(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.prompt("Put two disposable windows in the focused spike workspace. Press Enter when both are managed."); err != nil {
 		return err
 	}
-	if err := r.waitForWindowCount(ctx, spaces.spaces[1].name, 2); err != nil {
+	if err := r.waitForWindowCount(ctx, spaces.Spaces[1].Name, 2); err != nil {
 		return err
 	}
 	if err := r.prompt("Connect or disconnect an external monitor without further input. Do not disconnect the monitor holding the spike workspaces. Press Enter after the display settles."); err != nil {
@@ -39,11 +40,19 @@ func (r *runner) checkFocus(ctx context.Context, spaces spikeSpaces) error {
 	if err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.Promote()); err != nil {
+	promoted, err := r.sendFocusedWorkspaceCommand(ctx, spaces, 1, "5", komorebi.Promote())
+	if err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.StackWindow(komorebi.DirectionLeft)); err != nil {
+	if !promoted {
+		return nil
+	}
+	stacked, err := r.sendFocusedWorkspaceCommand(ctx, spaces, 1, "5", komorebi.StackWindow(komorebi.DirectionLeft))
+	if err != nil {
 		return err
+	}
+	if !stacked {
+		return nil
 	}
 	if err := r.prompt("Type a test key. Do not enter a title or window name."); err != nil {
 		return err
@@ -152,16 +161,24 @@ func (r *runner) checkSettle(ctx context.Context, spaces spikeSpaces) error {
 	if err := r.prompt("Open two disposable app windows on this spike workspace."); err != nil {
 		return err
 	}
-	if err := r.waitForWindowCount(ctx, spaces.spaces[2].name, 2); err != nil {
+	if err := r.waitForWindowCount(ctx, spaces.Spaces[2].Name, 2); err != nil {
 		return err
 	}
-	started, err := r.sendIndexedWorkspace(ctx, spaces, 2, func(monitorIndex, workspaceIndex int) komorebi.SocketMessage {
-		return komorebi.WorkspaceLayout(monitorIndex, workspaceIndex, komorebi.LayoutColumns)
-	})
+	before, err := r.state(ctx)
 	if err != nil {
 		return err
 	}
-	layoutDuration, layoutSettled, err := r.waitForStableWindowRectangles(ctx, spaces, 2, started, time.Second)
+	layoutBaseline, err := spikestate.WorkspaceRectanglesForState(before, spaces, 2)
+	if err != nil {
+		return err
+	}
+	started := time.Now()
+	if _, err := r.sendIndexedWorkspace(ctx, spaces, 2, func(monitorIndex, workspaceIndex int) komorebi.SocketMessage {
+		return komorebi.WorkspaceLayout(monitorIndex, workspaceIndex, komorebi.LayoutColumns)
+	}); err != nil {
+		return err
+	}
+	layoutDuration, layoutSettled, err := r.waitForStableWindowRectangles(ctx, spaces, 2, layoutBaseline, started, time.Second)
 	if err != nil {
 		return err
 	}
@@ -169,14 +186,30 @@ func (r *runner) checkSettle(ctx context.Context, spaces spikeSpaces) error {
 		r.record("7", fmt.Sprintf("WorkspaceLayout did not settle within one second (%s)", layoutDuration.Round(time.Millisecond)), false, "window rectangles did not stabilize across consecutive State samples")
 		return nil
 	}
+	before, err = r.state(ctx)
+	if err != nil {
+		return err
+	}
+	focusBaseline, err := spikestate.WorkspaceRectanglesForState(before, spaces, 2)
+	if err != nil {
+		return err
+	}
 	focusStarted := time.Now()
-	if err := r.send(ctx, komorebi.Promote()); err != nil {
+	promoted, err := r.sendFocusedWorkspaceCommand(ctx, spaces, 2, "7", komorebi.Promote())
+	if err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.StackWindow(komorebi.DirectionLeft)); err != nil {
+	if !promoted {
+		return nil
+	}
+	stacked, err := r.sendFocusedWorkspaceCommand(ctx, spaces, 2, "7", komorebi.StackWindow(komorebi.DirectionLeft))
+	if err != nil {
 		return err
 	}
-	focusDuration, focusSettled, err := r.waitForStableWindowRectangles(ctx, spaces, 2, focusStarted, time.Second)
+	if !stacked {
+		return nil
+	}
+	focusDuration, focusSettled, err := r.waitForStableWindowRectangles(ctx, spaces, 2, focusBaseline, focusStarted, time.Second)
 	if err != nil {
 		return err
 	}
@@ -208,7 +241,7 @@ func (r *runner) checkNamedRules(ctx context.Context, spaces spikeSpaces) error 
 	if err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.NamedWorkspaceRule(komorebi.IdentifierExe, executable, spaces.spaces[0].name)); err != nil {
+	if err := r.send(ctx, komorebi.NamedWorkspaceRule(komorebi.IdentifierExe, executable, spaces.Spaces[0].Name)); err != nil {
 		return err
 	}
 	if err := r.prompt("Launch one matching executable and one title-only decoy. Compare only their workspace placement."); err != nil {
@@ -217,7 +250,7 @@ func (r *runner) checkNamedRules(ctx context.Context, spaces spikeSpaces) error 
 	if err := r.observe("9", "Executable workspace rule", "Record y only if the executable match landed on the spike workspace and the title-only decoy did not.", "matching executable routes to its workspace; title-only decoy does not"); err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.ClearNamedWorkspaceRules(spaces.spaces[0].name)); err != nil {
+	if err := r.send(ctx, komorebi.ClearNamedWorkspaceRules(spaces.Spaces[0].Name)); err != nil {
 		return err
 	}
 	firstExe, err := r.readExecutableName("Check 10: enter an executable basename for the first spike workspace.")
@@ -231,13 +264,13 @@ func (r *runner) checkNamedRules(ctx context.Context, spaces spikeSpaces) error 
 	if firstExe == secondExe {
 		return errors.New("check 10 needs two different executable basenames")
 	}
-	if err := r.send(ctx, komorebi.NamedWorkspaceRule(komorebi.IdentifierExe, firstExe, spaces.spaces[0].name)); err != nil {
+	if err := r.send(ctx, komorebi.NamedWorkspaceRule(komorebi.IdentifierExe, firstExe, spaces.Spaces[0].Name)); err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.NamedWorkspaceRule(komorebi.IdentifierExe, secondExe, spaces.spaces[1].name)); err != nil {
+	if err := r.send(ctx, komorebi.NamedWorkspaceRule(komorebi.IdentifierExe, secondExe, spaces.Spaces[1].Name)); err != nil {
 		return err
 	}
-	if err := r.send(ctx, komorebi.ClearNamedWorkspaceRules(spaces.spaces[0].name)); err != nil {
+	if err := r.send(ctx, komorebi.ClearNamedWorkspaceRules(spaces.Spaces[0].Name)); err != nil {
 		return err
 	}
 	if err := r.prompt("Launch one window from each executable. Check whether the second rule still routes its window to its spike workspace."); err != nil {
@@ -246,8 +279,8 @@ func (r *runner) checkNamedRules(ctx context.Context, spaces spikeSpaces) error 
 	if err := r.observe("10", "Clear one named workspace's rules", "Record y only if the rule on the other spike workspace still routes its window.", "rules on other workspaces stay"); err != nil {
 		return err
 	}
-	for _, space := range spaces.spaces {
-		if err := r.send(ctx, komorebi.ClearNamedWorkspaceRules(space.name)); err != nil {
+	for _, space := range spaces.Spaces {
+		if err := r.send(ctx, komorebi.ClearNamedWorkspaceRules(space.Name)); err != nil {
 			return err
 		}
 	}
