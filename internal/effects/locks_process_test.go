@@ -1,5 +1,3 @@
-//go:build unix
-
 package effects
 
 import (
@@ -10,12 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 )
 
 func TestAcquireLockAfterProcessDeath(t *testing.T) {
-	t.Run("a SIGKILLed child's lock is free at once", func(t *testing.T) {
+	t.Run("a killed child's lock is free at once", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "child.lock")
 		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestLockHelperProcess$")
 		cmd.Env = append(os.Environ(), "TESSERA_LOCK_HELPER=1", "TESSERA_LOCK_PATH="+path)
@@ -39,7 +36,7 @@ func TestAcquireLockAfterProcessDeath(t *testing.T) {
 			}
 			t.Fatalf("child readiness = %q, %v; want locked", ready, err)
 		}
-		if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		if err := cmd.Process.Kill(); err != nil {
 			t.Fatal(err)
 		}
 		if err := cmd.Wait(); err == nil {
