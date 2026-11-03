@@ -40,6 +40,11 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	}
 	defer releaseGuard(paths.SignalGuard)
 
+	slotsUnlock, err := effects.LockSlots(ctx, paths.WindowSlots)
+	if err != nil {
+		return err
+	}
+	defer slotsUnlock()
 	world, err := worldSnapshot(ctx, driver)
 	if err != nil {
 		return err
@@ -60,10 +65,25 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	if err != nil {
 		return err
 	}
-	if err := executor.RunPlan(ctx, driver, engine.DeskPlan(profile, world), func(engine.Op) error {
+	memory, err := effects.ReadSlots(paths.WindowSlots)
+	if err != nil {
+		return err
+	}
+	world.Slots = engine.PruneSlots(profile, memory, world.Windows)
+	ops, filled := engine.DeskPlan(profile, world)
+	if err := executor.RunPlan(ctx, driver, ops, func(engine.Op) error {
 		return effects.SuppressSignals(paths.SignalGuard)
 	}); err != nil {
 		return err
+	}
+	fresh, err := driver.QueryWindows(ctx)
+	if err != nil {
+		return fmt.Errorf("querying windows after desk plan: %w", err)
+	}
+	displays := engine.DisplaySet(profile, world.Displays)
+	updated := engine.PruneSlots(profile, engine.RecordSlots(world.Slots, filled, displays, fresh), fresh)
+	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
+		return fmt.Errorf("persisting window slot memory: %w", err)
 	}
 	return nudge(ctx, "yabai_spaces_changed")
 }
@@ -91,6 +111,11 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 	}
 	defer releaseGuard(paths.SignalGuard)
 
+	slotsUnlock, err := effects.LockSlots(ctx, paths.WindowSlots)
+	if err != nil {
+		return "", err
+	}
+	defer slotsUnlock()
 	displays, err := driver.QueryDisplays(ctx)
 	if err != nil {
 		return "", err
@@ -121,13 +146,24 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 			return "", err
 		}
 	}
+	persistedSlots, err := effects.ReadSlots(paths.WindowSlots)
+	if err != nil {
+		return "", err
+	}
+	initialWorld, err := worldSnapshot(ctx, driver)
+	if err != nil {
+		return "", err
+	}
+	memory := engine.PruneSlots(profile, persistedSlots, initialWorld.Windows)
 	persisted, err := effects.ReadFlexOrder(paths.FlexOrder)
 	if err != nil {
 		return "", err
 	}
 	initial := engine.InitialConvergeState(home, persisted, explicit)
+	initial.Filled = make(map[engine.SlotKey]int)
 	var guardErr error
 	final, err := executor.RunConverge(ctx, driver, func(world engine.World, state engine.ConvergeState) (engine.ConvergeAction, engine.ConvergeState, bool) {
+		world.Slots = memory
 		if guardErr = effects.SuppressSignals(paths.SignalGuard); guardErr != nil {
 			return nil, state, true
 		}
@@ -153,6 +189,14 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 	}
 	if err := driver.SetSpaceLayout(ctx, home, wm.LayoutStack); err != nil {
 		return "", err
+	}
+	fresh, err := driver.QueryWindows(ctx)
+	if err != nil {
+		return "", fmt.Errorf("querying windows after laptop converge: %w", err)
+	}
+	updated := engine.PruneSlots(profile, engine.RecordSlots(memory, final.Filled, engine.DisplaySet(profile, displays), fresh), fresh)
+	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
+		return "", fmt.Errorf("persisting window slot memory: %w", err)
 	}
 	if err := nudge(ctx, "yabai_spaces_changed"); err != nil {
 		return "", err

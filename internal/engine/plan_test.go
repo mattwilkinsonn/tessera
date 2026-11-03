@@ -41,32 +41,33 @@ func TestDeskPlan(t *testing.T) {
 			RelabelHomeAction{HomeSpace: "s2", Label: "plan"}, RealizeLayoutOp{Space: "s2", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{20, 21}, {22, 23}}, Weights: []float64{1, 1}}},
 			RelabelHomeAction{HomeSpace: "s3", Label: "laptop"}, RealizeLayoutOp{Space: "s3", Target: wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{30, 31, 32, 33}}, Weights: []float64{}}},
 		}
-		expectOps(t, DeskPlan(profile, w), want)
+		ops := deskOps(profile, w)
+		expectOps(t, ops, want)
 	})
 	t.Run("missing windows skipped — columns shrink, empty columns dropped", func(t *testing.T) {
 		w := World{Displays: []wm.Display{display(1, deskG9, "s1")}, Spaces: []wm.Space{space("s1", "main", 1)}, Windows: []wm.Window{window(10, "Arc", 1, "s1", ""), window(14, "Code", 1, "s1", "")}}
-		expectOps(t, DeskPlan(profile, w), []Op{RelabelHomeAction{HomeSpace: "s1", Label: "main"}, RealizeLayoutOp{Space: "s1", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}, {14}}, Weights: []float64{3, 3}}}})
+		expectOps(t, deskOps(profile, w), []Op{RelabelHomeAction{HomeSpace: "s1", Label: "main"}, RealizeLayoutOp{Space: "s1", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}, {14}}, Weights: []float64{3, 3}}}})
 	})
 	t.Run("display with zero claimed windows gets relabelHome but no realizeLayout", func(t *testing.T) {
 		w := World{Displays: []wm.Display{display(1, deskG9, "s1")}, Spaces: []wm.Space{space("s1", "main", 1)}, Windows: []wm.Window{window(99, "Finder", 1, "s1", "")}}
-		expectOps(t, DeskPlan(profile, w), []Op{RelabelHomeAction{HomeSpace: "s1", Label: "main"}})
+		expectOps(t, deskOps(profile, w), []Op{RelabelHomeAction{HomeSpace: "s1", Label: "main"}})
 	})
 	t.Run("absent display skipped — laptop-only world emits only the laptop stack", func(t *testing.T) {
 		w := World{Displays: []wm.Display{display(3, deskLaptop, "s3")}, Spaces: []wm.Space{space("s3", "laptop", 3)}, Windows: []wm.Window{window(30, "Arc", 3, "s3", ""), window(31, "Spotify", 3, "s3", ""), window(32, "Discord", 3, "s3", ""), window(33, "Qalculate", 3, "s3", "")}}
-		expectOps(t, DeskPlan(profile, w), []Op{RelabelHomeAction{HomeSpace: "s3", Label: "laptop"}, RealizeLayoutOp{Space: "s3", Target: wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{30, 31, 32, 33}}, Weights: []float64{}}}})
+		expectOps(t, deskOps(profile, w), []Op{RelabelHomeAction{HomeSpace: "s3", Label: "laptop"}, RealizeLayoutOp{Space: "s3", Target: wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{30, 31, 32, 33}}, Weights: []float64{}}}})
 	})
 	t.Run("a matching topology replaces the default desk layout", func(t *testing.T) {
 		p := engineTestProfile(t)
 		p.Topologies = []config.Topology{{Name: "aw-laptop", Displays: []config.DisplayName{config.DisplayAW, config.DisplayLaptop}, Desk: []config.DeskLayout{{Display: config.DisplayAW, Label: "solo", Kind: config.LayoutColumns, Tracks: [][]string{{"arc"}, {"linear"}, {"akiflow"}}}, {Display: config.DisplayLaptop, Label: "laptop", Kind: config.LayoutStack, Tracks: [][]string{{"akiflow"}}}}}}
 		w := World{Displays: []wm.Display{display(2, deskAW, "s2"), display(3, deskLaptop, "s3")}, Spaces: []wm.Space{space("s2", "plan", 2), space("s3", "laptop", 3)}, Windows: []wm.Window{window(21, "Arc", 2, "s2", ""), window(20, "Linear", 2, "s2", ""), window(23, "Akiflow", 2, "s2", ""), window(30, "Akiflow", 3, "s3", "")}}
 		want := []Op{MoveWindowAction{WindowID: 21, ToSpace: "s3"}, MoveWindowAction{WindowID: 20, ToSpace: "s3"}, MoveWindowAction{WindowID: 23, ToSpace: "s3"}, RelabelHomeAction{HomeSpace: "s2", Label: "solo"}, RealizeLayoutOp{Space: "s2", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{21}, {20}, {23}}, Weights: []float64{3, 4, 3}}}, RelabelHomeAction{HomeSpace: "s3", Label: "laptop"}, RealizeLayoutOp{Space: "s3", Target: wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{30}}, Weights: []float64{}}}}
-		expectOps(t, DeskPlan(p, w), want)
+		expectOps(t, deskOps(p, w), want)
 	})
 	t.Run("a non-matching topology leaves the default desk in force", func(t *testing.T) {
 		p := engineTestProfile(t)
 		p.Topologies = []config.Topology{{Name: "aw-laptop", Displays: []config.DisplayName{config.DisplayAW, config.DisplayLaptop}, Desk: []config.DeskLayout{{Display: config.DisplayAW, Label: "solo", Kind: config.LayoutColumns, Tracks: [][]string{{"arc"}}}}}}
 		w := World{Displays: []wm.Display{display(1, deskG9, "s1")}, Spaces: []wm.Space{space("s1", "main", 1)}, Windows: []wm.Window{window(10, "Arc", 1, "s1", "")}}
-		expectOps(t, DeskPlan(p, w), []Op{RelabelHomeAction{HomeSpace: "s1", Label: "main"}, RealizeLayoutOp{Space: "s1", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}}, Weights: []float64{3}}}})
+		expectOps(t, deskOps(p, w), []Op{RelabelHomeAction{HomeSpace: "s1", Label: "main"}, RealizeLayoutOp{Space: "s1", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}}, Weights: []float64{3}}}})
 	})
 	t.Run("layout, display, profile, and equal weights resolve by kind and count", func(t *testing.T) {
 		p := engineTestProfile(t)
@@ -76,13 +77,31 @@ func TestDeskPlan(t *testing.T) {
 		p.Desk = []config.DeskLayout{{Display: config.DisplayG9, Label: "main", Kind: config.LayoutColumns, Tracks: [][]string{{"arc"}, {"ghostty-wave"}, {"ghostty-mbp"}}}, {Display: config.DisplayAW, Label: "plan", Kind: config.LayoutColumns, Tracks: [][]string{{"linear"}, {"akiflow"}}, Weights: []float64{1, 4}}, {Display: config.DisplayLaptop, Label: "rows", Kind: config.LayoutRows, Tracks: [][]string{{"spotify"}, {"discord"}}}, {Display: config.DisplayLaptop, Label: "profile", Kind: config.LayoutColumns, Tracks: [][]string{{"obsidian"}, {"vscode"}}}, {Display: config.DisplayLaptop, Label: "equal", Kind: config.LayoutColumns, Tracks: [][]string{{"akiflow"}, {"qalculate"}, {"spotify"}, {"discord"}}}}
 		w := World{Displays: []wm.Display{display(1, deskG9, "s1"), display(2, deskAW, "s2"), display(3, deskLaptop, "s3")}, Spaces: []wm.Space{space("s1", "main", 1), space("s2", "plan", 2), space("s3", "rows", 3)}, Windows: []wm.Window{window(10, "Arc", 1, "s1", ""), window(11, "Ghostty", 1, "s1", "pc"), window(12, "Ghostty", 1, "s1", "mbp"), window(20, "Linear", 2, "s2", ""), window(21, "Akiflow", 2, "s2", ""), window(30, "Spotify", 3, "s3", ""), window(31, "Discord", 3, "s3", ""), window(32, "Obsidian", 3, "s3", ""), window(33, "Code", 3, "s3", ""), window(34, "Akiflow", 3, "s3", ""), window(35, "Qalculate", 3, "s3", ""), window(36, "Spotify", 3, "s3", ""), window(37, "Discord", 3, "s3", "")}}
 		want := []wm.SpaceLayoutTarget{{Kind: wm.LayoutColumns, Tracks: [][]int{{10}, {11}, {12}}, Weights: []float64{4, 3, 3}}, {Kind: wm.LayoutColumns, Tracks: [][]int{{20}, {21}}, Weights: []float64{1, 4}}, {Kind: wm.LayoutRows, Tracks: [][]int{{30}, {31}}, Weights: []float64{1, 3}}, {Kind: wm.LayoutColumns, Tracks: [][]int{{32}, {33}}, Weights: []float64{5, 1}}, {Kind: wm.LayoutColumns, Tracks: [][]int{{34}, {35}, {36}, {37}}, Weights: []float64{1, 1, 1, 1}}}
-		if diff := cmp.Diff(want, realizedTargets(DeskPlan(p, w))); diff != "" {
+		if diff := cmp.Diff(want, realizedTargets(deskOps(p, w))); diff != "" {
 			t.Fatalf("layout targets mismatch (-want +got):\n%s", diff)
 		}
 	})
 	t.Run("empty tracks drop the matching configured weights", func(t *testing.T) {
 		testEmptyDeskTracks(t, window, space, display)
 	})
+}
+
+func TestDeskPlanWithEmptyMemoryMatchesLegacyPlan(t *testing.T) {
+	profile := engineTestProfile(t)
+	window, space, display := deskFactories()
+	world := World{
+		Displays: []wm.Display{display(1, deskG9, "s1")},
+		Spaces:   []wm.Space{space("s1", "main", 1)},
+		Windows:  []wm.Window{window(10, "Arc", 1, "s1", ""), window(14, "Code", 1, "s1", "")},
+	}
+	got, _ := DeskPlan(profile, world)
+	want := []Op{
+		RelabelHomeAction{HomeSpace: "s1", Label: "main"},
+		RealizeLayoutOp{Space: "s1", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}, {14}}, Weights: []float64{3, 3}}},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("empty-memory plan mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func deskFactories() (func(int, string, int, wm.SpaceID, string) wm.Window, func(wm.SpaceID, string, int, ...int) wm.Space, func(int, float64, ...wm.SpaceID) wm.Display) {
@@ -114,12 +133,12 @@ func testEmptyDeskTracks(t *testing.T, window func(int, string, int, wm.SpaceID,
 	p.Desk = []config.DeskLayout{{Display: config.DisplayG9, Label: "main", Kind: config.LayoutColumns, Tracks: [][]string{{"arc"}, {"missing"}, {"akiflow"}}, Weights: []float64{3, 4, 3}}}
 	w := World{Displays: []wm.Display{display(1, deskG9, "s1")}, Spaces: []wm.Space{space("s1", "main", 1)}, Windows: []wm.Window{window(10, "Arc", 1, "s1", ""), window(12, "Akiflow", 1, "s1", "")}}
 	want := RealizeLayoutOp{Space: "s1", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}, {12}}, Weights: []float64{3, 3}}}
-	if !containsOp(DeskPlan(p, w), want) {
+	if !containsOp(deskOps(p, w), want) {
 		t.Fatalf("DeskPlan() missing layout %#v", want)
 	}
 	p.Desk[0].Tracks = [][]string{{"missing"}, {"arc"}, {"akiflow"}}
 	want.Target.Weights = []float64{4, 3}
-	if !containsOp(DeskPlan(p, w), want) {
+	if !containsOp(deskOps(p, w), want) {
 		t.Fatalf("DeskPlan() missing shifted-weight layout %#v", want)
 	}
 }
@@ -132,7 +151,7 @@ func TestDeskPlanEvacuatesRebuildWindows(t *testing.T) {
 		window(20, "Linear", 2, "s2", ""), window(21, "Arc", 2, "s2", ""), window(42, "Finder", 2, "s2", ""), window(23, "Akiflow", 2, "s2", ""),
 		window(30, "Arc", 3, "s3", ""), window(43, "Notion", 3, "s3", ""), window(31, "Spotify", 3, "s3", ""),
 	}}
-	got := DeskPlan(profile, w)
+	got := deskOps(profile, w)
 	var moves []MoveWindowAction
 	firstRealize := len(got)
 	for index, op := range got {
@@ -173,7 +192,7 @@ func TestDeskPlanParkingVariants(t *testing.T) {
 	window, space, display := deskFactories()
 	t.Run("single display rebuilds in place without evacuation", func(t *testing.T) {
 		w := World{Displays: []wm.Display{display(1, deskG9, "s1")}, Spaces: []wm.Space{space("s1", "main", 1)}, Windows: []wm.Window{window(10, "Arc", 1, "s1", ""), window(40, "Messages", 1, "s1", ""), window(14, "Code", 1, "s1", "")}}
-		for _, op := range DeskPlan(profile, w) {
+		for _, op := range deskOps(profile, w) {
 			if _, ok := op.(MoveWindowAction); ok {
 				t.Fatal("single-display plan evacuated a window")
 			}
@@ -182,7 +201,7 @@ func TestDeskPlanParkingVariants(t *testing.T) {
 	t.Run("two displays park on AW", func(t *testing.T) {
 		w := World{Displays: []wm.Display{display(1, deskG9, "s1"), display(2, deskAW, "s2")}, Spaces: []wm.Space{space("s1", "main", 1), space("s2", "plan", 2)}, Windows: []wm.Window{window(10, "Arc", 1, "s1", ""), window(40, "Messages", 1, "s1", ""), window(14, "Code", 1, "s1", ""), window(20, "Linear", 2, "s2", ""), window(21, "Arc", 2, "s2", ""), window(41, "Finder", 2, "s2", ""), window(23, "Akiflow", 2, "s2", "")}}
 		var got []MoveWindowAction
-		for _, op := range DeskPlan(profile, w) {
+		for _, op := range deskOps(profile, w) {
 			if move, ok := op.(MoveWindowAction); ok {
 				got = append(got, move)
 			}
@@ -194,7 +213,7 @@ func TestDeskPlanParkingVariants(t *testing.T) {
 	})
 	t.Run("g9 window claimed as AW target evacuates to park", func(t *testing.T) {
 		w := World{Displays: []wm.Display{display(1, deskG9, "s1"), display(2, deskAW, "s2"), display(3, deskLaptop, "s3")}, Spaces: []wm.Space{space("s1", "main", 1), space("s2", "plan", 2), space("s3", "laptop", 3)}, Windows: []wm.Window{window(10, "Arc", 1, "s1", ""), window(14, "Code", 1, "s1", ""), window(50, "Linear", 1, "s1", ""), window(21, "Arc", 2, "s2", ""), window(30, "Arc", 3, "s3", ""), window(31, "Spotify", 3, "s3", "")}}
-		got := DeskPlan(profile, w)
+		got := deskOps(profile, w)
 		if !containsOp(got, MoveWindowAction{WindowID: 50, ToSpace: "s3"}) {
 			t.Fatal("AW-claimed Linear did not evacuate to park")
 		}
@@ -204,6 +223,11 @@ func TestDeskPlanParkingVariants(t *testing.T) {
 			}
 		}
 	})
+}
+
+func deskOps(profile *config.Profile, world World) []Op {
+	ops, _ := DeskPlan(profile, world)
+	return ops
 }
 
 func containsOp(ops []Op, expected Op) bool {

@@ -26,6 +26,11 @@ your hotkey daemon (skhd, or any launcher) call `tess <subcommand>`; each
 invocation reads the live window state, computes the target layout, and issues
 the yabai commands to reach it.
 
+Each layout remembers which window filled each slot, per display and mode, in
+`$XDG_CACHE_HOME/yabai/window-slots.json`, so switching modes or monitors puts
+windows back. It survives tess and daemon restarts. An app restart gives its
+windows new ids, so the next layout relearns them. Delete the file to reset.
+
 ```text
 tess apply                      converge the active space onto its configured layout
 tess laptop                     converge the laptop-only fallback layout

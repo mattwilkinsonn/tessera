@@ -236,7 +236,7 @@ func TestLaptopContentionReturnsExitCode1Silently(t *testing.T) {
 	defer func() { assert.NilError(t, lock.Unlock()) }()
 	var stderr bytes.Buffer
 	code := Main(t.Context(), []string{"laptop"}, io.Discard, &stderr, Deps{Version: "test", Run: func(ctx context.Context, command commands.Command) (int, error) {
-		env := commands.Env{Paths: effects.Paths{LaptopLock: filepath.Join(root, "laptop.lock"), SignalGuard: filepath.Join(root, "guard"), FlexOrder: filepath.Join(root, "flex")}, Nudge: func(context.Context, string) error { return nil }, Stderr: &stderr}
+		env := commands.Env{Paths: effects.Paths{LaptopLock: filepath.Join(root, "laptop.lock"), SignalGuard: filepath.Join(root, "guard"), FlexOrder: filepath.Join(root, "flex"), WindowSlots: filepath.Join(root, "window-slots.json")}, Nudge: func(context.Context, string) error { return nil }, Stderr: &stderr}
 		return commands.Run(ctx, profile, command, fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}}), env)
 	}})
 	if code != 1 || stderr.Len() != 0 {
@@ -250,7 +250,7 @@ func TestLaptopOnMultiDisplayWorldSkippedExit0(t *testing.T) {
 	root := t.TempDir()
 	var stderr bytes.Buffer
 	code := Main(t.Context(), []string{"laptop"}, io.Discard, &stderr, Deps{Version: "test", Run: func(ctx context.Context, command commands.Command) (int, error) {
-		env := commands.Env{Paths: effects.Paths{LaptopLock: filepath.Join(root, "laptop.lock"), SignalGuard: filepath.Join(root, "guard"), FlexOrder: filepath.Join(root, "flex")}, Nudge: func(context.Context, string) error { return nil }, Stderr: &stderr}
+		env := commands.Env{Paths: effects.Paths{LaptopLock: filepath.Join(root, "laptop.lock"), SignalGuard: filepath.Join(root, "guard"), FlexOrder: filepath.Join(root, "flex"), WindowSlots: filepath.Join(root, "window-slots.json")}, Nudge: func(context.Context, string) error { return nil }, Stderr: &stderr}
 		return commands.Run(ctx, profile, command, driver, env)
 	}})
 	if code != 0 || stderr.Len() != 0 {
@@ -314,7 +314,7 @@ func TestStubYabaiCorpus(t *testing.T) {
 				t.Fatal(err)
 			}
 			code := Main(t.Context(), test.argv, io.Discard, io.Discard, Deps{Version: "test", Run: func(ctx context.Context, command commands.Command) (int, error) {
-				env := commands.Env{Paths: effects.Paths{ApplyLock: filepath.Join(root, "apply.lock"), LaptopLock: filepath.Join(root, "laptop.lock"), SignalGuard: filepath.Join(root, "guard"), FlexOrder: filepath.Join(root, "flex")}, Nudge: func(context.Context, string) error { return nil }, Stderr: io.Discard}
+				env := commands.Env{Paths: effects.Paths{ApplyLock: filepath.Join(root, "apply.lock"), LaptopLock: filepath.Join(root, "laptop.lock"), SignalGuard: filepath.Join(root, "guard"), FlexOrder: filepath.Join(root, "flex"), WindowSlots: filepath.Join(root, "window-slots.json")}, Nudge: func(context.Context, string) error { return nil }, Stderr: io.Discard}
 				return commands.Run(ctx, profile, command, yabai.New(os.Getenv("TESS_YABAI")), env)
 			}})
 			if code != 0 {

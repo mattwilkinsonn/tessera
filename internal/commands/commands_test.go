@@ -39,6 +39,7 @@ func commandEnv(t *testing.T) Env {
 			LaptopLock:   filepath.Join(root, "laptop.lock"),
 			SignalGuard:  filepath.Join(root, "guard"),
 			FlexOrder:    filepath.Join(root, "flex-order"),
+			WindowSlots:  filepath.Join(root, "window-slots.json"),
 			DaemonSocket: filepath.Join(root, "daemon.sock"),
 		},
 		Nudge:  func(context.Context, string) error { return nil },

@@ -14,17 +14,18 @@ type deskBuild struct {
 	weights   []float64
 }
 
-func DeskPlan(profile *config.Profile, world World) []Op {
+func DeskPlan(profile *config.Profile, world World) ([]Op, map[SlotKey]int) {
+	filled := make(map[SlotKey]int)
 	if profile == nil {
-		return []Op{}
+		return []Op{}, filled
 	}
 	doomed, ops := teardownSpaces(world)
-	builds := buildDesks(profile, world, doomed)
+	builds, filled := buildDesks(profile, world, doomed)
 	park := parkingSpace(builds)
 	if park != "" {
 		ops = append(ops, evacuateWindows(world, builds, park)...)
 	}
-	return append(ops, realizeDesks(builds)...)
+	return append(ops, realizeDesks(builds)...), filled
 }
 
 func teardownSpaces(world World) (map[wm.SpaceID]struct{}, []Op) {
@@ -43,22 +44,50 @@ func teardownSpaces(world World) (map[wm.SpaceID]struct{}, []Op) {
 	return doomed, ops
 }
 
-func buildDesks(profile *config.Profile, world World, doomed map[wm.SpaceID]struct{}) []deskBuild {
-	claims := NewClaimSet(profile)
+func buildDesks(profile *config.Profile, world World, doomed map[wm.SpaceID]struct{}) ([]deskBuild, map[SlotKey]int) {
+	layouts := ResolveDesk(profile, world.Displays)
+	namesByDisplay := make(map[config.DisplayName][]string)
+	for _, layout := range layouts {
+		if _, present := ResolveDisplay(profile, layout.Display, world.Displays); !present {
+			continue
+		}
+		for _, track := range layout.Tracks {
+			namesByDisplay[layout.Display] = append(namesByDisplay[layout.Display], track...)
+		}
+	}
+	keysByDisplay := make(map[config.DisplayName][]SlotKey, len(namesByDisplay))
+	allSlotKeys := make([]SlotKey, 0)
+	for _, layout := range layouts {
+		if _, present := ResolveDisplay(profile, layout.Display, world.Displays); !present {
+			continue
+		}
+		if _, added := keysByDisplay[layout.Display]; added {
+			continue
+		}
+		keys := SlotKeys("desk", layout.Display, namesByDisplay[layout.Display])
+		keysByDisplay[layout.Display] = keys
+		allSlotKeys = append(allSlotKeys, keys...)
+	}
+	claims := NewClaimSet(profile, world.Slots, Reserve(profile, world.Slots, allSlotKeys, DisplaySet(profile, world.Displays), world.Windows))
+	filled := make(map[SlotKey]int)
 	builds := make([]deskBuild, 0)
-	for _, layout := range ResolveDesk(profile, world.Displays) {
+	keyOffsets := make(map[config.DisplayName]int)
+	for _, layout := range layouts {
 		index, present := ResolveDisplay(profile, layout.Display, world.Displays)
 		if !present {
 			continue
 		}
 		home := homeSpace(world.Displays, index, doomed)
+		keyOffset := keyOffsets[layout.Display]
 		if home == "" {
+			keyOffsets[layout.Display] = keyOffset + slotCount(layout.Tracks)
 			continue
 		}
-		tracks, weights := deskTracks(profile, world, layout, claims, index)
+		tracks, weights := deskTracks(profile, world, layout, claims, index, keysByDisplay[layout.Display], &keyOffset, filled)
+		keyOffsets[layout.Display] = keyOffset
 		builds = append(builds, deskBuild{homeSpace: home, label: layout.Label, kind: layout.Kind, tracks: tracks, weights: weights})
 	}
-	return builds
+	return builds, filled
 }
 
 func homeSpace(displays []wm.Display, index int, doomed map[wm.SpaceID]struct{}) wm.SpaceID {
@@ -76,16 +105,38 @@ func homeSpace(displays []wm.Display, index int, doomed map[wm.SpaceID]struct{})
 	return ""
 }
 
-func deskTracks(profile *config.Profile, world World, layout config.DeskLayout, claims *ClaimSet, index int) ([][]int, []float64) {
+func slotCount(tracks [][]string) int {
+	count := 0
+	for _, track := range tracks {
+		count += len(track)
+	}
+	return count
+}
+
+func deskTracks(profile *config.Profile, world World, layout config.DeskLayout, claims *ClaimSet, index int, keys []SlotKey, keyOffset *int, filled map[SlotKey]int) ([][]int, []float64) {
 	tracks := make([][]int, 0)
 	weights := make([]float64, 0)
 	configured := WeightsFor(profile, layout.Kind, len(layout.Tracks), layout.Display, layout.Weights)
 	for trackIndex, names := range layout.Tracks {
-		claimed := claims.ClaimMany(world.Windows, names, mo.Some(index))
-		if len(claimed) == 0 {
+		track := make([]int, 0, len(names))
+		for _, name := range names {
+			// Keys come from these same tracks, so a missing key means a builder bug; claim without memory.
+			var key SlotKey
+			if *keyOffset < len(keys) {
+				key = keys[*keyOffset]
+			}
+			*keyOffset++
+			if id, ok := claims.ClaimSlot(world.Windows, key, name, mo.Some(index)); ok {
+				track = append(track, id)
+				if key != "" {
+					filled[key] = id
+				}
+			}
+		}
+		if len(track) == 0 {
 			continue
 		}
-		tracks = append(tracks, claimed)
+		tracks = append(tracks, track)
 		if layout.Kind != config.LayoutStack && trackIndex < len(configured) {
 			weights = append(weights, configured[trackIndex])
 		}

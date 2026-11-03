@@ -119,9 +119,12 @@ type ConvergeState struct {
 	ToPersist          []string
 	ReapStrays         bool
 	DestroyTried       map[wm.SpaceID]struct{}
+	Filled             map[SlotKey]int
 }
 
 type ClaimSet struct {
-	profile *config.Profile
-	claimed map[int]struct{}
+	profile  *config.Profile
+	claimed  map[int]struct{}
+	memory   SlotMemory
+	reserved map[int]SlotKey
 }
