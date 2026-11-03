@@ -61,7 +61,7 @@ func TestYabaiArgs(t *testing.T) {
 		{name: "focused window", got: QueryFocusedWindowArgs(), want: []string{"-m", "query", "--windows", "--window"}},
 		{name: "spaces", got: QuerySpacesArgs(), want: []string{"-m", "query", "--spaces"}},
 		{name: "focused space", got: QueryFocusedSpaceArgs(), want: []string{"-m", "query", "--spaces", "--space"}},
-		{name: "displays", got: QueryDisplaysArgs(), want: []string{"-m", "query", "--displays"}},
+		{name: "displays", got: QueryDisplaysArgs(), want: []string{"-m", "query", "--displays", "uuid,index,frame,spaces"}},
 		{name: "create space", got: CreateSpaceArgs(), want: []string{"-m", "space", "--create"}},
 		{name: "destroy space", got: DestroySpaceArgs(4), want: []string{"-m", "space", "4", "--destroy"}},
 		{name: "label space", got: LabelSpaceArgs(4, "lap-arc"), want: []string{"-m", "space", "4", "--label", "lap-arc"}},
@@ -269,11 +269,24 @@ func TestNormalizeSpaceAndDisplay(t *testing.T) {
 	assert.Equal(t, NormalizeSpace(RawYabaiSpace{Type: "float"}).Layout, wm.LayoutFloat)
 	assert.Equal(t, NormalizeSpace(RawYabaiSpace{Type: "weird"}).Layout, wm.LayoutBSP)
 	spaceIDs := IndexToSpaceID([]RawYabaiSpace{{ID: 201, Index: 1}, {ID: 202, Index: 2}})
-	display, err := NormalizeDisplay(RawYabaiDisplay{Index: 1, Frame: wm.Frame{W: 5120, H: 1440}, Spaces: []int{1, 2}}, spaceIDs)
+	display, err := NormalizeDisplay(RawYabaiDisplay{Index: 1, UUID: "test-display-uuid", Frame: wm.Frame{W: 5120, H: 1440}, Spaces: []int{1, 2}}, spaceIDs)
 	assert.NilError(t, err)
-	assert.DeepEqual(t, display, wm.Display{Idx: 1, Frame: wm.Frame{W: 5120, H: 1440}, SpaceIDs: []wm.SpaceID{"201", "202"}})
+	assert.DeepEqual(t, display, wm.Display{Idx: 1, DeviceID: "test-display-uuid", Frame: wm.Frame{W: 5120, H: 1440}, SpaceIDs: []wm.SpaceID{"201", "202"}})
 	_, err = NormalizeDisplay(RawYabaiDisplay{Index: 2, Spaces: []int{3}}, spaceIDs)
 	assert.ErrorContains(t, err, "display 2 references unknown space index 3")
+}
+
+func TestQueryDisplays(t *testing.T) {
+	displayFixture := filepath.Join("testdata", "stubyabai", "displays.live.json")
+	spacesFixture := filepath.Join("testdata", "stubyabai", "spaces.live.json")
+	t.Setenv("TESS_YABAI_DISPLAYS", displayFixture)
+	t.Setenv("TESS_YABAI_SPACES", spacesFixture)
+	t.Setenv("TESS_YABAI_LOG", filepath.Join(t.TempDir(), "argv.log"))
+	t.Setenv("TESS_YABAI_EXIT_CODE", "")
+	displays, err := New(os.Getenv("TESS_YABAI")).QueryDisplays(t.Context())
+	assert.NilError(t, err)
+	assert.Equal(t, len(displays), 1)
+	assert.Equal(t, displays[0].DeviceID, "test-display-uuid")
 }
 
 func TestRecordingStub(t *testing.T) {

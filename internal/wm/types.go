@@ -97,10 +97,10 @@ type Space struct {
 
 type Display struct {
 	Idx      int
+	DeviceID string
 	Frame    Frame
 	SpaceIDs []SpaceID
 }
-
 type LayoutKind string
 
 const (

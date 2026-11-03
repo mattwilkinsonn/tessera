@@ -31,6 +31,7 @@ query
 -m
 query
 --displays
+uuid,index,frame,spaces
 
 -m
 space

@@ -51,7 +51,9 @@ func QuerySpacesArgs() []string { return []string{"-m", queryMode, "--spaces"} }
 
 func QueryFocusedSpaceArgs() []string { return []string{"-m", queryMode, "--spaces", spaceArg} }
 
-func QueryDisplaysArgs() []string { return []string{"-m", queryMode, "--displays"} }
+func QueryDisplaysArgs() []string {
+	return []string{"-m", queryMode, "--displays", "uuid,index,frame,spaces"}
+}
 
 func CreateSpaceArgs() []string { return []string{"-m", spaceMode, "--create"} }
 

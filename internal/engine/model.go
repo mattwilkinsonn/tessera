@@ -25,16 +25,22 @@ func matchesSpec(spec config.WindowSpec, app, title string) bool {
 	return matched
 }
 
-func displayNameForWidth(profile *config.Profile, width float64) (config.DisplayName, bool) {
-	for _, entry := range []struct {
-		name  config.DisplayName
-		width int
+func displayNameFor(profile *config.Profile, display wm.Display) (config.DisplayName, bool) {
+	entries := [...]struct {
+		name config.DisplayName
+		spec config.DisplaySpec
 	}{
-		{name: config.DisplayG9, width: profile.Displays.G9.Width},
-		{name: config.DisplayAW, width: profile.Displays.AW.Width},
-		{name: config.DisplayLaptop, width: profile.Displays.Laptop.Width},
-	} {
-		if float64(entry.width) == width {
+		{name: config.DisplayG9, spec: profile.Displays.G9},
+		{name: config.DisplayAW, spec: profile.Displays.AW},
+		{name: config.DisplayLaptop, spec: profile.Displays.Laptop},
+	}
+	for _, entry := range entries {
+		if entry.spec.DeviceID != "" && entry.spec.DeviceID == display.DeviceID {
+			return entry.name, true
+		}
+	}
+	for _, entry := range entries {
+		if entry.spec.DeviceID == "" && float64(entry.spec.Width) == display.Frame.W {
 			return entry.name, true
 		}
 	}

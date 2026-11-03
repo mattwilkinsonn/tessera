@@ -185,6 +185,55 @@ func TestResolveDisplay(t *testing.T) {
 			t.Fatalf("ResolveDisplay() = %d, %t; want 1, true", got, ok)
 		}
 	})
+
+	t.Run("matches displays with duplicate widths by device id", func(t *testing.T) {
+		profile := engineTestProfile(t)
+		profile.Displays.G9.Width = 5120
+		profile.Displays.G9.DeviceID = "device-g9"
+		profile.Displays.AW.Width = 5120
+		profile.Displays.AW.DeviceID = "device-aw"
+		displays := []wm.Display{
+			{Idx: 4, DeviceID: "device-g9", Frame: wm.Frame{W: 5120}},
+			{Idx: 7, DeviceID: "device-aw", Frame: wm.Frame{W: 5120}},
+		}
+		for _, test := range []struct {
+			name string
+			key  config.DisplayName
+			want int
+		}{
+			{name: "g9", key: config.DisplayG9, want: 4},
+			{name: "aw", key: config.DisplayAW, want: 7},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				got, ok := ResolveDisplay(profile, test.key, displays)
+				if !ok || got != test.want {
+					t.Fatalf("ResolveDisplay() = %d, %t; want %d, true", got, ok, test.want)
+				}
+			})
+		}
+	})
+
+	t.Run("device id absent from displays does not fall back to width", func(t *testing.T) {
+		profile := engineTestProfile(t)
+		profile.Displays.G9.DeviceID = "missing-device"
+		got, ok := ResolveDisplay(profile, config.DisplayG9, []wm.Display{{Idx: 8, Frame: wm.Frame{W: 5120}}})
+		if ok || got != 0 {
+			t.Fatalf("ResolveDisplay() = %d, %t; want 0, false", got, ok)
+		}
+	})
+	t.Run("a width-only spec skips a display another spec claims by device id", func(t *testing.T) {
+		profile := engineTestProfile(t)
+		profile.Displays.AW.Width = profile.Displays.G9.Width
+		profile.Displays.G9.DeviceID = "device-1"
+		displays := []wm.Display{
+			{Idx: 1, DeviceID: "device-1", Frame: wm.Frame{W: 5120}},
+			{Idx: 2, DeviceID: "device-2", Frame: wm.Frame{W: 5120}},
+		}
+		got, ok := ResolveDisplay(profile, config.DisplayAW, displays)
+		if !ok || got != 2 {
+			t.Fatalf("ResolveDisplay(aw) = %d, %t; want 2, true", got, ok)
+		}
+	})
 }
 
 func TestResolveDesk(t *testing.T) {
@@ -238,6 +287,33 @@ func TestResolveDesk(t *testing.T) {
 			if got := ResolveDesk(profile, displays); cmp.Diff(profile.Desk, got) != "" {
 				t.Fatalf("ResolveDesk() did not use default desk: %s", cmp.Diff(profile.Desk, got))
 			}
+		}
+	})
+
+	t.Run("topology resolves duplicate widths by device id", func(t *testing.T) {
+		profile := engineTestProfile(t)
+		profile.Displays.G9.Width = 5120
+		profile.Displays.G9.DeviceID = "device-g9"
+		profile.Displays.AW.Width = 5120
+		profile.Displays.AW.DeviceID = "device-aw"
+		topologyDesk := []config.DeskLayout{{Display: config.DisplayAW, Label: "aw-only", Kind: config.LayoutColumns, Tracks: [][]string{{"arc"}}}}
+		profile.Topologies = []config.Topology{{Name: "two-panels", Displays: []config.DisplayName{config.DisplayG9, config.DisplayAW}, Desk: topologyDesk}}
+		displays := []wm.Display{
+			{Idx: 4, DeviceID: "device-g9", Frame: wm.Frame{W: 5120}},
+			{Idx: 7, DeviceID: "device-aw", Frame: wm.Frame{W: 5120}},
+		}
+		if got := ResolveDesk(profile, displays); cmp.Diff(topologyDesk, got) != "" {
+			t.Fatalf("ResolveDesk() mismatch (-want +got):\n%s", cmp.Diff(topologyDesk, got))
+		}
+	})
+
+	t.Run("missing device id prevents topology selection by width", func(t *testing.T) {
+		profile := engineTestProfile(t)
+		profile.Displays.G9.DeviceID = "missing-device"
+		profile.Topologies = []config.Topology{{Name: "g9-only", Displays: []config.DisplayName{config.DisplayG9}, Desk: []config.DeskLayout{{Display: config.DisplayG9, Label: "topology", Kind: config.LayoutColumns, Tracks: [][]string{{"arc"}}}}}}
+		got := ResolveDesk(profile, []wm.Display{{Idx: 1, Frame: wm.Frame{W: 5120}}})
+		if diff := cmp.Diff(profile.Desk, got); diff != "" {
+			t.Fatalf("ResolveDesk() did not use default desk: %s", diff)
 		}
 	})
 }

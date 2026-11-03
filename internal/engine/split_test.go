@@ -36,6 +36,33 @@ func TestSnapPlan(t *testing.T) {
 		expect(t, SnapPlan(profile, w, spaceID, SnapThreeColumns), []Op{RealizeLayoutOp{Space: spaceID, Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{1}, {2}, {3}}, Weights: []float64{4, 3, 3}}}})
 		expect(t, SnapPlan(profile, w, spaceID, SnapHalf), []Op{RealizeLayoutOp{Space: spaceID, Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{1, 2}, {3}}, Weights: []float64{3, 2}}}})
 	})
+	t.Run("equal-width displays use their device-specific weights", func(t *testing.T) {
+		profile := engineTestProfile(t)
+		profile.Displays.G9.Width = 5120
+		profile.Displays.G9.DeviceID = "device-g9"
+		profile.Displays.G9.Weights = &config.WeightDefaults{Columns: map[int][]float64{3: {4, 3, 3}}}
+		profile.Displays.AW.Width = 5120
+		profile.Displays.AW.DeviceID = "device-aw"
+		profile.Displays.AW.Weights = &config.WeightDefaults{Columns: map[int][]float64{3: {1, 5, 4}}}
+		g9Space := wm.SpaceID("g9-space")
+		awSpace := wm.SpaceID("aw-space")
+		g9Window := func(id int, x float64) wm.Window {
+			return window(id, x, func(w *wm.Window) { w.SpaceID = g9Space })
+		}
+		awWindow := func(id int, x float64) wm.Window {
+			return window(id, x, func(w *wm.Window) { w.SpaceID = awSpace })
+		}
+		w := World{
+			Windows: []wm.Window{g9Window(1, 0), g9Window(2, 100), g9Window(3, 200), awWindow(4, 0), awWindow(5, 100), awWindow(6, 200)},
+			Spaces:  []wm.Space{{ID: g9Space, DisplayIdx: 1}, {ID: awSpace, DisplayIdx: 2}},
+			Displays: []wm.Display{
+				{Idx: 1, DeviceID: "device-g9", Frame: wm.Frame{W: 5120}, SpaceIDs: []wm.SpaceID{g9Space}},
+				{Idx: 2, DeviceID: "device-aw", Frame: wm.Frame{W: 5120}, SpaceIDs: []wm.SpaceID{awSpace}},
+			},
+		}
+		expect(t, SnapPlan(profile, w, g9Space, SnapThreeColumns), []Op{RealizeLayoutOp{Space: g9Space, Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{1}, {2}, {3}}, Weights: []float64{4, 3, 3}}}})
+		expect(t, SnapPlan(profile, w, awSpace, SnapThreeColumns), []Op{RealizeLayoutOp{Space: awSpace, Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{4}, {5}, {6}}, Weights: []float64{1, 5, 4}}}})
+	})
 	t.Run("x-sort preserves left-to-right track order", func(t *testing.T) {
 		expect(t, SnapPlan(profile, world(window(30, 300), window(10, 100), window(20, 200)), spaceID, SnapThreeColumns), []Op{RealizeLayoutOp{Space: spaceID, Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10}, {20}, {30}}, Weights: []float64{3, 4, 3}}}})
 	})
