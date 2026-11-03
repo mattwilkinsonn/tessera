@@ -13,7 +13,6 @@ import (
 	"github.com/mattwilkinsonn/tessera/internal/config"
 	"github.com/mattwilkinsonn/tessera/internal/daemon"
 	"github.com/mattwilkinsonn/tessera/internal/effects"
-	"github.com/mattwilkinsonn/tessera/internal/wm/yabai"
 )
 
 var version = "dev"
@@ -43,7 +42,11 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 				profile = loaded
 			}
 			// Unset paths resolve lazily, so commands that need none skip getconf.
-			return commands.Run(ctx, profile, command, yabai.New(yabaiPath()), commands.Env{Stderr: stderr})
+			b, err := newBackend()
+			if err != nil {
+				return 1, err
+			}
+			return commands.Run(ctx, profile, command, b.Driver, commands.Env{Nudge: b.Nudge, Stderr: stderr})
 		},
 		DaemonOptions: func(ctx context.Context, command commands.DaemonCommand) (daemon.Options, error) {
 			home, err := os.UserHomeDir()
@@ -58,11 +61,15 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 			if err != nil {
 				return daemon.Options{}, err
 			}
-			driver := yabai.New(yabaiPath())
-			env := commands.Env{Paths: paths, Stderr: stderr}
+			b, err := newBackend()
+			if err != nil {
+				return daemon.Options{}, err
+			}
+			driver := b.Driver
+			env := commands.Env{Paths: paths, Nudge: b.Nudge, Stderr: stderr}
 			return daemon.Options{
 				Socket:    paths.DaemonSocket,
-				Bootstrap: !command.NoBootstrap,
+				Bootstrap: b.Bootstrap && !command.NoBootstrap,
 				Launchctl: daemon.ExecLaunchctl{},
 				UID:       os.Getuid(),
 				Services:  daemon.DefaultServices(home),
@@ -70,7 +77,7 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 				Flex:      daemon.FlexWork(profile, driver, env),
 				WakeReady: daemon.StartupReadiness(driver),
 				Wake:      daemon.WakeRoutine(profile, driver, env, paths.DaemonSocket),
-				Nudge:     effects.NudgeSketchybar,
+				Nudge:     b.Nudge,
 			}, nil
 		},
 	}

@@ -38,6 +38,19 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # cmd/tess gains its Windows backend later, so these steps skip it.
+      - name: Vet Windows packages
+        shell: bash
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v /cmd/tess)
+          GOOS=windows go vet "${packages[@]}"
+
+      - name: Lint Windows packages
+        shell: bash
+        run: |
+          mapfile -t dirs < <(go list -f '{{.Dir}}' ./... | grep -v /cmd/tess)
+          GOOS=windows golangci-lint run --config .golangci.yml "${dirs[@]}"
+
       - name: Check module tidiness
         run: go mod tidy -diff
 
@@ -65,6 +78,26 @@ jobs:
           --allowed_licenses=Apache-2.0,Apache-2.0-WITH-LLVM-exception,MIT,BSD-3-Clause,BSD-2-Clause,ISC,Unicode-3.0,Zlib,MPL-2.0,CC0-1.0
           --ignore github.com/mattwilkinsonn/tessera
 
+
+  windows:
+    name: Windows · build · vet · test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.3"
+
+      - name: Build, vet and test packages
+        shell: bash
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v /cmd/tess)
+          go build "${packages[@]}"
+          go vet "${packages[@]}"
+          go test "${packages[@]}"
 
   nix:
     name: nix flake · darwin build

@@ -56,16 +56,6 @@ var (
 )
 
 func TestBootstrap(t *testing.T) {
-	t.Run("default services return current and legacy labels under LaunchAgents", func(t *testing.T) {
-		dir := filepath.Join("/home/u", "Library", "LaunchAgents")
-		yabaiLegacy := Service{Label: "com.koekeishiya.yabai", Plist: filepath.Join(dir, "com.koekeishiya.yabai.plist")}
-		skhdLegacy := Service{Label: "com.koekeishiya.skhd", Plist: filepath.Join(dir, "com.koekeishiya.skhd.plist")}
-		assert.DeepEqual(t, DefaultServices("/home/u"), []Candidates{
-			{yabai, yabaiLegacy},
-			{skhd, skhdLegacy},
-		})
-	})
-
 	t.Run("enable runs before bootstrap and a bootstrapped service is owned", func(t *testing.T) {
 		lc := &fakeLaunchctl{fail: map[string]bool{"print gui/501/com.asmvik.yabai": true}}
 		owned, err := Bootstrap(t.Context(), lc, 501, []Candidates{{yabai}})
@@ -431,11 +421,4 @@ func TestNotLoadedExit(t *testing.T) {
 			assert.Equal(t, notLoadedExit(test.code), test.want)
 		})
 	}
-}
-
-func TestExecLaunchctlMarksNotLoaded(t *testing.T) {
-	stub := filepath.Join(t.TempDir(), "launchctl")
-	assert.NilError(t, os.WriteFile(stub, []byte("#!/bin/sh\necho 'Could not find service'\nexit 113\n"), 0o700))
-	err := ExecLaunchctl{Path: stub}.Run(t.Context(), "bootout", "gui/501/com.example")
-	assert.Assert(t, errors.Is(err, ErrNotLoaded), "Run() = %v", err)
 }

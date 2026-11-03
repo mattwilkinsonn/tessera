@@ -12,17 +12,16 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 
 	"gotest.tools/v3/assert"
 )
 
-// shortDir returns a temp dir under /tmp, which keeps socket paths under the macOS limit.
+// shortDir returns a short temp dir, which keeps socket paths under the macOS limit.
 func shortDir(t *testing.T) string {
 	t.Helper()
-	//nolint:usetesting // The short /tmp path stays within the macOS socket path limit.
-	dir, err := os.MkdirTemp("/tmp", "tessd")
+	//nolint:usetesting // daemonTempDir stays within the macOS socket path limit.
+	dir, err := os.MkdirTemp(daemonTempDir(), "tessd")
 	assert.NilError(t, err)
 	t.Cleanup(func() {
 		if err := os.RemoveAll(dir); err != nil {
@@ -126,7 +125,7 @@ func TestListen(t *testing.T) {
 		_, err = Listen(t.Context(), path)
 		assert.Assert(t, errors.Is(err, ErrRunning), "Listen() while held = %v", err)
 
-		assert.NilError(t, cmd.Process.Signal(syscall.SIGKILL))
+		assert.NilError(t, cmd.Process.Kill())
 		assert.Assert(t, cmd.Wait() != nil)
 		_, err = os.Stat(path)
 		assert.NilError(t, err, "a SIGKILLed holder leaves its socket file")

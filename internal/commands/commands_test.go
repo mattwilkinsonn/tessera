@@ -744,7 +744,17 @@ func TestRun(t *testing.T) {
 
 func TestWake(t *testing.T) {
 	t.Run("writes wake request to the daemon socket", func(t *testing.T) {
-		sock := "/tmp/tess-wake-" + strconv.Itoa(os.Getpid()) + ".sock"
+		//nolint:usetesting // Short socket paths stay under the macOS limit.
+		dir, err := os.MkdirTemp(commandsTempDir(), "tess-wake-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.RemoveAll(dir); err != nil {
+				t.Error(err)
+			}
+		})
+		sock := filepath.Join(dir, "daemon.sock")
 		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
 		if err != nil {
 			t.Fatal(err)

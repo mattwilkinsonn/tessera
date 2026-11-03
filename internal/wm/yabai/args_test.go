@@ -3,14 +3,12 @@ package yabai
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
+	"runtime"
 	"testing"
-	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 	"gotest.tools/v3/assert"
@@ -23,7 +21,11 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	path := filepath.Join(dir, "stubyabai")
+	stubName := "stubyabai"
+	if runtime.GOOS == "windows" {
+		stubName += ".exe"
+	}
+	path := filepath.Join(dir, stubName)
 	command := exec.CommandContext(context.Background(), "go", "build", "-o", path, "./testdata/stubyabai")
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -272,95 +274,6 @@ func TestNormalizeSpaceAndDisplay(t *testing.T) {
 	assert.DeepEqual(t, display, wm.Display{Idx: 1, Frame: wm.Frame{W: 5120, H: 1440}, SpaceIDs: []wm.SpaceID{"201", "202"}})
 	_, err = NormalizeDisplay(RawYabaiDisplay{Index: 2, Spaces: []int{3}}, spaceIDs)
 	assert.ErrorContains(t, err, "display 2 references unknown space index 3")
-}
-func TestSpawnWindow(t *testing.T) {
-	t.Run("runs argv directly and reports non-zero exit", func(t *testing.T) {
-		driver := New("yabai")
-		err := driver.SpawnWindow(t.Context(), []string{"/usr/bin/false"})
-		assert.ErrorContains(t, err, "spawning window failed (exit 1): /usr/bin/false")
-	})
-	t.Run("reports stderr from an early launcher exit", func(t *testing.T) {
-		driver := New("yabai")
-		err := driver.SpawnWindow(t.Context(), []string{"/bin/sh", "-c", "echo boom >&2; exit 1"})
-		assert.ErrorContains(t, err, "boom")
-	})
-	t.Run("returns after caller cancellation", func(t *testing.T) {
-		driver := New("yabai")
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		err := driver.SpawnWindow(ctx, []string{"/bin/sleep", "2"})
-		assert.Assert(t, errors.Is(err, context.Canceled))
-	})
-	t.Run("returns after the launcher timeout", func(t *testing.T) {
-		driver := New("yabai")
-		ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-		defer cancel()
-		err := driver.SpawnWindow(ctx, []string{"/bin/sleep", "2"})
-		assert.Assert(t, errors.Is(err, context.DeadlineExceeded))
-	})
-	t.Run("a launcher outliving the wait survives caller cancellation", func(t *testing.T) {
-		dir := t.TempDir()
-		gate, started, out := filepath.Join(dir, "gate"), filepath.Join(dir, "started"), filepath.Join(dir, "out")
-		for _, path := range []string{gate, started} {
-			if err := syscall.Mkfifo(path, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := syscall.Mkfifo(out, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		startedRead := make(chan error, 1)
-		go func() {
-			f, err := os.Open(started)
-			if err != nil {
-				startedRead <- err
-				return
-			}
-			defer f.Close()
-			var marker [1]byte
-			_, err = f.Read(marker[:])
-			startedRead <- err
-		}()
-		driver := &Driver{path: "yabai", spawnWait: 0}
-		ctx, cancel := context.WithCancel(t.Context())
-		script := `printf x > "$3"; read x < "$1"; echo alive > "$2"`
-		if err := driver.SpawnWindow(ctx, []string{"/bin/sh", "-c", script, "sh", gate, out, started}); err != nil {
-			t.Fatal(err)
-		}
-		cancel()
-		select {
-		case err := <-startedRead:
-			if err != nil {
-				t.Fatal(err)
-			}
-		case <-time.After(10 * time.Second):
-			t.Fatal("launcher did not reach the event gate")
-		}
-		gateOpened := make(chan error, 1)
-		go func() {
-			f, err := os.OpenFile(gate, os.O_WRONLY, 0)
-			if err == nil {
-				_, err = f.WriteString("go\n")
-				err = errors.Join(err, f.Close())
-			}
-			gateOpened <- err
-		}()
-		select {
-		case err := <-gateOpened:
-			if err != nil {
-				t.Fatal(err)
-			}
-		case <-time.After(10 * time.Second):
-			t.Fatal("launcher did not survive caller cancellation")
-		}
-		got, err := os.ReadFile(out)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != "alive\n" {
-			t.Fatalf("launcher wrote %q; want alive", got)
-		}
-	})
 }
 
 func TestRecordingStub(t *testing.T) {
