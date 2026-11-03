@@ -60,28 +60,30 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 			break
 		}
 	}
+	// Placement rules match standard windows only; a dialog moved to another space detaches from its parent.
+	const standard = "AXStandardWindow"
 	if laptopSpaceIndex != nil {
-		if err := ops.Add(ctx, wm.Rule{Label: "auto:default-laptop-stack", App: "^.*$", Space: laptopSpaceIndex}); err != nil {
+		if err := ops.Add(ctx, wm.Rule{Label: "auto:default-laptop-stack", App: "^.*$", Subrole: standard, Space: laptopSpaceIndex}); err != nil {
 			return err
 		}
 	}
 	if hasG9 {
-		if err := ops.Add(ctx, wm.Rule{Label: "auto:code", App: "^Code$", Display: &g9}); err != nil {
+		if err := ops.Add(ctx, wm.Rule{Label: "auto:code", App: "^Code$", Subrole: standard, Display: &g9}); err != nil {
 			return err
 		}
 	}
 	if hasAW {
-		if err := ops.Add(ctx, wm.Rule{Label: "auto:linear", App: "^Linear$", Display: &aw}); err != nil {
+		if err := ops.Add(ctx, wm.Rule{Label: "auto:linear", App: "^Linear$", Subrole: standard, Display: &aw}); err != nil {
 			return err
 		}
 	}
 	if laptopSpaceIndex != nil {
-		if err := ops.Add(ctx, wm.Rule{Label: "auto:akiflow", App: "^Akiflow$", Space: laptopSpaceIndex}); err != nil {
+		if err := ops.Add(ctx, wm.Rule{Label: "auto:akiflow", App: "^Akiflow$", Subrole: standard, Space: laptopSpaceIndex}); err != nil {
 			return err
 		}
 	}
 	on := true
-	if err := ops.Add(ctx, wm.Rule{Label: "auto:manage-standard", App: "^.*$", Subrole: "AXStandardWindow", Manage: &on}); err != nil {
+	if err := ops.Add(ctx, wm.Rule{Label: "auto:manage-standard", App: "^.*$", Subrole: standard, Manage: &on}); err != nil {
 		return err
 	}
 	manage := false
