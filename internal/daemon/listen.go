@@ -88,6 +88,9 @@ func (l *lockedListener) closeSocket() error {
 }
 
 // socketOnly lets Serve close the socket while Run keeps the lock through bootout.
-type socketOnly struct{ *lockedListener }
+type socketOnly struct {
+	net.Listener
+	closeFn func() error
+}
 
-func (s socketOnly) Close() error { return s.closeSocket() }
+func (s socketOnly) Close() error { return s.closeFn() }
