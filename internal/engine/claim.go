@@ -23,7 +23,11 @@ func (claims *ClaimSet) ClaimSlot(windows []wm.Window, key SlotKey, name string,
 	if ref, exists := claims.memory.Slots[key]; exists {
 		if spec, known := claims.profile.Windows[name]; known {
 			for _, window := range windows {
-				if window.ID != ref.ID || window.App != ref.App || window.Minimized || window.Floating || !matchesSpec(spec, window.App, window.Title) {
+				sameID := window.ID == ref.ID
+				sameApp := window.App == ref.App
+				available := !window.Minimized && !window.Floating
+				matchesName := matchesSpec(spec, window.App, window.Title)
+				if !sameID || !sameApp || !available || !matchesName {
 					continue
 				}
 				if _, claimed := claims.claimed[window.ID]; !claimed && claims.reserved[window.ID] == key {

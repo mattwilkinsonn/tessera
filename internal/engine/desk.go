@@ -14,6 +14,14 @@ type deskBuild struct {
 	weights   []float64
 }
 
+type deskSlotState struct {
+	claims *ClaimSet
+	index  int
+	keys   []SlotKey
+	offset int
+	filled map[SlotKey]int
+}
+
 func DeskPlan(profile *config.Profile, world World) ([]Op, map[SlotKey]int) {
 	filled := make(map[SlotKey]int)
 	if profile == nil {
@@ -70,21 +78,29 @@ func buildDesks(profile *config.Profile, world World, doomed map[wm.SpaceID]stru
 	}
 	claims := NewClaimSet(profile, world.Slots, Reserve(profile, world.Slots, allSlotKeys, DisplaySet(profile, world.Displays), world.Windows))
 	filled := make(map[SlotKey]int)
+	states := make(map[config.DisplayName]*deskSlotState, len(keysByDisplay))
+	for display, keys := range keysByDisplay {
+		states[display] = &deskSlotState{claims: claims, keys: keys, filled: filled}
+	}
 	builds := make([]deskBuild, 0)
-	keyOffsets := make(map[config.DisplayName]int)
 	for _, layout := range layouts {
 		index, present := ResolveDisplay(profile, layout.Display, world.Displays)
 		if !present {
 			continue
 		}
 		home := homeSpace(world.Displays, index, doomed)
-		keyOffset := keyOffsets[layout.Display]
+		state, known := states[layout.Display]
+		if !known {
+			// Every present layout's display got keys above; this only guards a builder mismatch.
+			state = &deskSlotState{claims: claims, filled: filled}
+			states[layout.Display] = state
+		}
+		state.index = index
 		if home == "" {
-			keyOffsets[layout.Display] = keyOffset + slotCount(layout.Tracks)
+			state.offset += slotCount(layout.Tracks)
 			continue
 		}
-		tracks, weights := deskTracks(profile, world, layout, claims, index, keysByDisplay[layout.Display], &keyOffset, filled)
-		keyOffsets[layout.Display] = keyOffset
+		tracks, weights := deskTracks(profile, world, layout, state)
 		builds = append(builds, deskBuild{homeSpace: home, label: layout.Label, kind: layout.Kind, tracks: tracks, weights: weights})
 	}
 	return builds, filled
@@ -113,7 +129,7 @@ func slotCount(tracks [][]string) int {
 	return count
 }
 
-func deskTracks(profile *config.Profile, world World, layout config.DeskLayout, claims *ClaimSet, index int, keys []SlotKey, keyOffset *int, filled map[SlotKey]int) ([][]int, []float64) {
+func deskTracks(profile *config.Profile, world World, layout config.DeskLayout, state *deskSlotState) ([][]int, []float64) {
 	tracks := make([][]int, 0)
 	weights := make([]float64, 0)
 	configured := WeightsFor(profile, layout.Kind, len(layout.Tracks), layout.Display, layout.Weights)
@@ -122,14 +138,14 @@ func deskTracks(profile *config.Profile, world World, layout config.DeskLayout, 
 		for _, name := range names {
 			// Keys come from these same tracks, so a missing key means a builder bug; claim without memory.
 			var key SlotKey
-			if *keyOffset < len(keys) {
-				key = keys[*keyOffset]
+			if state.offset < len(state.keys) {
+				key = state.keys[state.offset]
 			}
-			*keyOffset++
-			if id, ok := claims.ClaimSlot(world.Windows, key, name, mo.Some(index)); ok {
+			state.offset++
+			if id, ok := state.claims.ClaimSlot(world.Windows, key, name, mo.Some(state.index)); ok {
 				track = append(track, id)
 				if key != "" {
-					filled[key] = id
+					state.filled[key] = id
 				}
 			}
 		}
