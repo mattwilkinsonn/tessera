@@ -37,6 +37,17 @@ func TestSlotKeys(t *testing.T) {
 	assert.DeepEqual(t, keys, []SlotKey{"desk:aw/browser#1", "desk:aw/arc#1", "desk:aw/browser#2"})
 }
 
+func TestDisplaySetNamesSameWidthPanelsByDeviceID(t *testing.T) {
+	profile := slotTestProfile()
+	profile.Displays.G9 = config.DisplaySpec{Width: 5120, DeviceID: "device-g9"}
+	profile.Displays.AW = config.DisplaySpec{Width: 5120, DeviceID: "device-aw"}
+	displays := []wm.Display{
+		{Idx: 4, DeviceID: "device-aw", Frame: wm.Frame{W: 5120}},
+		{Idx: 7, DeviceID: "device-g9", Frame: wm.Frame{W: 5120}},
+	}
+	assert.Equal(t, DisplaySet(profile, displays), "aw,g9")
+}
+
 func TestReserveAndClaimSlot(t *testing.T) {
 	profile := slotTestProfile()
 	key := SlotKey("desk:aw/browser#1")

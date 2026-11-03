@@ -152,7 +152,7 @@ func DisplaySet(profile *config.Profile, displays []wm.Display) string {
 	}
 	names := make([]string, 0, len(displays))
 	for _, display := range displays {
-		if name, ok := displayNameForWidth(profile, display.Frame.W); ok {
+		if name, ok := displayNameFor(profile, display); ok {
 			names = append(names, string(name))
 		}
 	}
