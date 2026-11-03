@@ -127,11 +127,10 @@ func TestApplyAndLaptopShareSlotLock(t *testing.T) {
 				return nil
 			}
 			operationEntered := make(chan struct{})
-			firstReturned := make(chan struct{})
 			type queryObservation struct {
-				afterFirstReturn bool
-				memory           engine.SlotMemory
-				err              error
+				afterFirstWrite bool
+				memory          engine.SlotMemory
+				err             error
 			}
 			secondQuery := make(chan queryObservation, 1)
 			secondLockWait := make(chan struct{})
@@ -142,8 +141,9 @@ func TestApplyAndLaptopShareSlotLock(t *testing.T) {
 			secondDriver := &observingDriver{beforeWorldQuery: func() {
 				var observation queryObservation
 				select {
-				case <-firstReturned:
-					observation.afterFirstReturn = true
+				// The nudge follows WriteSlots and precedes the deferred unlock, so it marks persistence.
+				case <-firstWriteAttempted:
+					observation.afterFirstWrite = true
 				default:
 				}
 				observation.memory, observation.err = effects.ReadSlots(env.Paths.WindowSlots)
@@ -168,9 +168,7 @@ func TestApplyAndLaptopShareSlotLock(t *testing.T) {
 			}
 			firstDone := make(chan error, 1)
 			go func() {
-				err := run(t.Context(), test.applyFirst, firstDriver)
-				close(firstReturned)
-				firstDone <- err
+				firstDone <- run(t.Context(), test.applyFirst, firstDriver)
 			}()
 			select {
 			case <-operationEntered:
@@ -185,7 +183,7 @@ func TestApplyAndLaptopShareSlotLock(t *testing.T) {
 			select {
 			case <-secondLockWait:
 			case observation := <-secondQuery:
-				t.Fatalf("second command queried before first returned: %+v", observation)
+				t.Fatalf("second command queried before first persisted: %+v", observation)
 			case err := <-secondDone:
 				t.Fatalf("second command returned while first held slot lock: %v", err)
 			case <-time.After(time.Second):
@@ -206,7 +204,7 @@ func TestApplyAndLaptopShareSlotLock(t *testing.T) {
 			assert.NilError(t, <-secondDone)
 			select {
 			case observation := <-secondQuery:
-				assert.Assert(t, observation.afterFirstReturn)
+				assert.Assert(t, observation.afterFirstWrite)
 				assert.NilError(t, observation.err)
 				assert.Assert(t, len(observation.memory.Slots) > 0)
 			default:
