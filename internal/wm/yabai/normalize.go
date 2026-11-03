@@ -32,6 +32,7 @@ type RawYabaiSpace struct {
 }
 
 type RawYabaiDisplay struct {
+	UUID   string   `json:"uuid"`
 	Index  int      `json:"index"`
 	Frame  wm.Frame `json:"frame"`
 	Spaces []int    `json:"spaces"`
@@ -99,5 +100,5 @@ func NormalizeDisplay(raw RawYabaiDisplay, spaceIDByIndex map[int]wm.SpaceID) (w
 		}
 		spaceIDs[index] = spaceID
 	}
-	return wm.Display{Idx: raw.Index, Frame: raw.Frame, SpaceIDs: spaceIDs}, nil
+	return wm.Display{Idx: raw.Index, DeviceID: raw.UUID, Frame: raw.Frame, SpaceIDs: spaceIDs}, nil
 }

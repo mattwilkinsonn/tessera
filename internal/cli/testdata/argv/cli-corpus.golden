@@ -2,6 +2,7 @@
 -m
 query
 --displays
+uuid,index,frame,spaces
 
 -m
 query
@@ -28,6 +29,7 @@ window
 -m
 query
 --displays
+uuid,index,frame,spaces
 
 -m
 query
@@ -142,6 +144,7 @@ query
 -m
 query
 --displays
+uuid,index,frame,spaces
 
 -m
 query
@@ -250,6 +253,7 @@ query
 -m
 query
 --displays
+uuid,index,frame,spaces
 
 -m
 query
@@ -309,6 +313,7 @@ right:-100:0
 -m
 query
 --displays
+uuid,index,frame,spaces
 
 -m
 query
@@ -338,6 +343,7 @@ display
 -m
 query
 --displays
+uuid,index,frame,spaces
 
 -m
 query
@@ -347,6 +353,7 @@ query
 -m
 query
 --displays
+uuid,index,frame,spaces
 
 -m
 query

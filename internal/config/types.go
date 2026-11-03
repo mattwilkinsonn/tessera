@@ -37,8 +37,9 @@ type Displays struct {
 }
 
 type DisplaySpec struct {
-	Width   int             `json:"width"`
-	Weights *WeightDefaults `json:"weights,omitempty"`
+	DeviceID string          `json:"deviceId,omitempty"`
+	Width    int             `json:"width"`
+	Weights  *WeightDefaults `json:"weights,omitempty"`
 }
 
 type WeightDefaults struct {

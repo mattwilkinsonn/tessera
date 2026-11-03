@@ -38,6 +38,8 @@ func TestParse(t *testing.T) {
 		{name: "missing slots", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"laptopPinned":[],"laptopStackApps":[]}`},
 		{name: "missing pinned", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopStackApps":[]}`},
 		{name: "missing stack app list", src: `{"displays":{"g9":{"width":1},"aw":{"width":1},"laptop":{"width":1}},"windows":{"app":{"app":"App"}},"desk":[{"display":"g9","label":"main","kind":"stack","tracks":[["app"]]}],"deskSlots":[],"laptopPinned":[]}`},
+		{name: "device id must be a string", src: strings.Replace(validJSON, `"g9":{"width":1}`, `"g9":{"width":1,"deviceId":42}`, 1)},
+		{name: "device id is optional string", src: strings.Replace(validJSON, `"g9":{"width":1}`, `"g9":{"width":1,"deviceId":"display-a"}`, 1), valid: true},
 		{name: "empty required collections", src: validJSON, valid: true},
 		{name: "invalid regular expression", src: strings.Replace(validJSON, `"App"`, `"(?<=x)y"`, 1)},
 		{name: "unknown track name", src: strings.Replace(validJSON, `"app"]`, `"missing"]`, 1)},
@@ -56,6 +58,13 @@ func TestParse(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("device id decodes", func(t *testing.T) {
+		src := strings.Replace(validJSON, `"g9":{"width":1}`, `"g9":{"width":1,"deviceId":"display-a"}`, 1)
+		profile, err := config.Parse("device-id.cue", []byte(src))
+		assert.NilError(t, err)
+		assert.Equal(t, profile.Displays.G9.DeviceID, "display-a")
+	})
 
 	t.Run("unknown field error includes a CUE position", func(t *testing.T) {
 		_, err := config.Parse("unknown.cue", []byte(`displays: {g9: {width: 1, extra: true}}`))

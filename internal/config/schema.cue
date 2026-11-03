@@ -55,16 +55,19 @@ import "regexp"
 #Profile: close({
 	displays!: close({
 		g9!: close({
-			width!:   int & >0
-			weights?: #WeightDefaults
+			width!:    int & >0
+			deviceId?: string
+			weights?:  #WeightDefaults
 		})
 		aw!: close({
-			width!:   int & >0
-			weights?: #WeightDefaults
+			width!:    int & >0
+			deviceId?: string
+			weights?:  #WeightDefaults
 		})
 		laptop!: close({
-			width!:   int & >0
-			weights?: #WeightDefaults
+			width!:    int & >0
+			deviceId?: string
+			weights?:  #WeightDefaults
 		})
 	})
 	windows!: close({

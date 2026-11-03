@@ -41,17 +41,33 @@ func SlugForWindow(profile *config.Profile, app, title string) string {
 	return strings.Trim(slug.String(), "-")
 }
 
+// ResolveDisplay keeps width matching for a spec without deviceId, but never takes a display another spec claims by ID.
 func ResolveDisplay(profile *config.Profile, name config.DisplayName, displays []wm.Display) (int, bool) {
 	spec, ok := displaySpec(profile, name)
 	if !ok {
 		return 0, false
 	}
 	for _, display := range displays {
-		if display.Frame.W == float64(spec.Width) {
+		if spec.DeviceID != "" {
+			if display.DeviceID == spec.DeviceID {
+				return display.Idx, true
+			}
+			continue
+		}
+		if display.Frame.W == float64(spec.Width) && !claimedByDevice(profile, display) {
 			return display.Idx, true
 		}
 	}
 	return 0, false
+}
+
+func claimedByDevice(profile *config.Profile, display wm.Display) bool {
+	for _, spec := range []config.DisplaySpec{profile.Displays.G9, profile.Displays.AW, profile.Displays.Laptop} {
+		if spec.DeviceID != "" && spec.DeviceID == display.DeviceID {
+			return true
+		}
+	}
+	return false
 }
 
 func displaySpec(profile *config.Profile, name config.DisplayName) (config.DisplaySpec, bool) {
@@ -73,7 +89,7 @@ func ResolveDesk(profile *config.Profile, displays []wm.Display) []config.DeskLa
 	}
 	present := make(map[config.DisplayName]struct{}, len(displays))
 	for _, display := range displays {
-		name, ok := displayNameForWidth(profile, display.Frame.W)
+		name, ok := displayNameFor(profile, display)
 		if !ok {
 			return profile.Desk
 		}
@@ -139,7 +155,7 @@ func displayOfSpace(profile *config.Profile, world World, id wm.SpaceID) (config
 		}
 		for _, display := range world.Displays {
 			if display.Idx == space.DisplayIdx {
-				return displayNameForWidth(profile, display.Frame.W)
+				return displayNameFor(profile, display)
 			}
 		}
 	}
