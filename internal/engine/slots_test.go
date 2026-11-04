@@ -368,3 +368,13 @@ func slotWorld(windows []wm.Window, g9, aw, laptop bool) World {
 func someDisplay(index int) mo.Option[int] { return mo.Some(index) }
 
 func noneDisplay() mo.Option[int] { return mo.None[int]() }
+
+func TestDisplaySetNamesSameWidthDisplaysByDeviceID(t *testing.T) {
+	profile := slotTestProfile()
+	profile.Displays.AW = config.DisplaySpec{Width: 1000, DeviceID: "device-aw"}
+	displays := []wm.Display{
+		{Idx: 1, DeviceID: "device-g9", Frame: wm.Frame{W: 1000}},
+		{Idx: 2, DeviceID: "device-aw", Frame: wm.Frame{W: 1000}},
+	}
+	assert.Equal(t, DisplaySet(profile, displays), "aw,g9")
+}
