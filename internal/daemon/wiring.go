@@ -238,15 +238,17 @@ func serveWithEvents(
 	h *Hub,
 	wakes Wakes,
 ) (bool, error) {
+	// Events gets runCtx so an early Serve return also ends the subscription.
+	runCtx, cancel := context.WithCancel(ctx)
 	var events <-chan wm.Event
 	if eventStream != nil {
 		var err error
-		events, err = eventStream.Events(ctx)
+		events, err = eventStream.Events(runCtx)
 		if err != nil {
+			cancel()
 			return processOwned, fmt.Errorf("subscribing to window manager events: %w", err)
 		}
 	}
-	runCtx, cancel := context.WithCancel(ctx)
 	forwardDone := make(chan struct{})
 	if eventStream != nil {
 		go func() {

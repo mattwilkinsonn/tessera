@@ -18,10 +18,12 @@ type eventStreamFake struct {
 	events <-chan wm.Event
 	err    error
 	calls  int
+	ctx    context.Context
 }
 
-func (f *eventStreamFake) Events(context.Context) (<-chan wm.Event, error) {
+func (f *eventStreamFake) Events(ctx context.Context) (<-chan wm.Event, error) {
 	f.calls++
+	f.ctx = ctx
 	return f.events, f.err
 }
 
@@ -223,6 +225,69 @@ func TestRunProcessSupervision(t *testing.T) {
 			cancel()
 			assert.NilError(t, <-done)
 		})
+	})
+}
+
+func TestRunProcessSupervisionOwnership(t *testing.T) {
+	t.Run("does not stop after a restart that found an existing process", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			firstExit := make(chan error, 1)
+			supervisor := &processSupervisorFake{
+				starts: []processStart{
+					{started: true, exited: firstExit},
+					{started: false, exited: make(chan error)},
+				},
+				startCalls: make(chan struct{}, 2),
+			}
+			done := make(chan error, 1)
+			ln := newPipeListener()
+			go func() {
+				done <- run(ctx, Options{Bootstrap: true, Supervisor: supervisor, Wake: noWake}, ln, ln.Close)
+			}()
+			<-supervisor.startCalls
+			firstExit <- errors.New("process crashed")
+			<-supervisor.startCalls
+			synctest.Wait()
+			cancel()
+			assert.NilError(t, <-done)
+			starts, stops := supervisor.counts()
+			assert.Equal(t, starts, 2)
+			assert.Equal(t, stops, 0)
+		})
+	})
+
+	t.Run("never starts or stops without bootstrap", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			supervisor := &processSupervisorFake{startCalls: make(chan struct{}, 1)}
+			done := make(chan error, 1)
+			ln := newPipeListener()
+			go func() {
+				done <- run(ctx, Options{Supervisor: supervisor, Wake: noWake}, ln, ln.Close)
+			}()
+			synctest.Wait()
+			cancel()
+			assert.NilError(t, <-done)
+			starts, stops := supervisor.counts()
+			assert.Equal(t, starts, 0)
+			assert.Equal(t, stops, 0)
+		})
+	})
+}
+
+func TestRunEndsSubscriptionWhenServeReturnsEarly(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		stream := &eventStreamFake{events: make(chan wm.Event)}
+		ln := newPipeListener()
+		done := make(chan error, 1)
+		go func() { done <- run(t.Context(), Options{Events: stream, Wake: noWake}, ln, ln.Close) }()
+		synctest.Wait()
+		assert.NilError(t, ln.Close())
+		<-done
+		assert.Assert(t, stream.ctx != nil)
+		assert.Assert(t, stream.ctx.Err() != nil, "Events context still live after Run returned")
 	})
 }
 
