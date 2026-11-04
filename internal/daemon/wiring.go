@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"path/filepath"
 	"strings"
 	"time"
@@ -140,28 +141,56 @@ func waitForYabai(ctx context.Context, query func(context.Context) error, timeou
 
 // Options configures Run.
 type Options struct {
-	Socket    string
-	Bootstrap bool
-	Launchctl Launchctl
-	UID       int
-	Services  []Candidates
-	Display   Work
-	Flex      Work
-	Wake      func(context.Context) error
-	WakeReady func(context.Context) error
-	Nudge     effects.Nudger
+	Socket     string
+	Bootstrap  bool
+	Launchctl  Launchctl
+	UID        int
+	Services   []Candidates
+	Display    Work
+	Flex       Work
+	Wake       func(context.Context) error
+	WakeReady  func(context.Context) error
+	Nudge      effects.Nudger
+	Events     wm.EventStream
+	Supervisor wm.ProcessSupervisor
 }
 
 // Run holds the socket lock for the daemon's life, bootstraps services, and serves until ctx ends.
 // A clean shutdown boots out only the services this run bootstrapped, logs a bootout failure, and exits 0.
-func Run(ctx context.Context, opts Options) (err error) {
+func Run(ctx context.Context, opts Options) error {
 	ln, err := listen(ctx, opts.Socket)
 	if err != nil {
 		return err
 	}
+	return run(ctx, opts, ln, ln.closeSocket)
+}
+
+func run(ctx context.Context, opts Options, ln net.Listener, closeSocket func() error) (err error) {
 	defer func() { err = errors.Join(err, ln.Close()) }()
 	var owned Owned
-	if opts.Bootstrap {
+	var processOwned bool
+	var exited <-chan error
+	supervised := opts.Bootstrap && opts.Supervisor != nil
+	if supervised {
+		defer func() {
+			if !processOwned {
+				return
+			}
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bootoutDeadline)
+			defer cancel()
+			if stopErr := opts.Supervisor.Stop(stopCtx); stopErr != nil {
+				err = errors.Join(err, fmt.Errorf("stopping window manager: %w", stopErr))
+			}
+		}()
+		var startErr error
+		processOwned, exited, startErr = opts.Supervisor.Start(ctx)
+		if startErr != nil {
+			return fmt.Errorf("starting window manager: %w", startErr)
+		}
+		if !processOwned {
+			exited = nil
+		}
+	} else if opts.Bootstrap {
 		var bootErr error
 		owned, bootErr = Bootstrap(ctx, opts.Launchctl, opts.UID, opts.Services)
 		if bootErr != nil {
@@ -177,7 +206,14 @@ func Run(ctx context.Context, opts Options) (err error) {
 			}
 		}))
 	}
-	if err := Serve(ctx, socketOnly{ln}, NewHub(opts.Display, opts.Flex, hubOpts...), Wakes{Run: opts.Wake, Ready: opts.WakeReady}); err != nil {
+	h := NewHub(opts.Display, opts.Flex, hubOpts...)
+	wakes := Wakes{Run: opts.Wake, Ready: opts.WakeReady}
+	if opts.Events == nil && !supervised {
+		err = Serve(ctx, socketOnly{Listener: ln, closeFn: closeSocket}, h, wakes)
+	} else {
+		processOwned, err = serveWithEvents(ctx, opts.Events, exited, opts.Supervisor, processOwned, ln, closeSocket, h, wakes)
+	}
+	if err != nil {
 		return err
 	}
 	if len(owned) == 0 {
@@ -189,4 +225,89 @@ func Run(ctx context.Context, opts Options) (err error) {
 		slog.ErrorContext(ctx, "booting out services", "error", err)
 	}
 	return nil
+}
+
+func serveWithEvents(
+	ctx context.Context,
+	eventStream wm.EventStream,
+	exited <-chan error,
+	supervisor wm.ProcessSupervisor,
+	processOwned bool,
+	ln net.Listener,
+	closeSocket func() error,
+	h *Hub,
+	wakes Wakes,
+) (bool, error) {
+	// Events gets runCtx so an early Serve return also ends the subscription.
+	runCtx, cancel := context.WithCancel(ctx)
+	var events <-chan wm.Event
+	if eventStream != nil {
+		var err error
+		events, err = eventStream.Events(runCtx)
+		if err != nil {
+			cancel()
+			return processOwned, fmt.Errorf("subscribing to window manager events: %w", err)
+		}
+	}
+	forwardDone := make(chan struct{})
+	if eventStream != nil {
+		go func() {
+			defer close(forwardDone)
+			forwardEvents(runCtx, events, h)
+		}()
+	} else {
+		close(forwardDone)
+	}
+	defer func() {
+		cancel()
+		<-forwardDone
+	}()
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- Serve(runCtx, socketOnly{Listener: ln, closeFn: closeSocket}, h, wakes)
+	}()
+	ctxDone := runCtx.Done()
+	for {
+		select {
+		case serveErr := <-serveDone:
+			return processOwned, serveErr
+		case <-ctxDone:
+			return processOwned, <-serveDone
+		case exitErr, ok := <-exited:
+			exited = nil
+			if !ok || exitErr == nil {
+				processOwned = false
+				continue
+			}
+			processOwned = false
+			if runCtx.Err() != nil {
+				continue
+			}
+			started, nextExit, startErr := supervisor.Start(runCtx)
+			processOwned = started
+			if startErr != nil {
+				cancel()
+				serveErr := <-serveDone
+				return started, errors.Join(fmt.Errorf("restarting window manager: %w", startErr), serveErr)
+			}
+			if !started {
+				nextExit = nil
+			}
+			exited = nextExit
+		}
+	}
+}
+
+func forwardEvents(ctx context.Context, events <-chan wm.Event, h *Hub) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-events:
+			if !ok {
+				return
+			}
+			h.Notify(ctx, string(ev))
+		}
+	}
 }

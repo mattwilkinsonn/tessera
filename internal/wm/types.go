@@ -222,6 +222,20 @@ type EventSource interface {
 	AddSignal(ctx context.Context, ev Event, label, action string) error
 }
 
+// EventStream is a WM that pushes events. The driver owns the transport, framing and reconnect.
+type EventStream interface {
+	// Events subscribes and returns the mapped events. The channel closes when ctx ends.
+	// When the WM comes back after it stopped, the driver subscribes again and sends EventDisplayMoved.
+	Events(ctx context.Context) (<-chan Event, error)
+}
+
+// ProcessSupervisor starts and stops a WM process.
+// Start leaves an existing process unowned; a started process reports its exit error, nil for clean exit.
+type ProcessSupervisor interface {
+	Start(ctx context.Context) (started bool, exited <-chan error, err error)
+	Stop(ctx context.Context) error
+}
+
 type World struct {
 	Windows  []Window
 	Spaces   []Space
