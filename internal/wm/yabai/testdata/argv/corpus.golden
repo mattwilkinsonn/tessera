@@ -315,6 +315,14 @@ manage=off
 
 -m
 rule
+--add
+label=auto:1password-dialog
+app=^1Password$
+title=^1Password$
+manage=off
+
+-m
+rule
 --apply
 
 -m

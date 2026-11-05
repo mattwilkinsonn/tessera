@@ -123,6 +123,7 @@ type DisplaySelector struct {
 type Rule struct {
 	Label   string
 	App     string
+	Title   string
 	Subrole string
 	Display *int
 	Space   *int

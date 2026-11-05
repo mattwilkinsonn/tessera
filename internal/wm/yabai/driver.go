@@ -340,7 +340,7 @@ func (d *Driver) Remove(ctx context.Context, label string) error {
 
 func (d *Driver) Add(ctx context.Context, rule wm.Rule) error {
 	_, _, err := d.run(ctx, RuleAddArgs(RuleAdd{
-		Label: rule.Label, App: rule.App, Subrole: rule.Subrole,
+		Label: rule.Label, App: rule.App, Title: rule.Title, Subrole: rule.Subrole,
 		Display: rule.Display, Space: rule.Space, Manage: rule.Manage,
 	}))
 	return err

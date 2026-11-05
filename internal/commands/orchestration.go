@@ -97,6 +97,10 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 	if err := ops.Add(ctx, wm.Rule{Label: "auto:system-settings", App: "^System Settings$", Manage: &manage}); err != nil {
 		return err
 	}
+	// The dialog is a standard window; tiling it reshuffles the layout.
+	if err := ops.Add(ctx, wm.Rule{Label: "auto:1password-dialog", App: "^1Password$", Title: "^1Password$", Manage: &manage}); err != nil {
+		return err
+	}
 	return ops.Apply(ctx)
 }
 
