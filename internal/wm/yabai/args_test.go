@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/mattwilkinsonn/tessera/internal/wm"
@@ -303,6 +304,45 @@ func TestRecordingStub(t *testing.T) {
 	args, err := os.ReadFile(log)
 	assert.NilError(t, err)
 	golden.Assert(t, string(args), "stub-query-windows.golden")
+}
+
+func TestDriverAddRuleTitle(t *testing.T) {
+	driver := New(os.Getenv("TESS_YABAI"))
+	tests := []struct {
+		name string
+		rule wm.Rule
+		want string
+	}{
+		{
+			name: "with title",
+			rule: wm.Rule{
+				Label:  "auto:1password-dialog",
+				App:    "^1Password$",
+				Title:  "^1Password$",
+				Manage: new(false),
+			},
+			want: "-m\nrule\n--add\nlabel=auto:1password-dialog\napp=^1Password$\ntitle=^1Password$\nmanage=off\n\n",
+		},
+		{
+			name: "without title",
+			rule: wm.Rule{Label: "auto:code", App: "^Code$"},
+			want: "-m\nrule\n--add\nlabel=auto:code\napp=^Code$\n\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			log := filepath.Join(t.TempDir(), "argv.log")
+			t.Setenv("TESS_YABAI_LOG", log)
+			t.Setenv("TESS_YABAI_EXIT_CODE", "0")
+			assert.NilError(t, driver.Add(t.Context(), test.rule))
+			got, err := os.ReadFile(log)
+			assert.NilError(t, err)
+			assert.Equal(t, string(got), test.want)
+			if test.rule.Title == "" {
+				assert.Assert(t, !strings.Contains(string(got), "title="))
+			}
+		})
+	}
 }
 
 func TestArgvCorpus(t *testing.T) {
