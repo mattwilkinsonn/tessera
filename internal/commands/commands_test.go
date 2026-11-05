@@ -648,10 +648,10 @@ func TestRules(t *testing.T) {
 		if !slices.Equal(recorder.removed, []string{"auto:old"}) {
 			t.Fatalf("removed = %v", recorder.removed)
 		}
-		if len(recorder.added) != 8 || recorder.added[0].Label != "auto:default-laptop-stack" {
+		if len(recorder.added) != 9 || recorder.added[0].Label != "auto:default-laptop-stack" {
 			t.Fatalf("added = %+v; default-laptop rule should be first", recorder.added)
 		}
-		for _, label := range []string{"auto:code", "auto:akiflow", "auto:linear", "auto:manage-standard", "auto:finder", "auto:akiflow-dialog", "auto:system-settings"} {
+		for _, label := range []string{"auto:code", "auto:akiflow", "auto:linear", "auto:manage-standard", "auto:finder", "auto:akiflow-dialog", "auto:system-settings", "auto:1password-dialog"} {
 			if !slices.ContainsFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label }) {
 				t.Errorf("missing rule %q", label)
 			}
@@ -660,7 +660,7 @@ func TestRules(t *testing.T) {
 		if standardIndex < 0 {
 			t.Fatal("missing auto:manage-standard")
 		}
-		for _, label := range []string{"auto:finder", "auto:akiflow-dialog", "auto:system-settings"} {
+		for _, label := range []string{"auto:finder", "auto:akiflow-dialog", "auto:system-settings", "auto:1password-dialog"} {
 			exceptionIndex := slices.IndexFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label })
 			if exceptionIndex < 0 {
 				continue
@@ -672,8 +672,8 @@ func TestRules(t *testing.T) {
 				t.Errorf("%s = %+v; want manage off", label, exception)
 			}
 		}
-		if settings := recorder.added[len(recorder.added)-1]; settings.Label != "auto:system-settings" || settings.App != "^System Settings$" {
-			t.Errorf("last rule = %+v; want the System Settings exception", settings)
+		if dialog := recorder.added[len(recorder.added)-1]; dialog.Label != "auto:1password-dialog" || dialog.App != "^1Password$" || dialog.Title != "^1Password$" || dialog.Manage == nil || *dialog.Manage {
+			t.Errorf("last rule = %+v; want 1Password dialog to match app/title and manage off", dialog)
 		}
 		standard := recorder.added[standardIndex]
 		if standard.App != "^.*$" || standard.Subrole != "AXStandardWindow" || standard.Manage == nil || !*standard.Manage {
