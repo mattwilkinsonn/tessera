@@ -121,13 +121,13 @@ type DisplaySelector struct {
 }
 
 type Rule struct {
-	Label   string
-	App     string
-	Title   string
-	Subrole string
-	Display *int
-	Space   *int
-	Manage  *bool
+	Label      string
+	App        string
+	ExcludeApp string
+	Subrole    string
+	Display    *int
+	Space      *int
+	Manage     *bool
 }
 
 type ResizeEdge string

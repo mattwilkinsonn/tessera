@@ -301,7 +301,7 @@ space=2
 rule
 --add
 label=auto:manage-standard
-app=^.*$
+app!=^1Password$
 subrole=AXStandardWindow
 manage=on
 
@@ -311,14 +311,6 @@ rule
 label=auto:akiflow-dialog
 app=^Akiflow$
 subrole=AXDialog
-manage=off
-
--m
-rule
---add
-label=auto:1password-dialog
-app=^1Password$
-title=^1Password$
 manage=off
 
 -m

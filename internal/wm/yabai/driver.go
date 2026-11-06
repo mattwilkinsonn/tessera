@@ -339,8 +339,11 @@ func (d *Driver) Remove(ctx context.Context, label string) error {
 }
 
 func (d *Driver) Add(ctx context.Context, rule wm.Rule) error {
+	if rule.App != "" && rule.ExcludeApp != "" {
+		return errors.New("rule cannot set both app and excludeApp")
+	}
 	_, _, err := d.run(ctx, RuleAddArgs(RuleAdd{
-		Label: rule.Label, App: rule.App, Title: rule.Title, Subrole: rule.Subrole,
+		Label: rule.Label, App: rule.App, ExcludeApp: rule.ExcludeApp, Subrole: rule.Subrole,
 		Display: rule.Display, Space: rule.Space, Manage: rule.Manage,
 	}))
 	return err
