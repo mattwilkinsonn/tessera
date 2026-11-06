@@ -115,6 +115,7 @@ T1–T4 are implementation slices of one coherent feature and MUST land together
   `TestRunTopologyCommandsSerializePlacement` covers standalone `rules` and `display-setup` command dispatch sharing the cross-process placement locks. `TestHubArrivalDefersDisplayEventDuringQuery` covers display activity during window and topology queries. `TestWindowPlacement` asserts move → focus → active-space query → unfloat ordering. `TestWindowPlacementFailedFocus` covers failed-focus gating. `TestIsTileCandidate` covers independent classifier boundaries.
 - T4: `TestRecoverDeskWindows` runs full reclamation before recovery and proves reclaimed slot owners and heuristic floats stay excluded.
   `TestRecoverDeskWindowsIgnoresHistoricalClaims` covers a floating historical slot owner on the same topology. Recovery excludes only this wake's completed desk claims. `TestWakeRoutineReclaimsRuleFloatedSpawns` covers Code, Linear, and terminal windows created floating by desk rules, adopted before planning, and reclaimed to their configured displays in the same wake.
+  The terminal case retains its configured title predicate while spawning a blank-title window. `TestAdoptSpawnedWindowsClaimPolicy` covers exact-match priority, app-only fallback, rejection of windows classified under another spec, baseline IDs, and heuristic exceptions through the same claim policy used by desk planning.
 
 The verify/unfloat gap remains best-effort. Tests use fake window managers and a recording yabai subprocess; no live desktop smoke is implied.
 

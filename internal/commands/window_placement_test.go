@@ -381,3 +381,58 @@ func TestRecoverDeskWindowsIgnoresHistoricalClaims(t *testing.T) {
 		t.Fatalf("historical owner not recovered: %+v, toggled %v, %v", window, driver.toggled, err)
 	}
 }
+
+func TestAdoptSpawnedWindowsClaimPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		titles   []string
+		baseline bool
+		dialog   bool
+		want     []int
+	}{
+		{name: "blank title fallback", titles: []string{""}, want: []int{1}},
+		{name: "other spec rejected", titles: []string{"mbp"}},
+		{name: "exact match precedes fallback", titles: []string{"", "pc"}, want: []int{2}},
+		{name: "baseline excluded", titles: []string{"pc"}, baseline: true},
+		{name: "dialog excluded", titles: []string{"pc"}, dialog: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profile := testProfile(t)
+			spec := profile.Windows["ghostty-wave"]
+			spec.Spawn = []string{"open", "-a", "Ghostty"}
+			profile.Windows["ghostty-wave"] = spec
+			seed := fake.Seed{
+				Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 3, Frame: displayFrame(1728, 1117)}},
+				Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 3}},
+			}
+			for i, title := range test.titles {
+				subrole := "AXStandardWindow"
+				if test.dialog {
+					subrole = "AXDialog"
+				}
+				seed.Windows = append(seed.Windows, fake.SeedWindow{
+					ID: i + 1, App: "Ghostty", Title: title, SpaceIndex: 1,
+					Root: true, Role: "AXWindow", Subrole: subrole,
+					CanMove: true, CanResize: true, Floating: true,
+				})
+			}
+			driver := &recoveryDriver{Driver: fake.New(seed)}
+			before := []wm.Window{}
+			if test.baseline {
+				var err error
+				before, err = driver.QueryWindows(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := runPlacementCommand(t.Context(), commandEnv(t), func(ctx context.Context) error {
+				return adoptSpawnedWindows(ctx, profile, driver, []string{"ghostty-wave"}, before)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(driver.toggled, test.want) {
+				t.Fatalf("adopted %v; want %v", driver.toggled, test.want)
+			}
+		})
+	}
+}

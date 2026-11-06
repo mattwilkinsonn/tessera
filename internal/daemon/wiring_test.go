@@ -416,7 +416,7 @@ func TestWakeRoutineReclaimsRuleFloatedSpawns(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			profile := testProfile(t)
 			spec := profile.Windows[test.name]
-			spec.Title, spec.TitleRE, spec.Spawn = "", nil, []string{"open", "-a", test.app}
+			spec.Spawn = []string{"open", "-a", test.app}
 			profile.Windows[test.name] = spec
 			driver := &ruleAwareSpawnDriver{Driver: fake.New(fake.Seed{
 				Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}},

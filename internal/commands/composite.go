@@ -16,6 +16,7 @@ import (
 	"github.com/mattwilkinsonn/tessera/internal/engine"
 	"github.com/mattwilkinsonn/tessera/internal/executor"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
+	"github.com/samber/mo"
 )
 
 const (
@@ -239,13 +240,20 @@ func adoptSpawnedWindows(ctx context.Context, profile *config.Profile, driver wm
 	if err != nil {
 		return err
 	}
+	// Project only eligible new floats as available to reuse the planner's exact
+	// match, spawn fallback, classification, and distinct-ID selection policy.
+	candidates := make([]wm.Window, 0, len(windows))
 	for _, window := range windows {
 		if _, old := baseline[window.ID]; old || !window.Floating || window.Minimized || !IsTileCandidate(window) {
 			continue
 		}
-		for _, name := range names {
-			spec, exists := profile.Windows[name]
-			if !exists || len(spec.Spawn) == 0 || !engine.MatchesSpec(spec, window.App, window.Title) {
+		window.Floating = false
+		candidates = append(candidates, window)
+	}
+	claims := engine.NewClaimSet(profile, engine.SlotMemory{}, nil)
+	for _, id := range claims.ClaimMany(candidates, names, mo.None[int]()) {
+		for _, window := range windows {
+			if window.ID != id {
 				continue
 			}
 			if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
