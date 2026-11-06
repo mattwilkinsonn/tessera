@@ -126,25 +126,25 @@ func DisplaySetup(ctx context.Context, profile *config.Profile, driver wm.Driver
 
 // RunDisplayCascade applies display defaults, rules, and the current layout reclaim.
 func RunDisplayCascade(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) (CascadeResult, error) {
-	if err := DisplaySetup(ctx, profile, driver); err != nil {
+	if err := runPlacementCommand(ctx, env, func(ctx context.Context) error {
+		if err := DisplaySetup(ctx, profile, driver); err != nil {
+			return err
+		}
+		return Rules(ctx, profile, driver)
+	}); err != nil {
 		return "", err
 	}
 	displays, err := driver.QueryDisplays(ctx)
 	if err != nil {
 		return "", err
 	}
-	previous, known := 0, false
-	if env.Topology != nil {
-		previous, known = env.Topology.RecordDisplays(len(displays))
-	}
-	if err := Rules(ctx, profile, driver); err != nil {
-		return "", err
-	}
+	previous, known := env.Topology.Displays()
 	if known && previous > 1 && len(displays) == 1 {
 		if err := handoffDeskWindows(ctx, profile, driver, env); err != nil {
 			return "", err
 		}
 	}
+	env.Topology.RecordDisplays(len(displays))
 	if len(displays) <= 1 {
 		result, err := laptop(ctx, profile, driver, env, true)
 		switch result {

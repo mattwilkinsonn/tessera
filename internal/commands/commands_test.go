@@ -638,30 +638,39 @@ func testLaptopSkipsWhenMonitorAttached(t *testing.T) {
 	}
 }
 
+func TestIsTileCandidate(t *testing.T) {
+	base := wm.Window{Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true}
+	if !IsTileCandidate(base) {
+		t.Fatal("standard root window was not a tile candidate")
+	}
+	cases := []struct {
+		name   string
+		window wm.Window
+	}{
+		{name: "not root", window: func() wm.Window { w := base; w.Root = false; return w }()},
+		{name: "dialog", window: func() wm.Window { w := base; w.Subrole = "AXDialog"; return w }()},
+		{name: "immovable", window: func() wm.Window { w := base; w.CanMove = false; return w }()},
+		{name: "sticky", window: func() wm.Window { w := base; w.Sticky = true; return w }()},
+		{name: "non-normal level", window: func() wm.Window { w := base; w.Level = 101; return w }()},
+		{name: "unknown role", window: func() wm.Window { w := base; w.Role = "AXUnknown"; return w }()},
+		{name: "fixed width at threshold", window: func() wm.Window { w := base; w.CanResize = false; w.Frame = wm.Frame{W: 500, H: 501}; return w }()},
+		{name: "fixed height at threshold", window: func() wm.Window { w := base; w.CanResize = false; w.Frame = wm.Frame{W: 501, H: 500}; return w }()},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if IsTileCandidate(test.window) {
+				t.Fatal("exception classified as tile candidate")
+			}
+		})
+	}
+	base.CanResize = false
+	base.Frame = wm.Frame{W: 501, H: 501}
+	if !IsTileCandidate(base) {
+		t.Fatal("large fixed-size standard window was not a tile candidate")
+	}
+}
+
 func TestWindowPlacement(t *testing.T) {
-	t.Run("tile heuristic accepts standard root and rejects exceptions", func(t *testing.T) {
-		base := wm.Window{Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true}
-		if !IsTileCandidate(base) {
-			t.Fatal("standard root window was not a tile candidate")
-		}
-		cases := []struct {
-			name   string
-			window wm.Window
-		}{
-			{name: "not root", window: func() wm.Window { w := base; w.Root = false; return w }()},
-			{name: "dialog", window: func() wm.Window { w := base; w.Subrole = "AXDialog"; return w }()},
-			{name: "immovable", window: func() wm.Window { w := base; w.CanMove = false; return w }()},
-			{name: "sticky", window: func() wm.Window { w := base; w.Sticky = true; return w }()},
-			{name: "fixed and undersized", window: func() wm.Window { w := base; w.CanResize = false; w.Frame.W = 500; return w }()},
-		}
-		for _, test := range cases {
-			t.Run(test.name, func(t *testing.T) {
-				if IsTileCandidate(test.window) {
-					t.Fatal("exception classified as tile candidate")
-				}
-			})
-		}
-	})
 
 	t.Run("desk arrival moves and unfloats only after focus verifies target", func(t *testing.T) {
 		driver := deskWorld()
@@ -671,8 +680,7 @@ func TestWindowPlacement(t *testing.T) {
 			t.Fatal(err)
 		}
 		window := wm.Window{ID: 90, Role: "AXWindow", Subrole: "AXStandardWindow", Root: true, CanMove: true, CanResize: true, Floating: true, SpaceID: "1", Frame: wm.Frame{W: 800, H: 600}}
-		arrival := &placementDriver{Driver: driver, window: window, activeSpace: "3", exists: true}
-		arrival.windowID = 90
+		arrival := newPlacementDriver(driver, window)
 		if err := HandleWindowCreated(t.Context(), testProfile(t), arrival, env, 90); err != nil {
 			t.Fatal(err)
 		}
@@ -682,6 +690,9 @@ func TestWindowPlacement(t *testing.T) {
 		}
 		if arrival.moves != 1 || arrival.focuses != 1 || arrival.toggles != 1 {
 			t.Fatalf("move/focus/toggle = %d/%d/%d; want 1/1/1", arrival.moves, arrival.focuses, arrival.toggles)
+		}
+		if !slices.Equal(arrival.operations, []string{"move", "focus", "active-space", "toggle"}) {
+			t.Fatalf("placement order = %v", arrival.operations)
 		}
 		after, err := driver.QueryWindows(t.Context())
 		if err != nil || !reflect.DeepEqual(before, after) {
@@ -697,7 +708,7 @@ func TestWindowPlacement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		arrival.activeSpace = "1"
+		arrival.focusSpace = "1"
 		if err := HandleWindowCreated(t.Context(), testProfile(t), arrival, env, 91); err != nil {
 			t.Fatal(err)
 		}
@@ -732,6 +743,25 @@ func TestWindowPlacement(t *testing.T) {
 	})
 
 }
+func TestWindowPlacementFailedFocus(t *testing.T) {
+	for _, focusErr := range []error{nil, errors.New("focus failed")} {
+		name := "not focused"
+		if focusErr != nil {
+			name = "focus error"
+		}
+		t.Run(name, func(t *testing.T) {
+			arrival := newPlacementDriver(deskWorld(), candidate())
+			arrival.focusFailed, arrival.focusErr = true, focusErr
+			err := HandleWindowCreated(t.Context(), testProfile(t), arrival, commandEnv(t), 90)
+			if !errors.Is(err, focusErr) {
+				t.Fatalf("focus error = %v; want %v", err, focusErr)
+			}
+			if !arrival.window.Floating || !slices.Equal(arrival.operations, []string{"move", "focus"}) {
+				t.Fatalf("failed focus mutated window: %+v, %v", arrival.window, arrival.operations)
+			}
+		})
+	}
+}
 
 type placementDriver struct {
 	*fake.Driver
@@ -743,10 +773,15 @@ type placementDriver struct {
 	moves       int
 	focuses     int
 	toggles     int
+	operations  []string
+	queries     int
+	focusSpace  wm.SpaceID
+	focusFailed bool
+	focusErr    error
 }
 
 func newPlacementDriver(driver *fake.Driver, window wm.Window) *placementDriver {
-	return &placementDriver{Driver: driver, window: window, windowID: window.ID, activeSpace: "3", exists: window.ID > 0}
+	return &placementDriver{Driver: driver, window: window, windowID: window.ID, exists: window.ID > 0}
 }
 
 func (d *placementDriver) QueryWindow(ctx context.Context, id int) (wm.Window, bool, error) {
@@ -755,6 +790,7 @@ func (d *placementDriver) QueryWindow(ctx context.Context, id int) (wm.Window, b
 	if err := ctx.Err(); err != nil {
 		return wm.Window{}, false, err
 	}
+	d.queries++
 	return d.window, d.exists && id == d.windowID, nil
 }
 
@@ -765,6 +801,7 @@ func (d *placementDriver) MoveWindowToSpace(ctx context.Context, id int, space w
 		return err
 	}
 	d.moves++
+	d.operations = append(d.operations, "move")
 	if id == d.windowID {
 		d.window.SpaceID = space
 	}
@@ -778,10 +815,21 @@ func (d *placementDriver) FocusWindow(ctx context.Context, id int) (bool, error)
 		return false, err
 	}
 	d.focuses++
+	d.operations = append(d.operations, "focus")
+	if d.focusFailed {
+		return false, d.focusErr
+	}
+	d.activeSpace = d.window.SpaceID
+	if d.focusSpace != "" {
+		d.activeSpace = d.focusSpace
+	}
 	return id == d.windowID, nil
 }
 
 func (d *placementDriver) QueryFocusedSpace(ctx context.Context) (wm.Space, bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.operations = append(d.operations, "active-space")
 	if err := ctx.Err(); err != nil {
 		return wm.Space{}, false, err
 	}
@@ -795,6 +843,7 @@ func (d *placementDriver) ToggleFloat(ctx context.Context, id int) error {
 		return err
 	}
 	d.toggles++
+	d.operations = append(d.operations, "toggle")
 	if id == d.windowID {
 		d.window.Floating = !d.window.Floating
 	}

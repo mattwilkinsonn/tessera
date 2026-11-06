@@ -58,8 +58,14 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 			names = append(names, track...)
 		}
 	}
+	spawnedNames := engine.SpawnsNeeded(profile, names, world.Windows)
 	if err := spawnMissingWindows(ctx, profile, driver, names, world.Windows, stderr); err != nil {
 		return err
+	}
+	if len(world.Displays) > 1 {
+		if err := adoptSpawnedWindows(ctx, profile, driver, spawnedNames, world.Windows); err != nil {
+			return err
+		}
 	}
 	world, err = worldSnapshot(ctx, driver)
 	if err != nil {
@@ -84,6 +90,11 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	updated := engine.PruneSlots(profile, engine.RecordSlots(world.Slots, filled, displays, fresh), fresh)
 	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
 		return fmt.Errorf("persisting window slot memory: %w", err)
+	}
+	for _, id := range filled {
+		if env.ReclaimedDeskWindows != nil {
+			env.ReclaimedDeskWindows[id] = struct{}{}
+		}
 	}
 	return nudge(ctx, "yabai_spaces_changed")
 }
@@ -215,6 +226,35 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 		return "", err
 	}
 	return LaptopRan, nil
+}
+
+// adoptSpawnedWindows admits only new matching tile candidates before desk claims.
+// The caller holds the apply and slot locks and the signal guard throughout spawning.
+func adoptSpawnedWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, before []wm.Window) error {
+	baseline := make(map[int]struct{}, len(before))
+	for _, window := range before {
+		baseline[window.ID] = struct{}{}
+	}
+	windows, err := driver.QueryWindows(ctx)
+	if err != nil {
+		return err
+	}
+	for _, window := range windows {
+		if _, old := baseline[window.ID]; old || !window.Floating || window.Minimized || !IsTileCandidate(window) {
+			continue
+		}
+		for _, name := range names {
+			spec, exists := profile.Windows[name]
+			if !exists || len(spec.Spawn) == 0 || !engine.MatchesSpec(spec, window.App, window.Title) {
+				continue
+			}
+			if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
+				return fmt.Errorf("adopting spawned window %d: %w", window.ID, err)
+			}
+			break
+		}
+	}
+	return nil
 }
 
 func spawnMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer) error {

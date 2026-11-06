@@ -198,6 +198,7 @@ func (d *Driver) SpawnWindow(_ context.Context, argv []string) error {
 	d.windows = append(d.windows, wm.Window{
 		ID: id + 1, App: d.spawnApp, DisplayIdx: space.displayIdx,
 		SpaceID: space.id, Visible: true, SplitType: wm.SplitNone,
+		Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true,
 		Frame: wm.Frame{W: defaultWindowSize, H: defaultWindowSize},
 	})
 	return nil

@@ -370,3 +370,68 @@ func TestRunArrivalWaitsInsideWakeRules(t *testing.T) {
 		assert.NilError(t, <-done)
 	})
 }
+
+type ruleAwareSpawnDriver struct {
+	*fake.Driver
+	deskRule        bool
+	spawnedFloating bool
+}
+
+func (d *ruleAwareSpawnDriver) List(context.Context) ([]wm.Rule, error) { return nil, nil }
+func (d *ruleAwareSpawnDriver) Remove(context.Context, string) error    { return nil }
+func (d *ruleAwareSpawnDriver) Add(_ context.Context, rule wm.Rule) error {
+	if rule.Label == "auto:desk-manage-off" {
+		d.deskRule = true
+	}
+	return nil
+}
+func (d *ruleAwareSpawnDriver) Apply(context.Context) error {
+	return errors.New("unexpected bulk rule apply")
+}
+func (d *ruleAwareSpawnDriver) SpawnWindow(ctx context.Context, argv []string) error {
+	if err := d.Driver.SpawnWindow(ctx, argv); err != nil {
+		return err
+	}
+	windows, err := d.Driver.QueryWindows(ctx)
+	if err != nil {
+		return err
+	}
+	if d.deskRule && len(windows) > 0 {
+		d.spawnedFloating = true
+		return d.Driver.ToggleFloat(ctx, windows[len(windows)-1].ID)
+	}
+	return nil
+}
+
+func TestWakeRoutineReclaimsRuleFloatedSpawns(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		app     string
+		display int
+	}{
+		{name: "vscode", app: "Code", display: 1},
+		{name: "linear", app: "Linear", display: 2},
+		{name: "ghostty-wave", app: "Ghostty", display: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profile := testProfile(t)
+			spec := profile.Windows[test.name]
+			spec.Title, spec.TitleRE, spec.Spawn = "", nil, []string{"open", "-a", test.app}
+			profile.Windows[test.name] = spec
+			driver := &ruleAwareSpawnDriver{Driver: fake.New(fake.Seed{
+				Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}},
+				Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3}},
+				SpawnApp: test.app,
+			})}
+			env := daemonEnv(t)
+			env.Nudge = func(context.Context, string) error { return nil }
+			if err := WakeRoutine(profile, driver, env, "/tmp/tess-rule-spawn.sock")(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			windows, err := driver.QueryWindows(t.Context())
+			if err != nil || len(windows) != 1 || !driver.spawnedFloating || windows[0].Floating || windows[0].DisplayIdx != test.display {
+				t.Fatalf("spawn not reclaimed to configured desk slot: %+v, floated %t, %v", windows, driver.spawnedFloating, err)
+			}
+		})
+	}
+}

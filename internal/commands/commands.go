@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/config"
 	"github.com/mattwilkinsonn/tessera/internal/effects"
@@ -32,9 +33,9 @@ func Run(ctx context.Context, profile *config.Profile, command Command, driver w
 		}
 		return 0, nil
 	case RulesCommand:
-		return 0, Rules(ctx, profile, driver)
+		return 0, runPlacementCommand(ctx, env, func(ctx context.Context) error { return Rules(ctx, profile, driver) })
 	case DisplaySetupCommand:
-		return 0, DisplaySetup(ctx, profile, driver)
+		return 0, runPlacementCommand(ctx, env, func(ctx context.Context) error { return DisplaySetup(ctx, profile, driver) })
 	case FocusSlotCommand:
 		return 0, FocusSlot(ctx, profile, driver, command.Number)
 	case SnapCommand:
@@ -75,6 +76,21 @@ func Run(ctx context.Context, profile *config.Profile, command Command, driver w
 	default:
 		return 0, fmt.Errorf("unknown command %T", command)
 	}
+}
+
+func runPlacementCommand(ctx context.Context, env Env, run func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	paths, _, _, err := normalizedEnv(ctx, env)
+	if err != nil {
+		return err
+	}
+	release, err := lockPlacement(ctx, paths)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return run(ctx)
 }
 
 func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger, io.Writer, error) {

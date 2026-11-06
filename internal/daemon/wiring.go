@@ -107,10 +107,12 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 				return err
 			}
 		}
-		if _, err := commands.RunDisplayCascade(ctx, profile, driver, env); err != nil {
+		wakeEnv := env
+		wakeEnv.ReclaimedDeskWindows = make(map[int]struct{})
+		if _, err := commands.RunDisplayCascade(ctx, profile, driver, wakeEnv); err != nil {
 			return err
 		}
-		return commands.RecoverDeskWindows(ctx, profile, driver, env)
+		return commands.RecoverDeskWindows(ctx, profile, driver, wakeEnv)
 	}
 }
 

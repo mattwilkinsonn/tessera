@@ -71,18 +71,7 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	if err != nil {
 		return err
 	}
-	memory, err := effects.ReadSlots(paths.WindowSlots)
-	if err != nil {
-		return err
-	}
-	memory = engine.PruneSlots(profile, memory, windows)
-	claimed := make(map[int]struct{}, len(memory.Slots))
-	displaySet := engine.DisplaySet(profile, displays)
-	for _, ref := range memory.Slots {
-		if ref.Displays == displaySet {
-			claimed[ref.ID] = struct{}{}
-		}
-	}
+	claimed := env.ReclaimedDeskWindows
 	for _, window := range windows {
 		if !window.Floating || !IsTileCandidate(window) {
 			continue
@@ -131,6 +120,9 @@ func HandleWindowCreated(ctx context.Context, profile *config.Profile, driver wm
 	target, ok := laptopHome(profile, displays)
 	if !ok {
 		return nil
+	}
+	if env.ArrivalReady != nil && !env.ArrivalReady() {
+		return ErrDisplayPending
 	}
 	return placeWindow(placementCtx, driver, window, target)
 }

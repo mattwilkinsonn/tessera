@@ -21,6 +21,8 @@ type Env struct {
 	Stderr       io.Writer
 	Topology     *TopologyState
 	ArrivalReady func() bool
+	// ReclaimedDeskWindows contains only claims completed by this wake's desk plan.
+	ReclaimedDeskWindows map[int]struct{}
 }
 
 // ErrDisplayPending asks the daemon to retain an arrival until display work settles.
@@ -62,6 +64,16 @@ func (state *TopologyState) SerializeArrival(ctx context.Context, ready func() b
 		return false, nil
 	}
 	return true, fn(ctx)
+}
+
+// Displays returns the last topology whose rules and handoff completed.
+func (state *TopologyState) Displays() (count int, known bool) {
+	if state == nil {
+		return 0, false
+	}
+	state.displayMu.Lock()
+	defer state.displayMu.Unlock()
+	return state.previousDisplays, state.previousKnown
 }
 
 // RecordDisplays reports whether a topology was previously known and updates it.
