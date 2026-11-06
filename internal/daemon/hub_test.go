@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -217,6 +218,62 @@ func TestHubFlexWaiter(t *testing.T) {
 			stopHub(cancel, h)
 			assert.DeepEqual(t, steps, []Step{Settled})
 			assert.Assert(t, !hasLapSpace(t, driver))
+		})
+	})
+}
+
+func TestHubWindowCreated(t *testing.T) {
+	t.Run("waits for display quiet and cascade completion", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			entered, release := make(chan struct{}), make(chan struct{})
+			arrived := make(chan int, 1)
+			h := NewHub(func(context.Context) (Step, error) {
+				close(entered)
+				<-release
+				return Settled, nil
+			}, idle, WithWindowCreated(&commands.TopologyState{}, func(_ context.Context, id int, _ func() bool) error {
+				arrived <- id
+				return nil
+			}))
+			h.Notify(ctx, string(wm.EventDisplayRemoved))
+			h.NotifyWindowCreated(ctx, 90)
+			synctest.Wait()
+			select {
+			case <-arrived:
+				t.Fatal("arrival ran before display quiet")
+			default:
+			}
+			<-entered
+			synctest.Wait()
+			select {
+			case <-arrived:
+				t.Fatal("arrival ran during cascade")
+			default:
+			}
+			close(release)
+			assert.Equal(t, <-arrived, 90)
+			stopHub(cancel, h)
+		})
+	})
+	t.Run("handler error does not kill worker", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			calls := 0
+			arrived := make(chan int, 2)
+			h := NewHub(idle, idle, WithWindowCreated(&commands.TopologyState{}, func(_ context.Context, id int, _ func() bool) error {
+				calls++
+				if calls == 1 {
+					return errors.New("temporary query failure")
+				}
+				arrived <- id
+				return nil
+			}))
+			h.NotifyWindowCreated(ctx, 90)
+			synctest.Wait()
+			h.NotifyWindowCreated(ctx, 91)
+			assert.Equal(t, <-arrived, 91)
+			stopHub(cancel, h)
 		})
 	})
 }

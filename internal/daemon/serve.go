@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,7 +54,9 @@ func Serve(ctx context.Context, ln net.Listener, h *Hub, w Wakes) error {
 			case <-ctx.Done():
 				return
 			case <-wakes:
-				_, err := bounded(ctx, h, func(ctx context.Context) (struct{}, error) { return struct{}{}, w.Run(ctx) })
+				_, err := bounded(ctx, h, func(ctx context.Context) (struct{}, error) {
+					return struct{}{}, h.topology.SerializeCascade(ctx, w.Run)
+				})
 				if err != nil && ctx.Err() == nil {
 					slog.ErrorContext(ctx, "wake routine failed", "error", err)
 				}
@@ -108,9 +111,17 @@ func handle(ctx context.Context, conn net.Conn, h *Hub, wakes chan<- struct{}) {
 		}
 		return
 	}
+	if value, found := strings.CutPrefix(line, "window_created "); found {
+		id, err := strconv.Atoi(value)
+		if err != nil || id <= 0 {
+			slog.DebugContext(ctx, "dropping invalid window arrival", "line", line)
+			return
+		}
+		h.NotifyWindowCreated(ctx, id)
+		return
+	}
 	h.Notify(ctx, line)
 }
-
 func readLine(conn net.Conn) (string, error) {
 	if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 		return "", err

@@ -32,8 +32,12 @@ func RegisterSignals(ctx context.Context, src wm.EventSource, sock string) error
 	if err != nil {
 		return fmt.Errorf("resolving daemon socket: %w", err)
 	}
-	for _, ev := range append(append([]wm.Event{}, DisplayEvents...), FlexEvents...) {
+	events := append(append([]wm.Event{}, DisplayEvents...), FlexEvents...)
+	for _, ev := range events {
 		action := "echo " + string(ev) + " | " + ncPath + " -U -w 1 " + shellQuote(abs)
+		if ev == wm.EventWindowCreated {
+			action = `id="$YABAI_WINDOW_ID"; printf 'window_created %s\n' "$id" | ` + ncPath + " -U -w 1 " + shellQuote(abs)
+		}
 		if err := src.AddSignal(ctx, ev, signalPrefix+string(ev), action); err != nil {
 			return fmt.Errorf("registering %s: %w", ev, err)
 		}
@@ -95,7 +99,7 @@ func FlexWork(profile *config.Profile, driver wm.Driver, env commands.Env) Work 
 	}
 }
 
-// WakeRoutine registers the signals, then runs the startup reclaim cascade.
+// WakeRoutine registers signals, then runs the startup reclaim cascade and recovery.
 func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, sock string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if src, ok := driver.(wm.EventSource); ok {
@@ -103,8 +107,10 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 				return err
 			}
 		}
-		_, err := commands.RunDisplayCascade(ctx, profile, driver, env)
-		return err
+		if _, err := commands.RunDisplayCascade(ctx, profile, driver, env); err != nil {
+			return err
+		}
+		return commands.RecoverDeskWindows(ctx, profile, driver, env)
 	}
 }
 
@@ -141,18 +147,20 @@ func waitForYabai(ctx context.Context, query func(context.Context) error, timeou
 
 // Options configures Run.
 type Options struct {
-	Socket     string
-	Bootstrap  bool
-	Launchctl  Launchctl
-	UID        int
-	Services   []Candidates
-	Display    Work
-	Flex       Work
-	Wake       func(context.Context) error
-	WakeReady  func(context.Context) error
-	Nudge      effects.Nudger
-	Events     wm.EventStream
-	Supervisor wm.ProcessSupervisor
+	Socket        string
+	Bootstrap     bool
+	Launchctl     Launchctl
+	UID           int
+	Services      []Candidates
+	Display       Work
+	Flex          Work
+	Wake          func(context.Context) error
+	WakeReady     func(context.Context) error
+	WindowCreated func(context.Context, int, func() bool) error
+	Topology      *commands.TopologyState
+	Nudge         effects.Nudger
+	Events        wm.EventStream
+	Supervisor    wm.ProcessSupervisor
 }
 
 // Run holds the socket lock for the daemon's life, bootstraps services, and serves until ctx ends.
@@ -197,14 +205,21 @@ func run(ctx context.Context, opts Options, ln net.Listener, closeSocket func() 
 			slog.ErrorContext(ctx, "bootstrapping services", "error", bootErr)
 		}
 	}
+	topology := opts.Topology
+	if topology == nil {
+		topology = &commands.TopologyState{}
+	}
 	var hubOpts []HubOption
+	hubOpts = append(hubOpts, WithTopology(topology))
 	if opts.Nudge != nil {
-		nudge := opts.Nudge
 		hubOpts = append(hubOpts, OnDisplaySettled(func(ctx context.Context) {
-			if err := nudge(ctx, displaySettled); err != nil {
-				slog.WarnContext(ctx, "nudging sketchybar", "error", err)
+			if err := opts.Nudge(ctx, displaySettled); err != nil {
+				slog.WarnContext(ctx, "nudging settled display", "error", err)
 			}
 		}))
+	}
+	if opts.WindowCreated != nil {
+		hubOpts = append(hubOpts, WithWindowCreated(topology, opts.WindowCreated))
 	}
 	h := NewHub(opts.Display, opts.Flex, hubOpts...)
 	wakes := Wakes{Run: opts.Wake, Ready: opts.WakeReady}

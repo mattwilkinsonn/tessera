@@ -1,8 +1,8 @@
 # Design: New-window placement
 
-## Open Questions
+## Decisions
 
-1. **Which target policy should new desk-mode tile-type windows use?** *Load-bearing; tracked in [RIG-8331](https://linear.app/rigelbuild/issue/RIG-8331/choose-targets-for-new-tiled-windows).* Should Code and Linear keep their G9/AW destinations when those spaces use BSP, or should arrivals use the laptop stack? (A) Send all arrivals to the laptop stack; this preserves geometry but changes destinations. **Recommendation:** A until slot insertion can preserve geometry. (B) Keep G9/AW targets; this preserves destinations but resizes existing windows. (C) Insert only into Tessera-owned named slots; this needs slot ownership and cannot promise unchanged BSP geometry. Decision needed: choose A, B, or C.
+RIG-8331 rulings: Q1=A sends every desk-mode tile-type arrival to the laptop home stack. Code and Linear retain G9/AW slots only during setup, wake, and reclamation. Q2=A keeps laptop-only rules and flex behavior unchanged. Q3=A uses best-effort move → focus → verify active space → conditional unfloat.
 
 ## Direction
 
@@ -18,7 +18,7 @@ Yabai applies placement-rule space/display effects before its float heuristic. I
 
 `Rules` queries connected displays and installs a mode-specific rule set without `rule --apply`. With more than one display, install a catch-all `manage=off` rule and no space/display effects. Yabai applies destination effects independently of manage: `if (effects->sid || effects->did)` (`window_manager_apply_rule_effects_to_window`, yabai `src/window_manager.c`). With one display, retain today's laptop rule set: default laptop-stack placement, configured Code/Linear placement, `manage=on` for standard windows, and the Finder, Akiflow, System Settings, and 1Password exceptions.
 
-Do not call `ops.Apply` in either mode. `Rules` currently ends with `ops.Apply` (`internal/commands/orchestration.go`). Yabai's `rule_reapply_all` iterates existing root windows and calls `window_manager_apply_manage_rules_to_window(&g_space_manager, &g_window_manager, window, window_title, window_role, window_subrole, false);` (`src/rule.c`). The `manage=off` path floats an already-managed window (`src/window_manager.c`). Use add-only `rule_add`, which replaces a matching label and appends a rule without reapplying it to open windows. Test Rules through the driver on a populated BSP; existing management state, space, and geometry must stay unchanged.
+Do not call `ops.Apply` in either mode. Yabai's `rule_reapply_all` iterates existing root windows and calls `window_manager_apply_manage_rules_to_window(&g_space_manager, &g_window_manager, window, window_title, window_role, window_subrole, false);` (`src/rule.c`). The `manage=off` path floats an already-managed window (`src/window_manager.c`). Use add-only `rule_add`, which replaces a matching label and appends a rule without reapplying it to open windows. Rules tests cover unchanged populated BSP state and the driver's recorded add-only commands.
 
 RIG-8327 comment [9a43ce5c-a02e-44ac-834e-2838c05b0ceb](https://linear.app/rigelbuild/issue/RIG-8327/yabai-never-adopts-the-zoom-meeting-window-so-tessera-cant-tile-it#comment-9a43ce5c-a02e-44ac-834e-2838c05b0ceb) records the captured 1Password dialog query: `id=41411`, title `1Password`, subrole `AXStandardWindow`, level 101, `can-resize=false`, frame 400×325. Its non-normal level excludes it under the heuristic; keep the existing laptop rule exception.
 
@@ -42,7 +42,7 @@ For a desk-mode tile-type arrival, resolve a valid target SpaceID, then call `Mo
 
 This is best-effort destination safety, not an atomic no-reshuffle guarantee. The active-space check and `ToggleFloat` are separate yabai commands; a space switch in that gap can make yabai insert into the newly active BSP. Eliminating the gap needs an atomic yabai operation, tracked as RIG-8327 option B (the yabai fork). Test failed verification: the arrival remains floating at its target and existing geometry does not change.
 
-The default desk target is the laptop home stack. Code→G9 and Linear→AW remain subject to RIG-8331; Akiflow remains laptop-targeted. Never rebuild a BSP in the arrival path. In laptop-only mode, new windows use today's placement and management rules; the existing laptop flex convergence then places pinned, flex-tail, and stack-app windows as before.
+Every desk-mode arrival targets the laptop home stack, including Code, Linear, and Akiflow. Code→G9 and Linear→AW remain full-layout reclamation behavior, not arrival targeting. Never rebuild a BSP in the arrival path. In laptop-only mode, new windows use today's placement and management rules; the existing laptop flex convergence then places pinned, flex-tail, and stack-app windows as before.
 
 ### Desk-to-laptop transition
 
@@ -99,9 +99,19 @@ Keep full startup/wake reclamation unchanged. After it completes, classify eligi
 
 ## Tasks
 
-- [ ] **T1 — Targeted query model.** Owner: `implement-go`. **Interfaces:** `QueryWindow(ctx, id) (wm.Window, bool, error)` and normalized classification, floating, and stable SpaceID fields. Tests: decoding, differing index/ID, floating, missing and failed lookup. Depends on none.
-- [ ] **T2 — Topology-aware rules.** Owner: `implement-go`. **Interfaces:** add-only `Rules(ctx, profile, driver)`. Tests: laptop old rule set, desk catch-all rule, no bulk apply, unchanged populated BSP, desk-to-laptop handoff for pinned/flex-tail/stack apps and unplugged arrival. Depends on none.
-- [ ] **T3 — Immediate desk arrivals.** Owner: `implement-go`. **Interfaces:** ID event, display readiness, shared serialization, locks/guard before query, classifier/target, focus verification, conditional unfloat. Tests: quiet window, cascade overlap, contention, already-un-floated/manual-apply result, failed verification, stale ID, and geometry. Depends on T1 and T2.
-- [ ] **T4 — Startup recovery.** Owner: `implement-go`. **Interfaces:** reuse T3 policy after full `WakeRoutine` cascade. Tests: eligible floating windows not on reclaimed slots in desk mode and unchanged full-reclamation behavior. Depends on T3.
+- [x] **T1 — Targeted query model.** Add and normalize classification fields in `wm.QueryWindow`; resolve stable SpaceIDs from yabai spaces. Add raw decode, normalized index-to-ID, floating-state, missing-ID, and query-error tests.
+- [x] **T2 — Topology-aware rules.** Install add-only topology-specific rule sets and hand off desk arrivals before laptop convergence. Test laptop pinned, flex-tail and stack apps, unplug handoff, and unchanged populated BSP state.
+- [x] **T3 — Immediate desk arrivals.** Queue positive IDs, wait for quiet and shared cascade serialization, acquire command locks and guard before the authoritative query, and place after re-query. Test quiet window, cascade serialization, lock release and expiry, stale and already-tiled windows, failed verification, and no geometry changes.
+- [x] **T4 — Startup recovery.** Recover unclaimed floating tile candidates after startup reclamation, excluding windows on reclaimed slots. Test startup recovery and normal reclamation.
 
 T1–T4 are implementation slices of one coherent feature and MUST land together in one PR. None is independently shippable.
+
+## Implementation coverage
+
+- T1: `TestQueryWindow` covers classification, differing index/SpaceID, missing IDs, query failures, and cancellation. `TestNormalizeWindows` covers raw decoding and floating-state normalization.
+- T2: `TestRules` covers laptop rules, 1Password exclusion, desk manage-off rules, and unchanged populated BSP state. `TestRulesAddOnly` records real driver commands. `TestLaptopArrivalConvergence` covers pinned, flex-tail, and stack-app placement. `TestRunDisplayCascadeHandoff` proves laptop rules precede handoff, which precedes pinned convergence.
+- T3: `TestHubWindowCreated` covers display quiet, cascade completion, and worker survival after errors. `TestRunArrivalWaitsInsideWakeRules` covers shared wake serialization. `TestHandleWindowCreatedWaits` covers lock release without events, manual apply satisfying the arrival, crashed-guard expiry, and bounded waits. `TestHandleWindowCreatedRechecksReadiness` covers display work appearing during a wait. `TestWindowPlacement` covers classification, stale IDs, already-tiled no-ops, laptop targeting, failed verification, and unchanged existing geometry.
+- T4: `TestRecoverDeskWindows` runs full reclamation before recovery and proves reclaimed slot owners and heuristic floats stay excluded.
+
+The verify/unfloat gap remains best-effort. Tests use fake window managers and a recording yabai subprocess; no live desktop smoke is implied.
+

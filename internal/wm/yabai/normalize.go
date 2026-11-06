@@ -11,8 +11,14 @@ type RawYabaiWindow struct {
 	ID             int          `json:"id"`
 	App            string       `json:"app"`
 	Title          string       `json:"title"`
+	Role           string       `json:"role"`
+	Subrole        string       `json:"subrole"`
+	Root           bool         `json:"root-window"`
 	Display        int          `json:"display"`
 	Space          int          `json:"space"`
+	Level          int          `json:"level"`
+	CanMove        bool         `json:"can-move"`
+	CanResize      bool         `json:"can-resize"`
 	HasAXReference bool         `json:"has-ax-reference"`
 	IsMinimized    bool         `json:"is-minimized"`
 	IsFloating     bool         `json:"is-floating"`
@@ -52,10 +58,12 @@ func NormalizeWindow(raw RawYabaiWindow, spaceIDByIndex map[int]wm.SpaceID) (wm.
 		return wm.Window{}, fmt.Errorf("window %d references unknown space index %d", raw.ID, raw.Space)
 	}
 	return wm.Window{
-		ID: raw.ID, App: raw.App, Title: raw.Title, DisplayIdx: raw.Display,
-		SpaceID: spaceID, Minimized: raw.IsMinimized, Floating: raw.IsFloating,
-		Sticky: raw.IsSticky, Visible: raw.IsVisible, SplitType: raw.SplitType,
-		Frame: raw.Frame,
+		ID: raw.ID, App: raw.App, Title: raw.Title,
+		Role: raw.Role, Subrole: raw.Subrole, Root: raw.Root, Level: raw.Level,
+		CanMove: raw.CanMove, CanResize: raw.CanResize,
+		DisplayIdx: raw.Display, SpaceID: spaceID,
+		Minimized: raw.IsMinimized, Floating: raw.IsFloating, Sticky: raw.IsSticky,
+		Visible: raw.IsVisible, SplitType: raw.SplitType, Frame: raw.Frame,
 	}, nil
 }
 

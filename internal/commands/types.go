@@ -2,7 +2,11 @@
 package commands
 
 import (
+	"context"
+	"errors"
 	"io"
+	"sync"
+	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/config"
 	"github.com/mattwilkinsonn/tessera/internal/effects"
@@ -10,11 +14,80 @@ import (
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 )
 
-// Env contains the injectable filesystem and output effects used by commands.
+// Env contains the injectable filesystem, output, and daemon topology state used by commands.
 type Env struct {
-	Paths  effects.Paths
-	Nudge  effects.Nudger
-	Stderr io.Writer
+	Paths        effects.Paths
+	Nudge        effects.Nudger
+	Stderr       io.Writer
+	Topology     *TopologyState
+	ArrivalReady func() bool
+}
+
+// ErrDisplayPending asks the daemon to retain an arrival until display work settles.
+var ErrDisplayPending = errors.New("display work pending")
+
+// TopologyState serializes arrivals with full wake and display cascades.
+type TopologyState struct {
+	mu               sync.Mutex
+	displayMu        sync.Mutex
+	previousDisplays int
+	previousKnown    bool
+}
+
+// SerializeCascade runs a full cascade in the same domain as arrivals.
+func (state *TopologyState) SerializeCascade(ctx context.Context, run func(context.Context) error) error {
+	if state == nil {
+		return run(ctx)
+	}
+	if err := state.lock(ctx); err != nil {
+		return err
+	}
+	defer state.mu.Unlock()
+	return run(ctx)
+}
+
+// SerializeArrival runs fn only if the caller's readiness check still passes under the lock.
+func (state *TopologyState) SerializeArrival(ctx context.Context, ready func() bool, fn func(context.Context) error) (bool, error) {
+	if state == nil {
+		if !ready() {
+			return false, nil
+		}
+		return true, fn(ctx)
+	}
+	if err := state.lock(ctx); err != nil {
+		return false, err
+	}
+	defer state.mu.Unlock()
+	if !ready() {
+		return false, nil
+	}
+	return true, fn(ctx)
+}
+
+// RecordDisplays reports whether a topology was previously known and updates it.
+func (state *TopologyState) RecordDisplays(count int) (previous int, known bool) {
+	if state == nil {
+		return 0, false
+	}
+	state.displayMu.Lock()
+	defer state.displayMu.Unlock()
+	previous, known = state.previousDisplays, state.previousKnown
+	state.previousDisplays = count
+	state.previousKnown = true
+	return previous, known
+}
+
+func (state *TopologyState) lock(ctx context.Context) error {
+	for !state.mu.TryLock() {
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
 }
 
 // Command is the sealed set of supported commands.

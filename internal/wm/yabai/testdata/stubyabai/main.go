@@ -29,6 +29,10 @@ func main() {
 }
 
 func serve(args []string) error {
+	if len(args) == 3 && args[0] == "-m" && args[1] == "rule" && args[2] == "--list" {
+		_, err := os.Stdout.WriteString("[]")
+		return err
+	}
 	if len(args) < 3 || args[0] != "-m" || args[1] != "query" {
 		return nil
 	}
@@ -42,6 +46,12 @@ func serve(args []string) error {
 		name = "TESS_YABAI_DISPLAYS"
 	default:
 		return fmt.Errorf("unsupported query: %s", strings.Join(args, " "))
+	}
+	if args[2] == "--windows" && len(args) == 5 && args[3] == "--window" && os.Getenv("TESS_YABAI_MISSING_WINDOW") == args[4] {
+		return errors.New("could not locate window")
+	}
+	if exitCode := os.Getenv("TESS_YABAI_WINDOWS_EXIT_CODE"); args[2] == "--windows" && exitCode != "" && exitCode != "0" {
+		return errors.New("windows query failed")
 	}
 	path := os.Getenv(name)
 	if path == "" {

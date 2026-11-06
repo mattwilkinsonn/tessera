@@ -11,7 +11,9 @@ import (
 
 	"gotest.tools/v3/assert"
 
+	"github.com/mattwilkinsonn/tessera/internal/commands"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
+	"github.com/mattwilkinsonn/tessera/internal/wm/fake"
 )
 
 type eventStreamFake struct {
@@ -298,6 +300,72 @@ func TestRunCancellation(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- run(ctx, Options{Wake: noWake}, ln, ln.Close) }()
 		synctest.Wait()
+		cancel()
+		assert.NilError(t, <-done)
+	})
+}
+
+type pausedRulesDriver struct {
+	*fake.Driver
+	entered chan struct{}
+	release chan struct{}
+	queried chan int
+	paused  bool
+}
+
+func (d *pausedRulesDriver) List(context.Context) ([]wm.Rule, error) { return nil, nil }
+func (d *pausedRulesDriver) Remove(context.Context, string) error    { return nil }
+func (d *pausedRulesDriver) Add(context.Context, wm.Rule) error {
+	if !d.paused {
+		d.paused = true
+		close(d.entered)
+		<-d.release
+	}
+	return nil
+}
+func (d *pausedRulesDriver) Apply(context.Context) error {
+	return errors.New("unexpected bulk rule apply")
+}
+func (d *pausedRulesDriver) QueryWindow(ctx context.Context, id int) (wm.Window, bool, error) {
+	d.queried <- id
+	return d.Driver.QueryWindow(ctx, id)
+}
+
+func TestRunArrivalWaitsInsideWakeRules(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		profile := testProfile(t)
+		profile.Desk = nil
+		driver := &pausedRulesDriver{Driver: fake.New(fake.Seed{
+			Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}},
+			Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 3}},
+		}), entered: make(chan struct{}), release: make(chan struct{}), queried: make(chan int, 1)}
+		env := daemonEnv(t)
+		env.Topology = &commands.TopologyState{}
+		ln := newPipeListener()
+		done := make(chan error, 1)
+		go func() {
+			done <- run(ctx, Options{
+				Topology: env.Topology,
+				Display:  DisplayWork(profile, driver, env), Flex: idle,
+				Wake: WakeRoutine(profile, driver, env, "/tmp/tess-placement-test.sock"),
+				WindowCreated: func(ctx context.Context, id int, ready func() bool) error {
+					arrivalEnv := env
+					arrivalEnv.ArrivalReady = ready
+					return commands.HandleWindowCreated(ctx, profile, driver, arrivalEnv, id)
+				},
+			}, ln, ln.Close)
+		}()
+		<-driver.entered
+		ln.send(t, "window_created 90")
+		synctest.Wait()
+		select {
+		case <-driver.queried:
+			t.Fatal("arrival queried while wake was inside Rules")
+		default:
+		}
+		close(driver.release)
+		assert.Equal(t, <-driver.queried, 90)
 		cancel()
 		assert.NilError(t, <-done)
 	})

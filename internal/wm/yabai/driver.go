@@ -39,6 +39,35 @@ func (d *Driver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
 	return NormalizeWindows(raw, spaces)
 }
 
+func (d *Driver) QueryWindow(ctx context.Context, id int) (wm.Window, bool, error) {
+	var raw RawYabaiWindow
+	stdout, stderr, exitCode, err := d.runOutput(ctx, QueryWindowArgs(id))
+	if err != nil {
+		return wm.Window{}, false, err
+	}
+	if exitCode != 0 {
+		if strings.Contains(stderr, "could not locate window") || strings.Contains(stderr, "could not retrieve window details") {
+			return wm.Window{}, false, nil
+		}
+		return wm.Window{}, false, fmt.Errorf("querying window %d (exit %d): %s", id, exitCode, strings.TrimSpace(stderr))
+	}
+	if len(bytes.TrimSpace(stdout)) == 0 || bytes.Equal(bytes.TrimSpace(stdout), []byte("null")) {
+		return wm.Window{}, false, nil
+	}
+	if err := json.Unmarshal(stdout, &raw); err != nil {
+		return wm.Window{}, false, fmt.Errorf("decoding window %d: %w", id, err)
+	}
+	if raw.ID != id || !raw.HasAXReference {
+		return wm.Window{}, false, nil
+	}
+	var spaces []RawYabaiSpace
+	if err := d.query(ctx, QuerySpacesArgs(), &spaces); err != nil {
+		return wm.Window{}, false, err
+	}
+	window, err := NormalizeWindow(raw, IndexToSpaceID(spaces))
+	return window, err == nil, err
+}
+
 func (d *Driver) QueryWindowsOnSpace(ctx context.Context, id wm.SpaceID) ([]wm.Window, error) {
 	index, found, err := d.resolveIndex(ctx, id)
 	if err != nil || !found {
@@ -371,6 +400,11 @@ func waitContext(ctx context.Context, duration time.Duration) error {
 }
 
 func (d *Driver) run(ctx context.Context, args []string) ([]byte, int, error) {
+	stdout, _, exitCode, err := d.runOutput(ctx, args)
+	return stdout, exitCode, err
+}
+
+func (d *Driver) runOutput(ctx context.Context, args []string) ([]byte, string, int, error) {
 	//nolint:gosec // The configured yabai executable and arguments are the CLI interface.
 	command := exec.CommandContext(ctx, d.path, args...)
 	// Bound Wait if a descendant keeps the output pipes open after yabai exits or is killed.
@@ -380,18 +414,18 @@ func (d *Driver) run(ctx context.Context, args []string) ([]byte, int, error) {
 	command.Stderr = &stderr
 	err := command.Run()
 	if err == nil {
-		return stdout.Bytes(), 0, nil
+		return stdout.Bytes(), stderr.String(), 0, nil
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return stdout.Bytes(), -1, fmt.Errorf("running yabai %s: %w", strings.Join(args, " "), ctxErr)
+		return stdout.Bytes(), stderr.String(), -1, fmt.Errorf("running yabai %s: %w", strings.Join(args, " "), ctxErr)
 	}
 	if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
-		return stdout.Bytes(), exitError.ExitCode(), nil
+		return stdout.Bytes(), stderr.String(), exitError.ExitCode(), nil
 	}
 	if message := strings.TrimSpace(stderr.String()); message != "" {
-		return stdout.Bytes(), -1, fmt.Errorf("running yabai %s: %s: %w", strings.Join(args, " "), message, err)
+		return stdout.Bytes(), stderr.String(), -1, fmt.Errorf("running yabai %s: %s: %w", strings.Join(args, " "), message, err)
 	}
-	return stdout.Bytes(), -1, fmt.Errorf("running yabai %s: %w", strings.Join(args, " "), err)
+	return stdout.Bytes(), stderr.String(), -1, fmt.Errorf("running yabai %s: %w", strings.Join(args, " "), err)
 }
 
 func (d *Driver) query(ctx context.Context, args []string, target any) error {

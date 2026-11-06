@@ -27,6 +27,12 @@ type SeedWindow struct {
 	ID         int
 	App        string
 	Title      string
+	Role       string
+	Subrole    string
+	Root       bool
+	Level      int
+	CanMove    bool
+	CanResize  bool
 	SpaceIndex int
 	Minimized  bool
 	Floating   bool
@@ -127,6 +133,12 @@ func New(seed Seed) *Driver {
 		}
 		d.windows = append(d.windows, wm.Window{
 			ID:         window.ID,
+			Role:       window.Role,
+			Subrole:    window.Subrole,
+			Root:       window.Root,
+			Level:      window.Level,
+			CanMove:    window.CanMove,
+			CanResize:  window.CanResize,
 			App:        window.App,
 			Title:      window.Title,
 			DisplayIdx: space.displayIdx,
@@ -196,6 +208,17 @@ func (d *Driver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
 		return nil, err
 	}
 	return slices.Clone(d.windows), nil
+}
+
+func (d *Driver) QueryWindow(ctx context.Context, id int) (wm.Window, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return wm.Window{}, false, err
+	}
+	window := d.windowByID(id)
+	if window == nil {
+		return wm.Window{}, false, nil
+	}
+	return *window, true, nil
 }
 
 func (d *Driver) QueryWindowsOnSpace(ctx context.Context, id wm.SpaceID) ([]wm.Window, error) {

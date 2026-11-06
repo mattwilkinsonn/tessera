@@ -93,6 +93,19 @@ func Laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 	return laptop(ctx, profile, driver, env, true)
 }
 
+func handoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
+	paths, _, _, err := normalizedEnv(ctx, env)
+	if err != nil {
+		return err
+	}
+	release, err := lockPlacement(ctx, paths)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return HandoffDeskWindows(ctx, profile, driver)
+}
+
 func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env, explicit bool) (LaptopResult, error) {
 	paths, nudge, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
