@@ -30,11 +30,11 @@ An arrival waits while display work is stamped but unsettled or its cascade is r
 
 One in-process mutex serializes arrivals with the full `WakeRoutine`/display cascade, including `DisplaySetup` and `Rules`, not just `Apply` or laptop command bodies. Keep pending IDs until the cascade completes. Test an arrival after a display event is stamped but before the quiet deadline, and another while wake is paused inside `Rules`.
 
-After display readiness, acquire the Apply and laptop locks in fixed order and wait out the signal guard before the authoritative window/topology query (`internal/commands/composite.go`, `internal/effects/effects.go`). On contention, retain IDs and use a context-aware bounded lock wait under `CascadeTimeout` (60 seconds; `internal/daemon/hub.go`). Check guard expiry on every wait tick and re-query after any wait. If the fresh query shows the window is already managed, or the layout has already moved and un-floated it, treat the arrival as satisfied. Test a manual apply that moves and un-floats a pending window before releasing its lock, manual lock release without a yabai event, and crashed-holder guard expiry. Stamp/release the signal guard around this handler so its own yabai events do not schedule another layout.
+After display readiness, acquire the Apply and laptop locks in fixed order and wait out the signal guard before the authoritative window/topology query (`internal/commands/composite.go`, `internal/effects/effects.go`). On contention, retain IDs and use a context-aware bounded lock wait under `CascadeTimeout` (60 seconds; `internal/daemon/hub.go`). Check guard expiry on every wait tick and re-query after any wait. If the fresh query shows the window is already un-floated, or the layout has already moved and un-floated it, treat the arrival as satisfied. Test a manual apply that moves and un-floats a pending window before releasing its lock, manual lock release without a yabai event, and crashed-holder guard expiry. Stamp/release the signal guard around this handler so its own yabai events do not schedule another layout.
 
 ### Classify and place arrivals
 
-Query only the event's window ID after locks and guard are acquired. Add role, subrole, root, level, movable, resizable, floating, and management state to the targeted query model (`internal/wm/types.go`, `internal/wm/yabai/normalize.go`). `QueryWindow` may query spaces too: yabai serializes `space` as a Mission Control index, not stable SpaceID: `int space = space_manager_mission_control_index(sid);` (`window_serialize`, yabai `src/window.c`). `NormalizeWindow` needs an index-to-SpaceID mapping. Test with an index that differs from SpaceID.
+Query only the event's window ID after locks and guard are acquired. Add role, subrole, root, level, movable, resizable, and floating to the targeted query model. yabai serializes `is-floating` but no managed flag (`WINDOW_PROPERTY_LIST`, `src/window.h`), so tess never derives one (`internal/wm/types.go`, `internal/wm/yabai/normalize.go`). `QueryWindow` may query spaces too: yabai serializes `space` as a Mission Control index, not stable SpaceID: `int space = space_manager_mission_control_index(sid);` (`window_serialize`, yabai `src/window.c`). `NormalizeWindow` needs an index-to-SpaceID mapping. Test with an index that differs from SpaceID.
 
 Mirror yabai's creation heuristic (`window_manager_create_and_add_window`, `src/window_manager.c`). A tile candidate is a root `AXWindow` / `AXStandardWindow` at normal level, movable, non-sticky, and not both fixed-size and undersized. Yabai's predicate is `(!window_can_resize(window) && window_is_undersized(window))`; `window_is_undersized` returns true when width or height is `<= 500.0f` (`src/window_manager.c`, `src/window.c`). AXUnknown remains out of scope under RIG-8327. Exceptions and heuristic floats stay at their opening location.
 
@@ -65,9 +65,9 @@ If the daemon is down, windows remain where the app opened them until recovery. 
 
 ### T1 — Add a targeted yabai window query model
 
-Extend and normalize classification fields while preserving layout queries. Query spaces to translate the serialized Mission Control index to stable SpaceID. Test raw decoding, normalization, differing index/ID, floating/managed state, missing ID, and query errors.
+Extend and normalize classification fields while preserving layout queries. Query spaces to translate the serialized Mission Control index to stable SpaceID. Test raw decoding, normalization, differing index/ID, floating state, missing ID, and query errors.
 
-**Interfaces:** `QueryWindow(ctx context.Context, id int) (wm.Window, bool, error)`; add `Role`, `Subrole`, `Root`, `Level`, `CanMove`, `CanResize`, `Floating`, and management state to the query model; resolve SpaceID from a fresh spaces mapping.
+**Interfaces:** `QueryWindow(ctx context.Context, id int) (wm.Window, bool, error)`; add `Role`, `Subrole`, `Root`, `Level`, `CanMove`, `CanResize`, and `Floating` to the query model; resolve SpaceID from a fresh spaces mapping.
 
 ### T2 — Make rule installation topology-aware and add-only
 
@@ -77,7 +77,7 @@ With multiple displays, install catch-all manage-off and no destination effects.
 
 ### T3 — Add immediate placement with readiness, locking, and focus verification
 
-Parse ID-bearing arrivals. Wait for display quiet and cascade completion; serialize with cascades; acquire locks and guard before the authoritative query; re-query after any wait; then classify, target, move, focus, verify, and conditionally unfloat. Test quiet-window and in-Rules arrivals, manual lock release, guard expiry, an already-managed arrival, manual apply moving and un-floating a pending window, failed verification, and a laptop-stack target with populated G9 geometry.
+Parse ID-bearing arrivals. Wait for display quiet and cascade completion; serialize with cascades; acquire locks and guard before the authoritative query; re-query after any wait; then classify, target, move, focus, verify, and conditionally unfloat. Test quiet-window and in-Rules arrivals, manual lock release, guard expiry, an already-un-floated arrival, manual apply moving and un-floating a pending window, failed verification, and a laptop-stack target with populated G9 geometry.
 
 **Interfaces:** `window_created <positive-id>`; classifier and target resolver; pending IDs; shared serialization; bounded lock/guard wait; `MoveWindowToSpace`, `FocusWindow`, active-space query, and conditional `ToggleFloat`. Other socket events remain one-token lines. No flex debounce.
 
@@ -99,9 +99,9 @@ Keep full startup/wake reclamation unchanged. After it completes, classify eligi
 
 ## Tasks
 
-- [ ] **T1 — Targeted query model.** Owner: `implement-go`. **Interfaces:** `QueryWindow(ctx, id) (wm.Window, bool, error)` and normalized classification, floating, management, and stable SpaceID fields. Tests: decoding, differing index/ID, managed/floating, missing and failed lookup. Depends on none.
+- [ ] **T1 — Targeted query model.** Owner: `implement-go`. **Interfaces:** `QueryWindow(ctx, id) (wm.Window, bool, error)` and normalized classification, floating, and stable SpaceID fields. Tests: decoding, differing index/ID, floating, missing and failed lookup. Depends on none.
 - [ ] **T2 — Topology-aware rules.** Owner: `implement-go`. **Interfaces:** add-only `Rules(ctx, profile, driver)`. Tests: laptop old rule set, desk catch-all rule, no bulk apply, unchanged populated BSP, desk-to-laptop handoff for pinned/flex-tail/stack apps and unplugged arrival. Depends on none.
-- [ ] **T3 — Immediate desk arrivals.** Owner: `implement-go`. **Interfaces:** ID event, display readiness, shared serialization, locks/guard before query, classifier/target, focus verification, conditional unfloat. Tests: quiet window, cascade overlap, contention, already-managed/manual-apply result, failed verification, stale ID, and geometry. Depends on T1 and T2.
+- [ ] **T3 — Immediate desk arrivals.** Owner: `implement-go`. **Interfaces:** ID event, display readiness, shared serialization, locks/guard before query, classifier/target, focus verification, conditional unfloat. Tests: quiet window, cascade overlap, contention, already-un-floated/manual-apply result, failed verification, stale ID, and geometry. Depends on T1 and T2.
 - [ ] **T4 — Startup recovery.** Owner: `implement-go`. **Interfaces:** reuse T3 policy after full `WakeRoutine` cascade. Tests: eligible floating windows not on reclaimed slots in desk mode and unchanged full-reclamation behavior. Depends on T3.
 
 T1–T4 are implementation slices of one coherent feature and MUST land together in one PR. None is independently shippable.
