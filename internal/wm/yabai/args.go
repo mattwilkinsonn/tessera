@@ -10,13 +10,13 @@ import (
 )
 
 type RuleAdd struct {
-	Label   string
-	App     string
-	Title   string
-	Subrole string
-	Display *int
-	Space   *int
-	Manage  *bool
+	Label      string
+	App        string
+	ExcludeApp string
+	Subrole    string
+	Display    *int
+	Space      *int
+	Manage     *bool
 }
 
 type BspStep struct {
@@ -141,9 +141,8 @@ func RuleAddArgs(rule RuleAdd) []string {
 	args := []string{"-m", ruleMode, "--add", "label=" + rule.Label}
 	if rule.App != "" {
 		args = append(args, "app="+rule.App)
-	}
-	if rule.Title != "" {
-		args = append(args, "title="+rule.Title)
+	} else if rule.ExcludeApp != "" {
+		args = append(args, "app!="+rule.ExcludeApp)
 	}
 	if rule.Subrole != "" {
 		args = append(args, "subrole="+rule.Subrole)

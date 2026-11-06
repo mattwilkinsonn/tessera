@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/mattwilkinsonn/tessera/internal/wm"
@@ -92,7 +91,7 @@ func TestYabaiArgs(t *testing.T) {
 		{name: "add display rule", got: RuleAddArgs(RuleAdd{Label: "auto:code", App: "^Code$", Display: &display}), want: []string{"-m", "rule", "--add", "label=auto:code", "app=^Code$", "display=1"}},
 		{name: "add space rule", got: RuleAddArgs(RuleAdd{Label: "auto:default", App: "^.*$", Space: &space}), want: []string{"-m", "rule", "--add", "label=auto:default", "app=^.*$", "space=2"}},
 		{name: "add manage rule", got: RuleAddArgs(RuleAdd{Label: "auto:akiflow-dialog", App: "^Akiflow$", Subrole: "AXDialog", Manage: &manage}), want: []string{"-m", "rule", "--add", "label=auto:akiflow-dialog", "app=^Akiflow$", "subrole=AXDialog", "manage=off"}},
-		{name: "add title rule", got: RuleAddArgs(RuleAdd{Label: "auto:1password-dialog", App: "^1Password$", Title: "^1Password$", Manage: &manage}), want: []string{"-m", "rule", "--add", "label=auto:1password-dialog", "app=^1Password$", "title=^1Password$", "manage=off"}},
+		{name: "add app exclusion rule", got: RuleAddArgs(RuleAdd{Label: "auto:manage-standard", ExcludeApp: "^1Password$", Subrole: "AXStandardWindow", Manage: &manageOn}), want: []string{"-m", "rule", "--add", "label=auto:manage-standard", "app!=^1Password$", "subrole=AXStandardWindow", "manage=on"}},
 		{name: "add standard-window manage rule", got: RuleAddArgs(RuleAdd{Label: "auto:manage-standard", App: "^.*$", Subrole: "AXStandardWindow", Manage: &manageOn}), want: []string{"-m", "rule", "--add", "label=auto:manage-standard", "app=^.*$", "subrole=AXStandardWindow", "manage=on"}},
 		{name: "apply rules", got: RuleApplyArgs(), want: []string{"-m", "rule", "--apply"}},
 		{name: "add labelled signal", got: SignalAddArgs(wm.EventDisplayAdded, "tessera-display_added", "echo display_added | nc -U /tmp/tessera-daemon.sock"), want: []string{"-m", "signal", "--add", "event=display_added", "label=tessera-display_added", "action=echo display_added | nc -U /tmp/tessera-daemon.sock"}},
@@ -306,43 +305,33 @@ func TestRecordingStub(t *testing.T) {
 	golden.Assert(t, string(args), "stub-query-windows.golden")
 }
 
-func TestDriverAddRuleTitle(t *testing.T) {
+func TestDriverAddRuleExcludeApp(t *testing.T) {
 	driver := New(os.Getenv("TESS_YABAI"))
-	tests := []struct {
-		name string
-		rule wm.Rule
-		want string
-	}{
-		{
-			name: "with title",
-			rule: wm.Rule{
-				Label:  "auto:1password-dialog",
-				App:    "^1Password$",
-				Title:  "^1Password$",
-				Manage: new(false),
-			},
-			want: "-m\nrule\n--add\nlabel=auto:1password-dialog\napp=^1Password$\ntitle=^1Password$\nmanage=off\n\n",
-		},
-		{
-			name: "without title",
-			rule: wm.Rule{Label: "auto:code", App: "^Code$"},
-			want: "-m\nrule\n--add\nlabel=auto:code\napp=^Code$\n\n",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			log := filepath.Join(t.TempDir(), "argv.log")
-			t.Setenv("TESS_YABAI_LOG", log)
-			t.Setenv("TESS_YABAI_EXIT_CODE", "0")
-			assert.NilError(t, driver.Add(t.Context(), test.rule))
-			got, err := os.ReadFile(log)
-			assert.NilError(t, err)
-			assert.Equal(t, string(got), test.want)
-			if test.rule.Title == "" {
-				assert.Assert(t, !strings.Contains(string(got), "title="))
-			}
-		})
-	}
+	log := filepath.Join(t.TempDir(), "argv.log")
+	t.Setenv("TESS_YABAI_LOG", log)
+	t.Setenv("TESS_YABAI_EXIT_CODE", "0")
+
+	err := driver.Add(t.Context(), wm.Rule{
+		Label: "auto:manage-standard", ExcludeApp: "^1Password$", Subrole: "AXStandardWindow",
+		Manage: new(true),
+	})
+	assert.NilError(t, err)
+	got, err := os.ReadFile(log)
+	assert.NilError(t, err)
+	want := `-m
+rule
+--add
+label=auto:manage-standard
+app!=^1Password$
+subrole=AXStandardWindow
+manage=on
+
+`
+	assert.Equal(t, string(got), want)
+
+	assert.ErrorContains(t, driver.Add(t.Context(), wm.Rule{
+		Label: "auto:invalid", App: "^.*$", ExcludeApp: "^1Password$",
+	}), "rule cannot set both app and excludeApp")
 }
 
 func TestArgvCorpus(t *testing.T) {
@@ -363,9 +352,8 @@ func TestArgvCorpus(t *testing.T) {
 		RuleListArgs(), RuleRemoveArgs("auto:code"), RuleAddArgs(RuleAdd{Label: "auto:code", App: "^Code$"}),
 		RuleAddArgs(RuleAdd{Label: "auto:code", App: "^Code$", Display: new(1)}),
 		RuleAddArgs(RuleAdd{Label: "auto:default", App: "^.*$", Space: new(2)}),
-		RuleAddArgs(RuleAdd{Label: "auto:manage-standard", App: "^.*$", Subrole: "AXStandardWindow", Manage: new(true)}),
+		RuleAddArgs(RuleAdd{Label: "auto:manage-standard", ExcludeApp: "^1Password$", Subrole: "AXStandardWindow", Manage: new(true)}),
 		RuleAddArgs(RuleAdd{Label: "auto:akiflow-dialog", App: "^Akiflow$", Subrole: "AXDialog", Manage: new(false)}),
-		RuleAddArgs(RuleAdd{Label: "auto:1password-dialog", App: "^1Password$", Title: "^1Password$", Manage: new(false)}),
 		RuleApplyArgs(), SignalAddArgs(wm.EventDisplayAdded, "tessera-display_added", "echo display_added | nc -U /tmp/tessera-daemon.sock"),
 	}
 	log := filepath.Join(t.TempDir(), "argv.log")

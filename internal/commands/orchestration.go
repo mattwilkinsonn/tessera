@@ -83,7 +83,8 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 		}
 	}
 	on := true
-	if err := ops.Add(ctx, wm.Rule{Label: "auto:manage-standard", App: "^.*$", Subrole: standard, Manage: &on}); err != nil {
+	// Yabai floats 1Password's fixed-size standard dialog by itself, so leave 1Password to its defaults.
+	if err := ops.Add(ctx, wm.Rule{Label: "auto:manage-standard", ExcludeApp: "^1Password$", Subrole: standard, Manage: &on}); err != nil {
 		return err
 	}
 	manage := false
@@ -95,10 +96,6 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 	}
 	// Fixed-size settings panes break a tiled layout; yabai floats them unless forced.
 	if err := ops.Add(ctx, wm.Rule{Label: "auto:system-settings", App: "^System Settings$", Manage: &manage}); err != nil {
-		return err
-	}
-	// The dialog is a standard window; tiling it reshuffles the layout.
-	if err := ops.Add(ctx, wm.Rule{Label: "auto:1password-dialog", App: "^1Password$", Title: "^1Password$", Manage: &manage}); err != nil {
 		return err
 	}
 	return ops.Apply(ctx)
