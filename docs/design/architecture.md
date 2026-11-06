@@ -87,6 +87,15 @@ flowchart LR
  DRV -.tests.-> FAKE[FakeDriver in-memory world]
 ```
 
+
+In desk mode, yabai applies add-only `manage=off` rules for new arrivals without
+changing existing windows. The resident daemon receives each window ID, waits
+for display quiet, then serializes targeted placement with display and wake
+cascades. Eligible floating tile-type windows move to the laptop home stack
+and are un-floated only if focus verifies the target space. On desk-to-laptop
+transitions, Tessera hands off surviving floating arrivals before laptop
+convergence. Startup recovers floating candidates not owned by reclaimed desk
+slots. Laptop-only arrival rules and flex convergence remain unchanged.
 The app is a single CLI binary, working name **`tess`**, whose subcommands map
 1:1 onto the original scripts (`tess apply` ≙ apply-workspace.sh, `tess laptop`
 ≙ laptop-layout.sh, `tess focus-slot N` ≙ focus-slot.sh, …). skhd and yabai

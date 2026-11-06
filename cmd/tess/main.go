@@ -66,7 +66,8 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 				return daemon.Options{}, err
 			}
 			driver := b.Driver
-			env := commands.Env{Paths: paths, Nudge: b.Nudge, Stderr: stderr}
+			topology := &commands.TopologyState{}
+			env := commands.Env{Paths: paths, Nudge: b.Nudge, Stderr: stderr, Topology: topology}
 			return daemon.Options{
 				Socket:    paths.DaemonSocket,
 				Bootstrap: b.Bootstrap && !command.NoBootstrap,
@@ -77,7 +78,13 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 				Flex:      daemon.FlexWork(profile, driver, env),
 				WakeReady: daemon.StartupReadiness(driver),
 				Wake:      daemon.WakeRoutine(profile, driver, env, paths.DaemonSocket),
-				Nudge:     b.Nudge,
+				WindowCreated: func(ctx context.Context, id int, ready func() bool) error {
+					arrivalEnv := env
+					arrivalEnv.ArrivalReady = ready
+					return commands.HandleWindowCreated(ctx, profile, driver, arrivalEnv, id)
+				},
+				Topology: topology,
+				Nudge:    b.Nudge,
 			}, nil
 		},
 	}

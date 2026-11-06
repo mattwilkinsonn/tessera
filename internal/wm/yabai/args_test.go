@@ -216,6 +216,13 @@ func TestNormalizeWindows(t *testing.T) {
 		assert.Equal(t, window.DisplayIdx, 1)
 		assert.Equal(t, window.Title, "pc | π ! model-evals")
 	})
+	t.Run("decodes and normalizes placement classification", func(t *testing.T) {
+		var raw RawYabaiWindow
+		assert.NilError(t, json.Unmarshal([]byte(`{"id":1,"app":"Arc","role":"AXWindow","subrole":"AXStandardWindow","root-window":true,"level":0,"can-move":true,"can-resize":false,"is-floating":true,"space":1}`), &raw))
+		window, err := NormalizeWindow(raw, map[int]wm.SpaceID{1: "47"})
+		assert.NilError(t, err)
+		assert.DeepEqual(t, window, wm.Window{ID: 1, App: "Arc", Role: "AXWindow", Subrole: "AXStandardWindow", Root: true, Level: 0, CanMove: true, CanResize: false, SpaceID: "47", Floating: true})
+	})
 	t.Run("Ghostty flags and frame normalize to camelCase", func(t *testing.T) {
 		window := windowWithID(t, windows, 2383)
 		assert.Equal(t, window.Minimized, false)

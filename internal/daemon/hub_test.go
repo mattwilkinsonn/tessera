@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -221,6 +222,62 @@ func TestHubFlexWaiter(t *testing.T) {
 	})
 }
 
+func TestHubWindowCreated(t *testing.T) {
+	t.Run("waits for display quiet and cascade completion", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			entered, release := make(chan struct{}), make(chan struct{})
+			arrived := make(chan int, 1)
+			h := NewHub(func(context.Context) (Step, error) {
+				close(entered)
+				<-release
+				return Settled, nil
+			}, idle, WithWindowCreated(&commands.TopologyState{}, func(_ context.Context, id int, _ func() bool) error {
+				arrived <- id
+				return nil
+			}))
+			h.Notify(ctx, string(wm.EventDisplayRemoved))
+			h.NotifyWindowCreated(ctx, 90)
+			synctest.Wait()
+			select {
+			case <-arrived:
+				t.Fatal("arrival ran before display quiet")
+			default:
+			}
+			<-entered
+			synctest.Wait()
+			select {
+			case <-arrived:
+				t.Fatal("arrival ran during cascade")
+			default:
+			}
+			close(release)
+			assert.Equal(t, <-arrived, 90)
+			stopHub(cancel, h)
+		})
+	})
+	t.Run("handler error does not kill worker", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			calls := 0
+			arrived := make(chan int, 2)
+			h := NewHub(idle, idle, WithWindowCreated(&commands.TopologyState{}, func(_ context.Context, id int, _ func() bool) error {
+				calls++
+				if calls == 1 {
+					return errors.New("temporary query failure")
+				}
+				arrived <- id
+				return nil
+			}))
+			h.NotifyWindowCreated(ctx, 90)
+			synctest.Wait()
+			h.NotifyWindowCreated(ctx, 91)
+			assert.Equal(t, <-arrived, 91)
+			stopHub(cancel, h)
+		})
+	})
+}
+
 func testProfile(t *testing.T) *config.Profile {
 	t.Helper()
 	profile := configtest.Profile()
@@ -265,4 +322,94 @@ func hasLapSpace(t *testing.T, driver *fake.Driver) bool {
 		}
 	}
 	return false
+}
+
+type pausedArrivalQueryDriver struct {
+	*fake.Driver
+	stage     string
+	once      sync.Once
+	entered   chan struct{}
+	release   chan struct{}
+	placed    chan struct{}
+	mutations atomic.Int32
+}
+
+func (d *pausedArrivalQueryDriver) QueryWindow(ctx context.Context, id int) (wm.Window, bool, error) {
+	if err := d.pause(ctx, "window"); err != nil {
+		return wm.Window{}, false, err
+	}
+	return d.Driver.QueryWindow(ctx, id)
+}
+
+func (d *pausedArrivalQueryDriver) QueryDisplays(ctx context.Context) ([]wm.Display, error) {
+	if err := d.pause(ctx, "displays"); err != nil {
+		return nil, err
+	}
+	return d.Driver.QueryDisplays(ctx)
+}
+
+func (d *pausedArrivalQueryDriver) MoveWindowToSpace(ctx context.Context, id int, space wm.SpaceID) error {
+	d.mutations.Add(1)
+	return d.Driver.MoveWindowToSpace(ctx, id, space)
+}
+
+func (d *pausedArrivalQueryDriver) ToggleFloat(ctx context.Context, id int) error {
+	if err := d.Driver.ToggleFloat(ctx, id); err != nil {
+		return err
+	}
+	close(d.placed)
+	return nil
+}
+func (d *pausedArrivalQueryDriver) pause(ctx context.Context, stage string) error {
+	if stage != d.stage {
+		return nil
+	}
+	var err error
+	d.once.Do(func() {
+		close(d.entered)
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-d.release:
+		}
+	})
+	return err
+}
+
+func TestHubArrivalDefersDisplayEventDuringQuery(t *testing.T) {
+	for _, stage := range []string{"window", "displays"} {
+		t.Run(stage, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				driver := &pausedArrivalQueryDriver{Driver: fake.New(fake.Seed{
+					Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}},
+					Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 3}},
+					Windows:  []fake.SeedWindow{{ID: 90, App: "Code", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Floating: true}},
+				}), stage: stage, entered: make(chan struct{}), release: make(chan struct{}), placed: make(chan struct{})}
+				cascadeEntered, cascadeRelease := make(chan struct{}), make(chan struct{})
+				env := daemonEnv(t)
+				h := NewHub(func(context.Context) (Step, error) {
+					close(cascadeEntered)
+					<-cascadeRelease
+					return Settled, nil
+				}, idle, WithWindowCreated(&commands.TopologyState{}, func(ctx context.Context, id int, ready func() bool) error {
+					arrivalEnv := env
+					arrivalEnv.ArrivalReady = ready
+					return commands.HandleWindowCreated(ctx, testProfile(t), driver, arrivalEnv, id)
+				}))
+				h.NotifyWindowCreated(ctx, 90)
+				<-driver.entered
+				h.Notify(ctx, string(wm.EventDisplayMoved))
+				close(driver.release)
+				<-cascadeEntered
+				if driver.mutations.Load() != 0 {
+					t.Fatal("arrival mutated before display cascade completed")
+				}
+				close(cascadeRelease)
+				<-driver.placed
+				stopHub(cancel, h)
+			})
+		})
+	}
 }

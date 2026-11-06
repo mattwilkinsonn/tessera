@@ -23,7 +23,7 @@ func TestRegisterSignals(t *testing.T) {
 				{wm.EventDisplayMoved, "tessera-display_moved", "echo display_moved | /usr/bin/nc -U -w 1 '/tmp/tessera-daemon.sock'"},
 				{wm.EventApplicationLaunched, "tessera-application_launched", "echo application_launched | /usr/bin/nc -U -w 1 '/tmp/tessera-daemon.sock'"},
 				{wm.EventApplicationTerminated, "tessera-application_terminated", "echo application_terminated | /usr/bin/nc -U -w 1 '/tmp/tessera-daemon.sock'"},
-				{wm.EventWindowCreated, "tessera-window_created", "echo window_created | /usr/bin/nc -U -w 1 '/tmp/tessera-daemon.sock'"},
+				{wm.EventWindowCreated, "tessera-window_created", `id="$YABAI_WINDOW_ID"; printf 'window_created %s\n' "$id" | /usr/bin/nc -U -w 1 '/tmp/tessera-daemon.sock'`},
 				{wm.EventWindowDestroyed, "tessera-window_destroyed", "echo window_destroyed | /usr/bin/nc -U -w 1 '/tmp/tessera-daemon.sock'"},
 				{wm.EventSpaceChanged, "tessera-space_changed", "/opt/homebrew/bin/sketchybar --trigger yabai_spaces_changed"},
 				{wm.EventDisplayChanged, "tessera-display_changed", "/opt/homebrew/bin/sketchybar --trigger yabai_spaces_changed"},

@@ -77,6 +77,12 @@ type Window struct {
 	ID         int
 	App        string
 	Title      string
+	Role       string
+	Subrole    string
+	Root       bool
+	Level      int
+	CanMove    bool
+	CanResize  bool
 	DisplayIdx int
 	SpaceID    SpaceID
 	Minimized  bool
@@ -154,6 +160,7 @@ const (
 
 type QueryOps interface {
 	QueryWindows(ctx context.Context) ([]Window, error)
+	QueryWindow(ctx context.Context, id int) (Window, bool, error)
 	QueryWindowsOnSpace(ctx context.Context, id SpaceID) ([]Window, error)
 	QuerySpaces(ctx context.Context) ([]Space, error)
 	QueryDisplays(ctx context.Context) ([]Display, error)

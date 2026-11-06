@@ -3,22 +3,23 @@ package commands
 import (
 	"context"
 	"errors"
-	"io"
-	"net"
-	"os"
-	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
-	"testing"
-	"time"
-
 	"github.com/mattwilkinsonn/tessera/internal/config"
 	"github.com/mattwilkinsonn/tessera/internal/config/configtest"
 	"github.com/mattwilkinsonn/tessera/internal/effects"
 	"github.com/mattwilkinsonn/tessera/internal/engine"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 	"github.com/mattwilkinsonn/tessera/internal/wm/fake"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
 )
 
 func testProfile(t *testing.T) *config.Profile {
@@ -637,9 +638,221 @@ func testLaptopSkipsWhenMonitorAttached(t *testing.T) {
 	}
 }
 
-func TestRules(t *testing.T) {
-	t.Run("preserves standard-window management before floating exceptions", func(t *testing.T) {
+func TestIsTileCandidate(t *testing.T) {
+	base := wm.Window{Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true}
+	if !IsTileCandidate(base) {
+		t.Fatal("standard root window was not a tile candidate")
+	}
+	cases := []struct {
+		name   string
+		window wm.Window
+	}{
+		{name: "not root", window: func() wm.Window { w := base; w.Root = false; return w }()},
+		{name: "dialog", window: func() wm.Window { w := base; w.Subrole = "AXDialog"; return w }()},
+		{name: "immovable", window: func() wm.Window { w := base; w.CanMove = false; return w }()},
+		{name: "sticky", window: func() wm.Window { w := base; w.Sticky = true; return w }()},
+		{name: "non-normal level", window: func() wm.Window { w := base; w.Level = 101; return w }()},
+		{name: "unknown role", window: func() wm.Window { w := base; w.Role = "AXUnknown"; return w }()},
+		{name: "fixed width at threshold", window: func() wm.Window { w := base; w.CanResize = false; w.Frame = wm.Frame{W: 500, H: 501}; return w }()},
+		{name: "fixed height at threshold", window: func() wm.Window { w := base; w.CanResize = false; w.Frame = wm.Frame{W: 501, H: 500}; return w }()},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if IsTileCandidate(test.window) {
+				t.Fatal("exception classified as tile candidate")
+			}
+		})
+	}
+	base.CanResize = false
+	base.Frame = wm.Frame{W: 501, H: 501}
+	if !IsTileCandidate(base) {
+		t.Fatal("large fixed-size standard window was not a tile candidate")
+	}
+}
+
+func TestWindowPlacement(t *testing.T) {
+
+	t.Run("desk arrival moves and unfloats only after focus verifies target", func(t *testing.T) {
 		driver := deskWorld()
+		env := commandEnv(t)
+		before, err := driver.QueryWindows(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		window := wm.Window{ID: 90, Role: "AXWindow", Subrole: "AXStandardWindow", Root: true, CanMove: true, CanResize: true, Floating: true, SpaceID: "1", Frame: wm.Frame{W: 800, H: 600}}
+		arrival := newPlacementDriver(driver, window)
+		if err := HandleWindowCreated(t.Context(), testProfile(t), arrival, env, 90); err != nil {
+			t.Fatal(err)
+		}
+		got, found, err := arrival.QueryWindow(t.Context(), 90)
+		if err != nil || !found || got.SpaceID != "3" || got.Floating {
+			t.Fatalf("placed window = %+v, found %t, err %v; want space 3 tiled", got, found, err)
+		}
+		if arrival.moves != 1 || arrival.focuses != 1 || arrival.toggles != 1 {
+			t.Fatalf("move/focus/toggle = %d/%d/%d; want 1/1/1", arrival.moves, arrival.focuses, arrival.toggles)
+		}
+		if !slices.Equal(arrival.operations, []string{"move", "focus", "active-space", "toggle"}) {
+			t.Fatalf("placement order = %v", arrival.operations)
+		}
+		after, err := driver.QueryWindows(t.Context())
+		if err != nil || !reflect.DeepEqual(before, after) {
+			t.Fatalf("arrival changed existing BSP windows: %v", err)
+		}
+	})
+
+	t.Run("failed active-space verification leaves moved arrival floating", func(t *testing.T) {
+		driver := deskWorld()
+		env := commandEnv(t)
+		arrival := newPlacementDriver(driver, wm.Window{ID: 91, Role: "AXWindow", Subrole: "AXStandardWindow", Root: true, CanMove: true, CanResize: true, Floating: true, SpaceID: "1", Frame: wm.Frame{W: 800, H: 600}})
+		before, err := driver.QueryWindows(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		arrival.focusSpace = "1"
+		if err := HandleWindowCreated(t.Context(), testProfile(t), arrival, env, 91); err != nil {
+			t.Fatal(err)
+		}
+		if arrival.moves != 1 || arrival.toggles != 0 {
+			t.Fatalf("move/toggle = %d/%d; want moved, not unfloated", arrival.moves, arrival.toggles)
+		}
+		got, found, err := arrival.QueryWindow(t.Context(), 91)
+		if err != nil || !found || got.SpaceID != "3" || !got.Floating {
+			t.Fatalf("failed verification state = %+v, %t, %v; want floating at laptop target", got, found, err)
+		}
+		after, err := driver.QueryWindows(t.Context())
+		if err != nil || !reflect.DeepEqual(before, after) {
+			t.Fatalf("failed verification changed existing BSP windows: %v", err)
+		}
+	})
+
+	t.Run("stale ID and already tiled window do not mutate", func(t *testing.T) {
+		driver := deskWorld()
+		env := commandEnv(t)
+		stale := newPlacementDriver(driver, wm.Window{})
+		if err := HandleWindowCreated(t.Context(), testProfile(t), stale, env, 999); err != nil {
+			t.Fatal(err)
+		}
+		tiled := wm.Window{ID: 92, Role: "AXWindow", Subrole: "AXStandardWindow", Root: true, CanMove: true, CanResize: true, Floating: false, SpaceID: "1"}
+		already := newPlacementDriver(driver, tiled)
+		if err := HandleWindowCreated(t.Context(), testProfile(t), already, env, 92); err != nil {
+			t.Fatal(err)
+		}
+		if already.moves+already.focuses+already.toggles != 0 {
+			t.Fatalf("already tiled window mutated: %+v", already)
+		}
+	})
+
+}
+func TestWindowPlacementFailedFocus(t *testing.T) {
+	for _, focusErr := range []error{nil, errors.New("focus failed")} {
+		name := "not focused"
+		if focusErr != nil {
+			name = "focus error"
+		}
+		t.Run(name, func(t *testing.T) {
+			arrival := newPlacementDriver(deskWorld(), candidate())
+			arrival.focusFailed, arrival.focusErr = true, focusErr
+			err := HandleWindowCreated(t.Context(), testProfile(t), arrival, commandEnv(t), 90)
+			if !errors.Is(err, focusErr) {
+				t.Fatalf("focus error = %v; want %v", err, focusErr)
+			}
+			if !arrival.window.Floating || !slices.Equal(arrival.operations, []string{"move", "focus"}) {
+				t.Fatalf("failed focus mutated window: %+v, %v", arrival.window, arrival.operations)
+			}
+		})
+	}
+}
+
+type placementDriver struct {
+	*fake.Driver
+	mu          sync.Mutex
+	window      wm.Window
+	windowID    int
+	activeSpace wm.SpaceID
+	exists      bool
+	moves       int
+	focuses     int
+	toggles     int
+	operations  []string
+	queries     int
+	focusSpace  wm.SpaceID
+	focusFailed bool
+	focusErr    error
+}
+
+func newPlacementDriver(driver *fake.Driver, window wm.Window) *placementDriver {
+	return &placementDriver{Driver: driver, window: window, windowID: window.ID, exists: window.ID > 0}
+}
+
+func (d *placementDriver) QueryWindow(ctx context.Context, id int) (wm.Window, bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return wm.Window{}, false, err
+	}
+	d.queries++
+	return d.window, d.exists && id == d.windowID, nil
+}
+
+func (d *placementDriver) MoveWindowToSpace(ctx context.Context, id int, space wm.SpaceID) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.moves++
+	d.operations = append(d.operations, "move")
+	if id == d.windowID {
+		d.window.SpaceID = space
+	}
+	return nil
+}
+
+func (d *placementDriver) FocusWindow(ctx context.Context, id int) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	d.focuses++
+	d.operations = append(d.operations, "focus")
+	if d.focusFailed {
+		return false, d.focusErr
+	}
+	d.activeSpace = d.window.SpaceID
+	if d.focusSpace != "" {
+		d.activeSpace = d.focusSpace
+	}
+	return id == d.windowID, nil
+}
+
+func (d *placementDriver) QueryFocusedSpace(ctx context.Context) (wm.Space, bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.operations = append(d.operations, "active-space")
+	if err := ctx.Err(); err != nil {
+		return wm.Space{}, false, err
+	}
+	return wm.Space{ID: d.activeSpace}, d.activeSpace != "", nil
+}
+
+func (d *placementDriver) ToggleFloat(ctx context.Context, id int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.toggles++
+	d.operations = append(d.operations, "toggle")
+	if id == d.windowID {
+		d.window.Floating = !d.window.Floating
+	}
+	return nil
+}
+
+func TestRules(t *testing.T) {
+	t.Run("laptop mode keeps placement and 1Password management exception", func(t *testing.T) {
+		driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 3, Frame: displayFrame(1728, 1117)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 3, Label: "laptop"}}})
 		recorder := &ruleRecorder{existing: []wm.Rule{{Label: "auto:old"}, {Label: "manual-keep"}}}
 		withRules := &ruleDriver{Driver: driver, rules: recorder}
 		if err := Rules(t.Context(), testProfile(t), withRules); err != nil {
@@ -648,45 +861,43 @@ func TestRules(t *testing.T) {
 		if !slices.Equal(recorder.removed, []string{"auto:old"}) {
 			t.Fatalf("removed = %v", recorder.removed)
 		}
-		if len(recorder.added) != 8 || recorder.added[0].Label != "auto:default-laptop-stack" {
-			t.Fatalf("added = %+v; default-laptop rule should be first", recorder.added)
-		}
 		for _, label := range []string{
-			"auto:code", "auto:akiflow", "auto:linear", "auto:manage-standard",
+			"auto:default-laptop-stack", "auto:akiflow", "auto:manage-standard",
 			"auto:finder", "auto:akiflow-dialog", "auto:system-settings",
 		} {
 			if !slices.ContainsFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label }) {
 				t.Errorf("missing rule %q", label)
 			}
 		}
-		standardIndex := slices.IndexFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == "auto:manage-standard" })
-		if standardIndex < 0 {
+		standard := slices.IndexFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == "auto:manage-standard" })
+		if standard < 0 {
 			t.Fatal("missing auto:manage-standard")
 		}
-		for _, label := range []string{"auto:finder", "auto:akiflow-dialog", "auto:system-settings"} {
-			exceptionIndex := slices.IndexFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == label })
-			if exceptionIndex < 0 {
-				continue
-			}
-			if standardIndex >= exceptionIndex {
-				t.Errorf("auto:manage-standard index %d should precede %s index %d", standardIndex, label, exceptionIndex)
-			}
-			if exception := recorder.added[exceptionIndex]; exception.Manage == nil || *exception.Manage {
-				t.Errorf("%s = %+v; want manage off", label, exception)
-			}
+		if rule := recorder.added[standard]; rule.ExcludeApp != "^1Password$" || rule.Manage == nil || !*rule.Manage {
+			t.Errorf("manage-standard = %+v; want manage on except 1Password", rule)
 		}
-		standard := recorder.added[standardIndex]
-		if standard.App != "" || standard.ExcludeApp != "^1Password$" || standard.Subrole != "AXStandardWindow" || standard.Manage == nil || !*standard.Manage {
-			t.Errorf("auto:manage-standard = %+v; want standard windows managed on except 1Password", standard)
-		}
-		if last := recorder.added[len(recorder.added)-1]; last.Label != "auto:system-settings" {
-			t.Errorf("last rule = %+v; want system-settings", last)
-		}
-		if recorder.applied != 1 {
-			t.Fatalf("apply calls = %d", recorder.applied)
+		if recorder.applied != 0 {
+			t.Fatalf("apply calls = %d; want no bulk apply", recorder.applied)
 		}
 	})
-	t.Run("places only standard windows so dialogs open where they were raised", testRulesPlaceOnlyStandardWindows)
+	t.Run("desk mode adds only a catch-all manage-off rule", func(t *testing.T) {
+		driver := deskWorld()
+		recorder := &ruleRecorder{}
+		withRules := &ruleDriver{Driver: driver, rules: recorder}
+		if err := Rules(t.Context(), testProfile(t), withRules); err != nil {
+			t.Fatal(err)
+		}
+		if len(recorder.added) != 1 || recorder.added[0].Label != "auto:desk-manage-off" || recorder.added[0].Manage == nil || *recorder.added[0].Manage {
+			t.Fatalf("desk rules = %+v; want one catch-all manage-off rule", recorder.added)
+		}
+		if recorder.added[0].Space != nil || recorder.added[0].Display != nil {
+			t.Fatalf("desk arrival rule has placement effects: %+v", recorder.added[0])
+		}
+		if recorder.applied != 0 {
+			t.Fatalf("apply calls = %d; want no bulk apply", recorder.applied)
+		}
+	})
+	t.Run("Rules leaves populated BSP management, space, and geometry unchanged", testRulesPreserveBSP)
 	t.Run("no-op when the backend has no rules capability", func(t *testing.T) {
 		if err := Rules(t.Context(), testProfile(t), fake.New(fake.Seed{})); err != nil {
 			t.Fatal(err)
@@ -694,23 +905,34 @@ func TestRules(t *testing.T) {
 	})
 }
 
-func testRulesPlaceOnlyStandardWindows(t *testing.T) {
-	recorder := &ruleRecorder{}
-	if err := Rules(t.Context(), testProfile(t), &ruleDriver{Driver: deskWorld(), rules: recorder}); err != nil {
+func testRulesPreserveBSP(t *testing.T) {
+	t.Helper()
+	driver := deskWorld()
+	before, err := driver.QueryWindows(t.Context())
+	if err != nil {
 		t.Fatal(err)
 	}
-	placed := 0
-	for _, rule := range recorder.added {
-		if rule.Space == nil && rule.Display == nil {
-			continue
-		}
-		placed++
-		if rule.Subrole != "AXStandardWindow" {
-			t.Errorf("%s subrole = %q; want AXStandardWindow", rule.Label, rule.Subrole)
-		}
+	spacesBefore, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if placed != 4 {
-		t.Errorf("placement rules = %d; want 4", placed)
+	recorder := &ruleRecorder{}
+	if err := Rules(t.Context(), testProfile(t), &ruleDriver{Driver: driver, rules: recorder}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := driver.QueryWindows(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spacesAfter, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(spacesBefore, spacesAfter) {
+		t.Fatalf("Rules changed existing world: windows before=%+v after=%+v spaces before=%+v after=%+v", before, after, spacesBefore, spacesAfter)
+	}
+	if recorder.applied != 0 {
+		t.Fatalf("apply calls = %d; want no bulk apply", recorder.applied)
 	}
 }
 

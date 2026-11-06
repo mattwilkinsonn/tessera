@@ -11,7 +11,9 @@ import (
 
 	"gotest.tools/v3/assert"
 
+	"github.com/mattwilkinsonn/tessera/internal/commands"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
+	"github.com/mattwilkinsonn/tessera/internal/wm/fake"
 )
 
 type eventStreamFake struct {
@@ -301,4 +303,135 @@ func TestRunCancellation(t *testing.T) {
 		cancel()
 		assert.NilError(t, <-done)
 	})
+}
+
+type pausedRulesDriver struct {
+	*fake.Driver
+	entered chan struct{}
+	release chan struct{}
+	queried chan int
+	paused  bool
+}
+
+func (d *pausedRulesDriver) List(context.Context) ([]wm.Rule, error) { return nil, nil }
+func (d *pausedRulesDriver) Remove(context.Context, string) error    { return nil }
+func (d *pausedRulesDriver) Add(context.Context, wm.Rule) error {
+	if !d.paused {
+		d.paused = true
+		close(d.entered)
+		<-d.release
+	}
+	return nil
+}
+func (d *pausedRulesDriver) Apply(context.Context) error {
+	return errors.New("unexpected bulk rule apply")
+}
+func (d *pausedRulesDriver) QueryWindow(ctx context.Context, id int) (wm.Window, bool, error) {
+	d.queried <- id
+	return d.Driver.QueryWindow(ctx, id)
+}
+
+func TestRunArrivalWaitsInsideWakeRules(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		profile := testProfile(t)
+		profile.Desk = nil
+		driver := &pausedRulesDriver{Driver: fake.New(fake.Seed{
+			Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}},
+			Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 3}},
+		}), entered: make(chan struct{}), release: make(chan struct{}), queried: make(chan int, 1)}
+		env := daemonEnv(t)
+		env.Topology = &commands.TopologyState{}
+		ln := newPipeListener()
+		done := make(chan error, 1)
+		go func() {
+			done <- run(ctx, Options{
+				Topology: env.Topology,
+				Display:  DisplayWork(profile, driver, env), Flex: idle,
+				Wake: WakeRoutine(profile, driver, env, "/tmp/tess-placement-test.sock"),
+				WindowCreated: func(ctx context.Context, id int, ready func() bool) error {
+					arrivalEnv := env
+					arrivalEnv.ArrivalReady = ready
+					return commands.HandleWindowCreated(ctx, profile, driver, arrivalEnv, id)
+				},
+			}, ln, ln.Close)
+		}()
+		<-driver.entered
+		ln.send(t, "window_created 90")
+		synctest.Wait()
+		select {
+		case <-driver.queried:
+			t.Fatal("arrival queried while wake was inside Rules")
+		default:
+		}
+		close(driver.release)
+		assert.Equal(t, <-driver.queried, 90)
+		cancel()
+		assert.NilError(t, <-done)
+	})
+}
+
+type ruleAwareSpawnDriver struct {
+	*fake.Driver
+	deskRule        bool
+	spawnedFloating bool
+}
+
+func (d *ruleAwareSpawnDriver) List(context.Context) ([]wm.Rule, error) { return nil, nil }
+func (d *ruleAwareSpawnDriver) Remove(context.Context, string) error    { return nil }
+func (d *ruleAwareSpawnDriver) Add(_ context.Context, rule wm.Rule) error {
+	if rule.Label == "auto:desk-manage-off" {
+		d.deskRule = true
+	}
+	return nil
+}
+func (d *ruleAwareSpawnDriver) Apply(context.Context) error {
+	return errors.New("unexpected bulk rule apply")
+}
+func (d *ruleAwareSpawnDriver) SpawnWindow(ctx context.Context, argv []string) error {
+	if err := d.Driver.SpawnWindow(ctx, argv); err != nil {
+		return err
+	}
+	windows, err := d.Driver.QueryWindows(ctx)
+	if err != nil {
+		return err
+	}
+	if d.deskRule && len(windows) > 0 {
+		d.spawnedFloating = true
+		return d.Driver.ToggleFloat(ctx, windows[len(windows)-1].ID)
+	}
+	return nil
+}
+
+func TestWakeRoutineReclaimsRuleFloatedSpawns(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		app     string
+		display int
+	}{
+		{name: "vscode", app: "Code", display: 1},
+		{name: "linear", app: "Linear", display: 2},
+		{name: "ghostty-wave", app: "Ghostty", display: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profile := testProfile(t)
+			spec := profile.Windows[test.name]
+			spec.Spawn = []string{"open", "-a", test.app}
+			profile.Windows[test.name] = spec
+			driver := &ruleAwareSpawnDriver{Driver: fake.New(fake.Seed{
+				Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}},
+				Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3}},
+				SpawnApp: test.app,
+			})}
+			env := daemonEnv(t)
+			env.Nudge = func(context.Context, string) error { return nil }
+			if err := WakeRoutine(profile, driver, env, "/tmp/tess-rule-spawn.sock")(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			windows, err := driver.QueryWindows(t.Context())
+			if err != nil || len(windows) != 1 || !driver.spawnedFloating || windows[0].Floating || windows[0].DisplayIdx != test.display {
+				t.Fatalf("spawn not reclaimed to configured desk slot: %+v, floated %t, %v", windows, driver.spawnedFloating, err)
+			}
+		})
+	}
 }

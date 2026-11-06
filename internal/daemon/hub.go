@@ -3,11 +3,13 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"sync"
 	"time"
 
+	"github.com/mattwilkinsonn/tessera/internal/commands"
 	"github.com/mattwilkinsonn/tessera/internal/effects"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 )
@@ -49,29 +51,47 @@ const (
 type channel struct {
 	stamp   time.Time
 	running bool
+	done    chan struct{}
 	work    Work
 	settled func(ctx context.Context)
 }
 
 // Hub holds one stamp and one running flag per channel and runs one waiter per channel.
 type Hub struct {
-	mu       sync.Mutex
-	channels [2]channel
-	waiters  sync.WaitGroup
-	fatal    chan error
+	mu              sync.Mutex
+	channels        [2]channel
+	waiters         sync.WaitGroup
+	fatal           chan error
+	topology        *commands.TopologyState
+	windowCreated   func(context.Context, int, func() bool) error
+	pendingArrivals map[int]struct{}
+	arrivalRunning  bool
 }
 
 // HubOption configures a Hub.
 type HubOption func(*Hub)
+
+// WithTopology shares the cascade lock with arrivals.
+func WithTopology(topology *commands.TopologyState) HubOption {
+	return func(h *Hub) { h.topology = topology }
+}
 
 // OnDisplaySettled runs fn once each time the display channel settles.
 func OnDisplaySettled(fn func(ctx context.Context)) HubOption {
 	return func(h *Hub) { h.channels[displayChannel].settled = fn }
 }
 
+// WithWindowCreated enables immediate targeted arrival handling.
+func WithWindowCreated(topology *commands.TopologyState, handler func(context.Context, int, func() bool) error) HubOption {
+	return func(h *Hub) {
+		h.topology = topology
+		h.windowCreated = handler
+	}
+}
+
 // NewHub builds a hub that runs display and flex work after their quiet windows.
 func NewHub(display, flex Work, opts ...HubOption) *Hub {
-	h := &Hub{fatal: make(chan error, 1)}
+	h := &Hub{fatal: make(chan error, 1), topology: &commands.TopologyState{}}
 	h.channels[displayChannel].work = display
 	h.channels[flexChannel].work = flex
 	for _, opt := range opts {
@@ -95,7 +115,104 @@ func (h *Hub) Notify(ctx context.Context, ev string) {
 		return
 	}
 	ch.running = true
+	ch.done = make(chan struct{})
 	h.waiters.Go(func() { h.wait(ctx, id) })
+}
+
+// NotifyWindowCreated queues the ID separately from debounced flex work.
+func (h *Hub) NotifyWindowCreated(ctx context.Context, id int) {
+	if id <= 0 {
+		return
+	}
+	h.Notify(ctx, string(wm.EventWindowCreated))
+	if h.windowCreated == nil {
+		return
+	}
+	h.mu.Lock()
+	if h.pendingArrivals == nil {
+		h.pendingArrivals = make(map[int]struct{})
+	}
+	h.pendingArrivals[id] = struct{}{}
+	if h.arrivalRunning {
+		h.mu.Unlock()
+		return
+	}
+	h.arrivalRunning = true
+	h.waiters.Go(func() { h.runArrivals(ctx) })
+	h.mu.Unlock()
+}
+
+func (h *Hub) runArrivals(ctx context.Context) {
+	defer func() {
+		h.mu.Lock()
+		h.arrivalRunning = false
+		if ctx.Err() == nil && len(h.pendingArrivals) > 0 {
+			h.arrivalRunning = true
+			h.waiters.Go(func() { h.runArrivals(ctx) })
+		}
+		h.mu.Unlock()
+	}()
+	for {
+		h.mu.Lock()
+		var id int
+		for pending := range h.pendingArrivals {
+			id = pending
+			break
+		}
+		h.mu.Unlock()
+		if id == 0 {
+			return
+		}
+		if !h.waitForDisplay(ctx) {
+			return
+		}
+		ready, err := bounded(ctx, h, func(ctx context.Context) (bool, error) {
+			return h.topology.SerializeArrival(ctx, h.displayReady, func(ctx context.Context) error {
+				return h.windowCreated(ctx, id, h.displayReady)
+			})
+		})
+		if errors.Is(err, commands.ErrDisplayPending) {
+			continue
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			slog.ErrorContext(ctx, "window arrival failed", "window_id", id, "error", err)
+		}
+		if !ready && err == nil {
+			continue
+		}
+		h.mu.Lock()
+		delete(h.pendingArrivals, id)
+		h.mu.Unlock()
+	}
+}
+
+func (h *Hub) displayReady() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return !h.channels[displayChannel].running && effects.IsQuiet(time.Now(), h.channels[displayChannel].stamp, effects.DisplayQuiet)
+}
+
+func (h *Hub) waitForDisplay(ctx context.Context) bool {
+	for {
+		if _, ok := h.untilQuiet(ctx, displayChannel); !ok {
+			return false
+		}
+		h.mu.Lock()
+		running := h.channels[displayChannel].running
+		done := h.channels[displayChannel].done
+		h.mu.Unlock()
+		if !running {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-done:
+		}
+	}
 }
 
 func channelFor(ev wm.Event) (channelID, bool) {
@@ -117,10 +234,12 @@ func (h *Hub) wait(ctx context.Context, id channelID) {
 			h.stop(id)
 			return
 		}
-		step, err := h.run(ctx, ch.work)
-		if ctx.Err() != nil {
-			h.stop(id)
-			return
+		var step Step
+		var err error
+		if id == displayChannel {
+			step, err = h.runCascade(ctx, ch.work)
+		} else {
+			step, err = h.run(ctx, ch.work)
 		}
 		if err != nil {
 			slog.ErrorContext(ctx, "daemon work failed", "error", err)
@@ -133,6 +252,7 @@ func (h *Hub) wait(ctx context.Context, id channelID) {
 		}
 		if ch.stamp.Equal(actedOn) {
 			ch.running = false
+			close(ch.done)
 			h.mu.Unlock()
 			if ch.settled != nil {
 				ch.settled(ctx)
@@ -181,6 +301,18 @@ func later(a, b time.Time) time.Time {
 	return b
 }
 
+func (h *Hub) runCascade(ctx context.Context, work Work) (Step, error) {
+	return bounded(ctx, h, func(ctx context.Context) (Step, error) {
+		var step Step
+		err := h.topology.SerializeCascade(ctx, func(ctx context.Context) error {
+			var err error
+			step, err = work(ctx)
+			return err
+		})
+		return step, err
+	})
+}
+
 // run calls work under CascadeTimeout; a deadline is fatal to Serve.
 func (h *Hub) run(ctx context.Context, work Work) (Step, error) {
 	return bounded(ctx, h, work)
@@ -196,5 +328,6 @@ func (h *Hub) reportFatal(err error) {
 func (h *Hub) stop(id channelID) {
 	h.mu.Lock()
 	h.channels[id].running = false
+	close(h.channels[id].done)
 	h.mu.Unlock()
 }

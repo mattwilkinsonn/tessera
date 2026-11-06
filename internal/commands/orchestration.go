@@ -23,7 +23,7 @@ const (
 	CascadeContended CascadeResult = "contended"
 )
 
-// Rules replaces Tessera-managed arrival rules and applies them to open windows.
+// Rules replaces Tessera-managed arrival rules without reapplying them to open windows.
 func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error {
 	ops, ok := driver.(wm.RuleOps)
 	if !ok {
@@ -44,6 +44,14 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 	if err != nil {
 		return err
 	}
+	if len(displays) > 1 {
+		manage := false
+		return ops.Add(ctx, wm.Rule{Label: "auto:desk-manage-off", App: "^.*$", Manage: &manage})
+	}
+	return addLaptopRules(ctx, profile, ops, displays)
+}
+
+func addLaptopRules(ctx context.Context, profile *config.Profile, ops wm.RuleOps, displays []wm.Display) error {
 	g9, hasG9 := engineResolveDisplay(profile, config.DisplayG9, displays)
 	aw, hasAW := engineResolveDisplay(profile, config.DisplayAW, displays)
 	laptop, hasLaptop := engineResolveDisplay(profile, config.DisplayLaptop, displays)
@@ -60,7 +68,6 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 			break
 		}
 	}
-	// Placement rules match standard windows only; a dialog moved to another space detaches from its parent.
 	const standard = "AXStandardWindow"
 	if laptopSpaceIndex != nil {
 		if err := ops.Add(ctx, wm.Rule{Label: "auto:default-laptop-stack", App: "^.*$", Subrole: standard, Space: laptopSpaceIndex}); err != nil {
@@ -83,22 +90,20 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 		}
 	}
 	on := true
-	// Yabai floats 1Password's fixed-size standard dialog by itself, so leave 1Password to its defaults.
 	if err := ops.Add(ctx, wm.Rule{Label: "auto:manage-standard", ExcludeApp: "^1Password$", Subrole: standard, Manage: &on}); err != nil {
 		return err
 	}
 	manage := false
-	if err := ops.Add(ctx, wm.Rule{Label: "auto:finder", App: "^Finder$", Manage: &manage}); err != nil {
-		return err
+	for _, rule := range []wm.Rule{
+		{Label: "auto:finder", App: "^Finder$", Manage: &manage},
+		{Label: "auto:akiflow-dialog", App: "^Akiflow$", Subrole: "AXDialog", Manage: &manage},
+		{Label: "auto:system-settings", App: "^System Settings$", Manage: &manage},
+	} {
+		if err := ops.Add(ctx, rule); err != nil {
+			return err
+		}
 	}
-	if err := ops.Add(ctx, wm.Rule{Label: "auto:akiflow-dialog", App: "^Akiflow$", Subrole: "AXDialog", Manage: &manage}); err != nil {
-		return err
-	}
-	// Fixed-size settings panes break a tiled layout; yabai floats them unless forced.
-	if err := ops.Add(ctx, wm.Rule{Label: "auto:system-settings", App: "^System Settings$", Manage: &manage}); err != nil {
-		return err
-	}
-	return ops.Apply(ctx)
+	return nil
 }
 
 // DisplaySetup sets the laptop home space to stack layout when available.
@@ -121,16 +126,25 @@ func DisplaySetup(ctx context.Context, profile *config.Profile, driver wm.Driver
 
 // RunDisplayCascade applies display defaults, rules, and the current layout reclaim.
 func RunDisplayCascade(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) (CascadeResult, error) {
-	if err := DisplaySetup(ctx, profile, driver); err != nil {
-		return "", err
-	}
-	if err := Rules(ctx, profile, driver); err != nil {
+	if err := runPlacementCommand(ctx, env, func(ctx context.Context) error {
+		if err := DisplaySetup(ctx, profile, driver); err != nil {
+			return err
+		}
+		return Rules(ctx, profile, driver)
+	}); err != nil {
 		return "", err
 	}
 	displays, err := driver.QueryDisplays(ctx)
 	if err != nil {
 		return "", err
 	}
+	previous, known := env.Topology.Displays()
+	if known && previous > 1 && len(displays) == 1 {
+		if err := handoffDeskWindows(ctx, profile, driver, env); err != nil {
+			return "", err
+		}
+	}
+	env.Topology.RecordDisplays(len(displays))
 	if len(displays) <= 1 {
 		result, err := laptop(ctx, profile, driver, env, true)
 		switch result {

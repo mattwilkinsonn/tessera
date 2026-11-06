@@ -16,6 +16,7 @@ import (
 	"github.com/mattwilkinsonn/tessera/internal/engine"
 	"github.com/mattwilkinsonn/tessera/internal/executor"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
+	"github.com/samber/mo"
 )
 
 const (
@@ -58,8 +59,14 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 			names = append(names, track...)
 		}
 	}
+	spawnedNames := engine.SpawnsNeeded(profile, names, world.Windows)
 	if err := spawnMissingWindows(ctx, profile, driver, names, world.Windows, stderr); err != nil {
 		return err
+	}
+	if len(world.Displays) > 1 {
+		if err := adoptSpawnedWindows(ctx, profile, driver, spawnedNames, world.Windows); err != nil {
+			return err
+		}
 	}
 	world, err = worldSnapshot(ctx, driver)
 	if err != nil {
@@ -85,12 +92,30 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
 		return fmt.Errorf("persisting window slot memory: %w", err)
 	}
+	for _, id := range filled {
+		if env.ReclaimedDeskWindows != nil {
+			env.ReclaimedDeskWindows[id] = struct{}{}
+		}
+	}
 	return nudge(ctx, "yabai_spaces_changed")
 }
 
 // Laptop converges the laptop-only layout and returns the lock outcome.
 func Laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) (LaptopResult, error) {
 	return laptop(ctx, profile, driver, env, true)
+}
+
+func handoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
+	paths, _, _, err := normalizedEnv(ctx, env)
+	if err != nil {
+		return err
+	}
+	release, err := lockPlacement(ctx, paths)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return HandoffDeskWindows(ctx, profile, driver)
 }
 
 func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env, explicit bool) (LaptopResult, error) {
@@ -202,6 +227,42 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 		return "", err
 	}
 	return LaptopRan, nil
+}
+
+// adoptSpawnedWindows admits only new matching tile candidates before desk claims.
+// The caller holds the apply and slot locks and the signal guard throughout spawning.
+func adoptSpawnedWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, before []wm.Window) error {
+	baseline := make(map[int]struct{}, len(before))
+	for _, window := range before {
+		baseline[window.ID] = struct{}{}
+	}
+	windows, err := driver.QueryWindows(ctx)
+	if err != nil {
+		return err
+	}
+	// Project only eligible new floats as available to reuse the planner's exact
+	// match, spawn fallback, classification, and distinct-ID selection policy.
+	candidates := make([]wm.Window, 0, len(windows))
+	for _, window := range windows {
+		if _, old := baseline[window.ID]; old || !window.Floating || window.Minimized || !IsTileCandidate(window) {
+			continue
+		}
+		window.Floating = false
+		candidates = append(candidates, window)
+	}
+	claims := engine.NewClaimSet(profile, engine.SlotMemory{}, nil)
+	for _, id := range claims.ClaimMany(candidates, names, mo.None[int]()) {
+		for _, window := range windows {
+			if window.ID != id {
+				continue
+			}
+			if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
+				return fmt.Errorf("adopting spawned window %d: %w", window.ID, err)
+			}
+			break
+		}
+	}
+	return nil
 }
 
 func spawnMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer) error {
