@@ -59,6 +59,14 @@ Run `tess --help` (or `tess -h`) for the generated subcommand help. Run
 `tess --version` (or `tess -v`) for the version. Bare `tess` also prints the
 help.
 
+On a desk setup, `tess apply` adopts newly launched browser windows into configured
+slots. Eligibility polling has a five-second budget and does not mutate layouts.
+Apply then rebuilds the desk once, with at most one additional rebuild for windows
+or owners that changed during the first. Layout execution uses the caller's context,
+not the polling budget. Selected slot owners never become overflow. Existing
+floating windows are left alone. Owners must be tiled on the configured desk home
+space before their slots are recorded.
+
 ### Exit codes
 
 - `0` — success, help/version output, or bare `tess` displaying help.
