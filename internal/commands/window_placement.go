@@ -66,6 +66,9 @@ func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arr
 		if _, planned := claimed[window.ID]; planned {
 			plannedWindows = append(plannedWindows, window)
 		}
+		if _, candidate := displaced[window.ID]; candidate {
+			delete(consumed, window.ID)
+		}
 	}
 	leftSlotWindowID := leftDeskSlotWindow(target, plannedWindows, 0)
 	var batchAnchor int
@@ -74,9 +77,11 @@ func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arr
 			continue
 		}
 		if window.Minimized || window.Floating || !IsTileCandidate(window) {
+			consumed[window.ID] = struct{}{}
 			continue
 		}
 		if _, exists := claimed[window.ID]; exists || window.ID == leftSlotWindowID {
+			consumed[window.ID] = struct{}{}
 			continue
 		}
 		anchor := leftSlotWindowID
@@ -85,17 +90,18 @@ func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arr
 		}
 		placed, err := placeArrivalWindowOutcome(ctx, driver, window, target, anchor)
 		if err != nil {
-			return nil, fmt.Errorf("stacking displaced desk window %d: %w", window.ID, err)
+			return consumed, fmt.Errorf("stacking displaced desk window %d: %w", window.ID, err)
 		}
 		if !placed {
 			delete(consumed, window.ID)
 			continue
 		}
+		consumed[window.ID] = struct{}{}
 		if anchor == 0 {
 			var err error
 			batchAnchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
 			if err != nil {
-				return nil, fmt.Errorf("refreshing displaced window anchor %d: %w", window.ID, err)
+				return consumed, fmt.Errorf("refreshing displaced window anchor %d: %w", window.ID, err)
 			}
 		}
 	}
@@ -148,6 +154,13 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 				return fmt.Errorf("refreshing recovery anchor for window %d: %w", window.ID, err)
 			}
 		}
+	}
+	if target.display == config.DisplayLaptop {
+		world, err := worldSnapshot(ctx, driver)
+		if err != nil {
+			return err
+		}
+		recordLaptopHomeWindows(profile, env.Topology, world)
 	}
 	return nil
 }

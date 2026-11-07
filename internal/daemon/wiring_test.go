@@ -477,3 +477,46 @@ func seedDisplays(displays []fake.SeedDisplay) []wm.Display {
 	}
 	return result
 }
+
+type wakeRecoveryDriver struct {
+	*fake.Driver
+	stacked []int
+}
+
+func (d *wakeRecoveryDriver) StackOnto(ctx context.Context, target, id int) error {
+	d.stacked = append(d.stacked, id)
+	return d.Driver.StackOnto(ctx, target, id)
+}
+
+func TestWakeRoutineObservesRecoveredLaptopArrival(t *testing.T) {
+	profile := testProfile(t)
+	env := daemonEnv(t)
+	env.Topology = &commands.TopologyState{}
+	env.Nudge = func(context.Context, string) error { return nil }
+	driver := &wakeRecoveryDriver{Driver: fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 1728}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2}},
+		Windows:  []fake.SeedWindow{{ID: 90, App: "Extra", SpaceIndex: 2, Floating: true, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true}},
+	})}
+	if err := WakeRoutine(profile, driver, env, "/tmp/tess-recovery.sock")(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	window, found, err := driver.QueryWindow(t.Context(), 90)
+	if err != nil || !found || window.Floating || window.DisplayIdx != 1 {
+		t.Fatalf("startup arrival not placed on laptop: %+v, %v", window, err)
+	}
+	driver.Driver = fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 2, Frame: &wm.Frame{W: 3440}}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 2}},
+		Windows: []fake.SeedWindow{
+			{ID: 6, App: "Linear", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
+			{ID: 90, App: "Extra", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
+		},
+	})
+	if _, err := DisplayWork(profile, driver, env)(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(driver.stacked, []int{90}) {
+		t.Fatalf("startup arrival not recovered after lid close: %v", driver.stacked)
+	}
+}

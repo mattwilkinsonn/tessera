@@ -412,6 +412,7 @@ func testLaptopRecoveryLifecycle(t *testing.T, test laptopRecoveryCase) {
 	initialSeed := fake.Seed{
 		Displays: append([]fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}}, test.displays...),
 		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}},
+		SpawnApp: "Arrival",
 		Windows: []fake.SeedWindow{
 			deskSlotWindow(30, "1Password", 1, 0),
 			deskSlotWindow(31, "Extra", 1, 500),
@@ -427,16 +428,13 @@ func testLaptopRecoveryLifecycle(t *testing.T, test laptopRecoveryCase) {
 	if _, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil {
 		t.Fatal(err)
 	}
-	arrival := deskSlotWindow(33, "Arrival", 1, 0)
-	arrival.Floating = true
-	initialSeed.Windows = append(initialSeed.Windows, arrival)
-	driver.Driver = fake.New(initialSeed)
-	if err := HandleWindowCreated(t.Context(), profile, driver, env, 33); err != nil {
+	arrivalID := injectLaptopArrival(t, driver, "Arrival")
+	if err := HandleWindowCreated(t.Context(), profile, driver, env, arrivalID); err != nil {
 		t.Fatal(err)
 	}
 	survivor := displacedDeskSeed(test.displays)
 	survivor.Windows = append(survivor.Windows, initialSeed.Windows...)
-	survivor.Windows[len(survivor.Windows)-1].Floating = false
+	survivor.Windows = append(survivor.Windows, deskSlotWindow(arrivalID, "Arrival", 1, 0))
 	driver.Driver = fake.New(survivor)
 	driver.rejectFocusID = 31
 	if result, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil || result != CascadeApplied {
@@ -489,16 +487,13 @@ func testLaptopRecoveryLifecycle(t *testing.T, test laptopRecoveryCase) {
 func testLaptopRecoveryReopen(t *testing.T, test laptopRecoveryCase, initialSeed fake.Seed, driver *arrivalTargetDriver, env Env, completed int) {
 	t.Helper()
 	profile := testProfile(t)
-	arrival := deskSlotWindow(34, "Arrival", 1, 0)
-	arrival.Floating = true
+	initialSeed.SpawnApp = "Arrival"
 	driver.Driver = fake.New(initialSeed)
 	if _, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil {
 		t.Fatal(err)
 	}
-	arrival.ID = 34
-	initialSeed.Windows = append(initialSeed.Windows, arrival)
-	driver.Driver = fake.New(initialSeed)
-	if err := HandleWindowCreated(t.Context(), profile, driver, env, 34); err != nil {
+	arrivalID := injectLaptopArrival(t, driver, "Arrival")
+	if err := HandleWindowCreated(t.Context(), profile, driver, env, arrivalID); err != nil {
 		t.Fatal(err)
 	}
 	survivor := displacedDeskSeed(test.displays)
@@ -506,13 +501,30 @@ func testLaptopRecoveryReopen(t *testing.T, test laptopRecoveryCase, initialSeed
 		window.Floating = false
 		survivor.Windows = append(survivor.Windows, window)
 	}
+	survivor.Windows = append(survivor.Windows, deskSlotWindow(arrivalID, "Arrival", 1, 0))
 	driver.Driver = fake.New(survivor)
 	if _, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(driver.stackedWindows[completed:], 34) {
+	if !slices.Contains(driver.stackedWindows[completed:], arrivalID) {
 		t.Fatal("second close did not recover the new laptop arrival")
 	}
+}
+
+func injectLaptopArrival(t *testing.T, driver *arrivalTargetDriver, app string) int {
+	t.Helper()
+	if err := driver.SpawnWindow(t.Context(), []string{"open", "-a", app}); err != nil {
+		t.Fatal(err)
+	}
+	windows, err := driver.QueryWindows(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := windows[len(windows)-1].ID
+	if err := driver.ToggleFloat(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func displacedDeskSeed(displays []fake.SeedDisplay) fake.Seed {
@@ -521,10 +533,19 @@ func displacedDeskSeed(displays []fake.SeedDisplay) fake.Seed {
 		seed.Spaces = append(seed.Spaces, fake.SeedSpace{DisplayIdx: display.Idx})
 		space := len(seed.Spaces)
 		if display.Frame.W == 3440 {
-			seed.Windows = append(seed.Windows, deskSlotWindow(6, "Linear", space, 0), deskSlotWindow(7, "Arc", space, 1720), deskSlotWindow(40, "AW deliberate", space, 2000))
+			seed.Windows = append(seed.Windows,
+				deskSlotWindow(6, "Linear", space, 0), deskSlotWindow(7, "Arc", space, 0),
+				deskSlotWindow(8, "Arc", space, 1720), deskSlotWindow(9, "Akiflow", space, 1720),
+				deskSlotWindow(40, "AW deliberate", space, 2000))
 			continue
 		}
-		seed.Windows = append(seed.Windows, deskSlotWindow(1, "Arc", space, 0), deskSlotWindow(2, "Ghostty", space, 1800), deskSlotWindow(41, "G9 deliberate", space, 3500))
+		wave := deskSlotWindow(2, "Ghostty", space, 1800)
+		wave.Title = "pc"
+		mbp := deskSlotWindow(3, "Ghostty", space, 3500)
+		mbp.Title = "mbp"
+		seed.Windows = append(seed.Windows,
+			deskSlotWindow(1, "Arc", space, 0), deskSlotWindow(4, "Obsidian", space, 0), wave, mbp,
+			deskSlotWindow(41, "G9 deliberate", space, 3500))
 	}
 	return seed
 }
@@ -1083,4 +1104,93 @@ func (d *partialArrivalDisplayDriver) QueryDisplays(ctx context.Context) ([]wm.D
 		displays[1].SpaceIDs = nil
 	}
 	return displays, nil
+}
+
+type recoveryErrorDriver struct {
+	*arrivalTargetDriver
+	failStackID         int
+	failQueryAfterStack bool
+}
+
+func (d *recoveryErrorDriver) StackOnto(ctx context.Context, target, id int) error {
+	if id == d.failStackID {
+		return errors.New("stack rejected")
+	}
+	return d.arrivalTargetDriver.StackOnto(ctx, target, id)
+}
+
+func (d *recoveryErrorDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
+	if d.failQueryAfterStack && len(d.stackedWindows) > 0 {
+		d.failQueryAfterStack = false
+		return nil, errors.New("post-placement query failed")
+	}
+	return d.Driver.QueryWindows(ctx)
+}
+
+func TestApplyKeepsCompletedRecoveryOnError(t *testing.T) {
+	for _, stage := range []string{"second placement", "post-placement query"} {
+		t.Run(stage, func(t *testing.T) {
+			profile := testProfile(t)
+			env := commandEnv(t)
+			env.Topology = &TopologyState{}
+			connected := fake.Seed{
+				Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}, {Idx: 2, Frame: displayFrame(3440, 1440)}},
+				Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2}},
+				Windows:  []fake.SeedWindow{deskSlotWindow(30, "First", 1, 0), deskSlotWindow(31, "Second", 1, 0)},
+			}
+			driver := &recoveryErrorDriver{arrivalTargetDriver: &arrivalTargetDriver{Driver: fake.New(connected)}}
+			if _, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil {
+				t.Fatal(err)
+			}
+			closed := displacedDeskSeed(connected.Displays[1:])
+			closed.Windows = append(closed.Windows, connected.Windows...)
+			driver.Driver = fake.New(closed)
+			if stage == "second placement" {
+				driver.failStackID = 31
+			} else {
+				driver.failQueryAfterStack = true
+			}
+			if err := Apply(t.Context(), profile, driver, env); err == nil {
+				t.Fatal("expected recovery failure")
+			}
+			if _, pending := env.Topology.LaptopHomeWindows()[30]; pending {
+				t.Fatal("completed candidate retained after error")
+			}
+			driver.failStackID = 0
+			if err := Apply(t.Context(), profile, driver, env); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(driver.stackedWindows, []int{30, 31}) {
+				t.Fatalf("recovery progress lost: %v", driver.stackedWindows)
+			}
+		})
+	}
+}
+
+func TestApplyObservesLaptopHomeAfterDeskPlan(t *testing.T) {
+	profile := testProfile(t)
+	env := commandEnv(t)
+	env.Topology = &TopologyState{}
+	connected := fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}, {Idx: 2, Frame: displayFrame(3440, 1440)}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2}},
+		Windows:  []fake.SeedWindow{deskSlotWindow(30, "Spotify", 2, 0)},
+	}
+	driver := &arrivalTargetDriver{Driver: fake.New(connected)}
+	if _, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil {
+		t.Fatal(err)
+	}
+	window, _, err := driver.QueryWindow(t.Context(), 30)
+	if err != nil || window.DisplayIdx != 1 {
+		t.Fatalf("desk plan did not place Spotify on laptop: %+v, %v", window, err)
+	}
+	closed := displacedDeskSeed(connected.Displays[1:])
+	closed.Windows = append(closed.Windows, deskSlotWindow(30, "Spotify", 1, 0))
+	driver.Driver = fake.New(closed)
+	if _, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(driver.stackedWindows, []int{30}) {
+		t.Fatalf("post-plan laptop resident not recovered: %v", driver.stackedWindows)
+	}
 }

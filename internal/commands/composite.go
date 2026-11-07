@@ -98,6 +98,7 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 			claimed[id] = struct{}{}
 		}
 		consumed, err := stackDisplacedDeskWindows(ctx, driver, target, fresh, laptopWindows, claimed)
+		env.Topology.ConsumeLaptopHomeWindows(consumed)
 		if err != nil {
 			return fmt.Errorf("stacking displaced laptop windows: %w", err)
 		}
@@ -105,7 +106,6 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 		if err != nil {
 			return fmt.Errorf("querying windows after displaced-window stacking: %w", err)
 		}
-		env.Topology.ConsumeLaptopHomeWindows(consumed)
 	}
 	world.Windows = fresh
 	filled = placedDeskSlots(profile, world, filled)
