@@ -56,6 +56,40 @@ func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	return nil
 }
 
+func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arrivalTarget, windows []wm.Window, claimed map[int]struct{}) error {
+	plannedWindows := make([]wm.Window, 0, len(claimed))
+	for _, window := range windows {
+		if _, planned := claimed[window.ID]; planned {
+			plannedWindows = append(plannedWindows, window)
+		}
+	}
+	leftSlotWindowID := leftDeskSlotWindow(target, plannedWindows, 0)
+	var batchAnchor int
+	for _, window := range windows {
+		if window.SpaceID != target.space || window.Minimized || window.Floating || !IsTileCandidate(window) {
+			continue
+		}
+		if _, exists := claimed[window.ID]; exists || window.ID == leftSlotWindowID {
+			continue
+		}
+		anchor := leftSlotWindowID
+		if anchor == 0 {
+			anchor = batchAnchor
+		}
+		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
+			return fmt.Errorf("stacking displaced desk window %d: %w", window.ID, err)
+		}
+		if anchor == 0 {
+			var err error
+			batchAnchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
+			if err != nil {
+				return fmt.Errorf("refreshing displaced window anchor %d: %w", window.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
 // RecoverDeskWindows restores floating tile candidates not claimed by desk slots.
 func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
 	paths, _, _, err := normalizedEnv(ctx, env)
