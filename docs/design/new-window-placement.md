@@ -115,5 +115,14 @@ T1–T4 are implementation slices of one coherent feature and MUST land together
   `TestRecoverDeskWindowsIgnoresHistoricalClaims` covers a floating historical slot owner on the same topology. Recovery excludes only this wake's completed desk claims. `TestWakeRoutineReclaimsRuleFloatedSpawns` covers Code, Linear, and terminal windows created floating by desk rules, adopted before planning, and reclaimed to their configured displays in the same wake.
   The terminal case retains its configured title predicate while spawning a blank-title window. `TestAdoptSpawnedWindowsClaimPolicy` covers exact-match priority, app-only fallback, rejection of windows classified under another spec, baseline IDs, and heuristic exceptions through the same claim policy used by desk planning.
 
+`Apply` waits for spawned-app window IDs to remain quiet for one second within
+the existing five-second spawn polling bound. This lets session-restored windows
+join configured slot claims before layout planning. After planning, newly created
+eligible floats belonging to spawned apps are placed as arrivals: laptop stack
+when present, otherwise the AW/G9 left slot. Pre-launch floats and heuristic
+exceptions remain untouched. `TestApplyRestoredBrowserWindows` covers surplus
+restored windows, a later restoration batch, all browser slots, and both arrival
+targets.
+
 The verify/unfloat gap remains best-effort. Tests use fake window managers and a recording yabai subprocess; no live desktop smoke is implied.
 

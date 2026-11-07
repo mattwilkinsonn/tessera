@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -63,7 +64,9 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	if err := spawnMissingWindows(ctx, profile, driver, names, world.Windows, stderr); err != nil {
 		return err
 	}
-	if len(world.Displays) > 1 {
+	beforeSpawn := world.Windows
+	deskTopology := len(world.Displays) > 1 || externalDeskOnly(profile, world.Displays)
+	if deskTopology {
 		if err := adoptSpawnedWindows(ctx, profile, driver, spawnedNames, world.Windows); err != nil {
 			return err
 		}
@@ -82,6 +85,11 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 		return effects.SuppressSignals(paths.SignalGuard)
 	}); err != nil {
 		return err
+	}
+	if deskTopology {
+		if err := placeSpawnedArrivals(ctx, profile, driver, spawnedNames, beforeSpawn, world.Displays); err != nil {
+			return err
+		}
 	}
 	fresh, err := driver.QueryWindows(ctx)
 	if err != nil {
@@ -281,6 +289,49 @@ func adoptSpawnedWindows(ctx context.Context, profile *config.Profile, driver wm
 	return nil
 }
 
+// placeSpawnedArrivals handles restore overflow after configured slots are filled.
+// The baseline excludes floats that existed before this apply's launches.
+func placeSpawnedArrivals(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, before []wm.Window, displays []wm.Display) error {
+	target, ok := arrivalTargetFor(profile, displays)
+	if !ok || len(names) == 0 {
+		return nil
+	}
+	baseline := make(map[int]struct{}, len(before))
+	for _, window := range before {
+		baseline[window.ID] = struct{}{}
+	}
+	windows, err := driver.QueryWindows(ctx)
+	if err != nil {
+		return err
+	}
+	anchor := 0
+	if target.display != config.DisplayLaptop {
+		anchor = leftDeskSlotWindow(target, windows, 0)
+	}
+	for _, window := range windows {
+		if _, old := baseline[window.ID]; old || !window.Floating || window.Minimized || !IsTileCandidate(window) {
+			continue
+		}
+		spawnedApp := slices.ContainsFunc(names, func(name string) bool {
+			spec := profile.Windows[name]
+			return engine.MatchesSpec(config.WindowSpec{App: spec.App, AppRE: spec.AppRE}, window.App, window.Title)
+		})
+		if !spawnedApp {
+			continue
+		}
+		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
+			return fmt.Errorf("placing restored window %d: %w", window.ID, err)
+		}
+		if target.display != config.DisplayLaptop && anchor == 0 {
+			anchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func spawnMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer) error {
 	if profile == nil || driver == nil || stderr == nil {
 		return errors.New("spawning missing windows: profile, driver, and stderr are required")
@@ -328,13 +379,33 @@ func startMissingWindows(ctx context.Context, profile *config.Profile, driver wm
 
 func waitForSpawnedWindows(ctx context.Context, driver wm.Driver, targets map[string]*spawnTarget, stderr io.Writer) error {
 	missing := make([]string, 0, len(targets))
+	previous := make(map[int]struct{})
+	quietPolls := 0
 	for attempt := range spawnPolls {
 		current, err := driver.QueryWindows(ctx)
 		if err != nil {
 			return err
 		}
 		missing = missingSpawnTargets(current, targets)
-		if len(missing) == 0 {
+		// Session restoration can satisfy the requested count before the launcher
+		// finishes creating windows. Keep the existing bounded wait, but require
+		// a quiet second of matching IDs before taking the adoption snapshot.
+		currentIDs := make(map[int]struct{})
+		for _, window := range current {
+			for _, target := range targets {
+				if _, old := target.baseline[window.ID]; !old && target.app.MatchString(window.App) {
+					currentIDs[window.ID] = struct{}{}
+					break
+				}
+			}
+		}
+		if maps.Equal(previous, currentIDs) {
+			quietPolls++
+		} else {
+			quietPolls = 0
+		}
+		previous = currentIDs
+		if len(missing) == 0 && quietPolls >= 10 {
 			return nil
 		}
 		if attempt+1 < spawnPolls {
@@ -342,6 +413,9 @@ func waitForSpawnedWindows(ctx context.Context, driver wm.Driver, targets map[st
 				return err
 			}
 		}
+	}
+	if len(missing) == 0 {
+		return nil
 	}
 	slices.Sort(missing)
 	if _, err := fmt.Fprintf(stderr, "tess: spawned windows not found for %s\n", strings.Join(missing, ", ")); err != nil {
