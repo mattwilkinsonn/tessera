@@ -710,6 +710,70 @@ func testArrivalTarget(t *testing.T, test struct {
 		t.Fatalf("stack targets = %v; want %v", driver.stackTargets, test.wantStackTargets)
 	}
 }
+func TestArrivalBatchRefreshesAnchor(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *arrivalTargetDriver) error
+	}{
+		{
+			name: "handoff",
+			run: func(t *testing.T, driver *arrivalTargetDriver) error {
+				t.Helper()
+				return HandoffDeskWindows(t.Context(), testProfile(t), driver)
+			},
+		},
+		{
+			name: "recovery",
+			run: func(t *testing.T, driver *arrivalTargetDriver) error {
+				t.Helper()
+				env := commandEnv(t)
+				env.ReclaimedDeskWindows = make(map[int]struct{})
+				return RecoverDeskWindows(t.Context(), testProfile(t), driver, env)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			driver := &arrivalTargetDriver{Driver: fake.New(fake.Seed{
+				Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}},
+				Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "aw-home"}},
+				Windows: []fake.SeedWindow{
+					{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true},
+					{ID: 91, App: "Arc", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true},
+				},
+			})}
+			if err := test.run(t, driver); err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range []int{90, 91} {
+				window, found, err := driver.QueryWindow(t.Context(), id)
+				if err != nil || !found || window.SpaceID != "1" || window.Floating {
+					t.Fatalf("window %d = %+v, %t, %v; want tiled in AW home", id, window, found, err)
+				}
+			}
+			if !slices.Equal(driver.stackTargets, []int{90}) {
+				t.Fatalf("stack targets = %v; want second arrival stacked onto first [90]", driver.stackTargets)
+			}
+		})
+	}
+}
+
+func TestRecoverDeskWindowsWithLaptopAndUnknownExternal(t *testing.T) {
+	driver := fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}, {Idx: 2, Frame: displayFrame(2560, 1440)}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop-home"}, {DisplayIdx: 2, Label: "unknown-home"}},
+		Windows:  []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 2, Floating: true}},
+	})
+	env := commandEnv(t)
+	env.ReclaimedDeskWindows = make(map[int]struct{})
+	if err := RecoverDeskWindows(t.Context(), testProfile(t), driver, env); err != nil {
+		t.Fatal(err)
+	}
+	window, found, err := driver.QueryWindow(t.Context(), 90)
+	if err != nil || !found || window.SpaceID != "1" || window.Floating {
+		t.Fatalf("recovered arrival = %+v, %t, %v; want tiled in laptop home", window, found, err)
+	}
+}
+
 func TestHandoffDeskWindowsUsesLeftAWColumn(t *testing.T) {
 	driver := newLidClosedArrivalDriver()
 	if err := HandoffDeskWindows(t.Context(), testProfile(t), driver); err != nil {

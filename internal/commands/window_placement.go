@@ -34,16 +34,23 @@ func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	if !ok {
 		return nil
 	}
+	var batchAnchor int
 	for _, window := range windows {
 		if !window.Floating || !IsTileCandidate(window) {
 			continue
 		}
-		anchor := 0
-		if target.display != config.DisplayLaptop {
+		anchor := batchAnchor
+		if anchor == 0 && target.display != config.DisplayLaptop {
 			anchor = leftDeskSlotWindow(target, windows, window.ID)
 		}
 		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
 			return fmt.Errorf("handing off window %d to arrival target: %w", window.ID, err)
+		}
+		if target.display != config.DisplayLaptop && anchor == 0 {
+			batchAnchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
+			if err != nil {
+				return fmt.Errorf("refreshing handoff anchor for window %d: %w", window.ID, err)
+			}
 		}
 	}
 	return nil
@@ -64,12 +71,9 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	if err != nil {
 		return err
 	}
-	shouldRecover := externalDeskOnly(profile, displays) || len(displays) > 1 && arrivalTargetIsDesk(profile, displays)
-	if !shouldRecover {
-		return nil
-	}
-	target, ok := arrivalTargetFor(profile, displays)
-	if !ok {
+	target, hasTarget := arrivalTargetFor(profile, displays)
+	shouldRecover := externalDeskOnly(profile, displays) || len(displays) > 1 && hasTarget
+	if !shouldRecover || !hasTarget {
 		return nil
 	}
 	windows, err := driver.QueryWindows(ctx)
@@ -77,6 +81,7 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		return err
 	}
 	claimed := env.ReclaimedDeskWindows
+	var batchAnchor int
 	for _, window := range windows {
 		if !window.Floating || !IsTileCandidate(window) {
 			continue
@@ -84,12 +89,18 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		if _, exists := claimed[window.ID]; exists {
 			continue
 		}
-		anchor := 0
-		if target.display != config.DisplayLaptop {
+		anchor := batchAnchor
+		if anchor == 0 && target.display != config.DisplayLaptop {
 			anchor = leftDeskSlotWindow(target, windows, window.ID)
 		}
 		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
 			return fmt.Errorf("recovering window %d to arrival target: %w", window.ID, err)
+		}
+		if target.display != config.DisplayLaptop && anchor == 0 {
+			batchAnchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
+			if err != nil {
+				return fmt.Errorf("refreshing recovery anchor for window %d: %w", window.ID, err)
+			}
 		}
 	}
 	return nil
@@ -278,6 +289,17 @@ func leftDeskSlotWindow(target arrivalTarget, windows []wm.Window, arrivingID in
 		return 0
 	}
 	return anchor.ID
+}
+
+func placedArrivalAnchor(ctx context.Context, driver wm.Driver, target arrivalTarget, placedID int) (int, error) {
+	window, exists, err := driver.QueryWindow(ctx, placedID)
+	if err != nil {
+		return 0, err
+	}
+	if !exists || window.Floating || window.Minimized || !IsTileCandidate(window) || window.SpaceID != target.space {
+		return 0, nil
+	}
+	return window.ID, nil
 }
 
 func placeArrivalWindow(ctx context.Context, driver wm.Driver, window wm.Window, target arrivalTarget, leftSlotWindowID int) error {
