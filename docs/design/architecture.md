@@ -93,13 +93,24 @@ for display quiet, then serializes targeted placement with display and wake casc
 
 Eligible arrivals use the laptop home stack when the laptop is present; without
 the laptop display, they stack into the AW left desk slot, or the G9 left slot if
-the AW is absent. After a lid-close display cascade reclaims the connected desk,
-any displaced laptop windows and other unclaimed windows on the AW or G9 home
-space stack into that same arrival target. This preserves each desk's tracks.
+the AW is absent. A lid-close display cascade applies the desk plan even with
+only one recognized external display. It then stacks only IDs last seen on the
+laptop home space, excluding current desk-plan claims. The snapshot is refreshed
+after desk Apply, laptop arrivals, and startup recovery while the laptop is
+connected. Each confirmed startup placement is recorded immediately, before later
+placements or the final observation can fail. Removal keeps the last connected
+observation. Recovery consumes placed
+or intentionally excluded IDs even when a later placement or query fails; focus
+or active-space aborts keep candidates for a later cascade. Unrelated
+or deliberately placed unclaimed desk windows are never stacked by this recovery
+pass. The existing DeskPlan evacuation still applies and may move those windows.
 On desk-to-laptop transitions, Tessera hands off surviving floating arrivals
 before laptop convergence. Startup recovers floating candidates not owned by
 reclaimed desk slots. Laptop-only arrival rules and flex convergence remain
 unchanged.
+
+Fake-driver lifecycle tests verify recovery eligibility, slot-target selection,
+and per-candidate progress. They do not prove BSP track membership or weights.
 
 The app is a single CLI binary, working name **`tess`**, whose subcommands map
 1:1 onto the original scripts (`tess apply` ≙ apply-workspace.sh, `tess laptop`

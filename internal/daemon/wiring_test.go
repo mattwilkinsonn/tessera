@@ -12,6 +12,7 @@ import (
 	"gotest.tools/v3/assert"
 
 	"github.com/mattwilkinsonn/tessera/internal/commands"
+	"github.com/mattwilkinsonn/tessera/internal/engine"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 	"github.com/mattwilkinsonn/tessera/internal/wm/fake"
 )
@@ -404,6 +405,22 @@ func (d *ruleAwareSpawnDriver) SpawnWindow(ctx context.Context, argv []string) e
 }
 
 func TestWakeRoutineReclaimsRuleFloatedSpawns(t *testing.T) {
+	for _, topology := range []spawnTopology{
+		{name: "full desk", displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}}},
+		{name: "AW only", displays: []fake.SeedDisplay{{Idx: 2, Frame: &wm.Frame{W: 3440}}}},
+		{name: "G9 only", displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}}},
+	} {
+		t.Run(topology.name, func(t *testing.T) { testRuleFloatedSpawns(t, topology) })
+	}
+}
+
+type spawnTopology struct {
+	name     string
+	displays []fake.SeedDisplay
+}
+
+func testRuleFloatedSpawns(t *testing.T, topology spawnTopology) {
+	t.Helper()
 	for _, test := range []struct {
 		name    string
 		app     string
@@ -415,23 +432,134 @@ func TestWakeRoutineReclaimsRuleFloatedSpawns(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			profile := testProfile(t)
+			spaces := make([]fake.SeedSpace, 0, len(topology.displays))
+			for _, display := range topology.displays {
+				spaces = append(spaces, fake.SeedSpace{DisplayIdx: display.Idx})
+			}
+			// Only configure a spawn when this topology has the corresponding slot.
+			names := []string{}
+			for _, layout := range engine.ResolveDesk(profile, seedDisplays(topology.displays)) {
+				if _, present := engine.ResolveDisplay(profile, layout.Display, seedDisplays(topology.displays)); !present {
+					continue
+				}
+				for _, track := range layout.Tracks {
+					names = append(names, track...)
+				}
+			}
+			if !slices.Contains(names, test.name) {
+				t.Skip("configured app has no slot on this topology")
+			}
 			spec := profile.Windows[test.name]
 			spec.Spawn = []string{"open", "-a", test.app}
 			profile.Windows[test.name] = spec
-			driver := &ruleAwareSpawnDriver{Driver: fake.New(fake.Seed{
-				Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}},
-				Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3}},
-				SpawnApp: test.app,
-			})}
+			driver := &ruleAwareSpawnDriver{Driver: fake.New(fake.Seed{Displays: topology.displays, Spaces: spaces, SpawnApp: test.app})}
 			env := daemonEnv(t)
 			env.Nudge = func(context.Context, string) error { return nil }
 			if err := WakeRoutine(profile, driver, env, "/tmp/tess-rule-spawn.sock")(t.Context()); err != nil {
 				t.Fatal(err)
 			}
+			wantDisplay := test.display
+			if len(topology.displays) == 1 {
+				wantDisplay = topology.displays[0].Idx
+			}
 			windows, err := driver.QueryWindows(t.Context())
-			if err != nil || len(windows) != 1 || !driver.spawnedFloating || windows[0].Floating || windows[0].DisplayIdx != test.display {
+			if err != nil || len(windows) != 1 || !driver.spawnedFloating || windows[0].Floating || windows[0].DisplayIdx != wantDisplay {
 				t.Fatalf("spawn not reclaimed to configured desk slot: %+v, floated %t, %v", windows, driver.spawnedFloating, err)
 			}
 		})
+	}
+}
+
+func seedDisplays(displays []fake.SeedDisplay) []wm.Display {
+	result := make([]wm.Display, 0, len(displays))
+	for _, display := range displays {
+		result = append(result, wm.Display{Idx: display.Idx, Frame: *display.Frame})
+	}
+	return result
+}
+
+type wakeRecoveryDriver struct {
+	*fake.Driver
+	stacked         []int
+	failPlacementID int
+	failFinalQuery  bool
+	recovered       bool
+}
+
+func (d *wakeRecoveryDriver) StackOnto(ctx context.Context, target, id int) error {
+	d.stacked = append(d.stacked, id)
+	return d.Driver.StackOnto(ctx, target, id)
+}
+
+func (d *wakeRecoveryDriver) ToggleFloat(ctx context.Context, id int) error {
+	if id == d.failPlacementID {
+		return errors.New("startup placement rejected")
+	}
+	if err := d.Driver.ToggleFloat(ctx, id); err != nil {
+		return err
+	}
+	d.recovered = true
+	return nil
+}
+
+func (d *wakeRecoveryDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
+	if d.recovered && d.failFinalQuery {
+		d.failFinalQuery = false
+		return nil, errors.New("startup observation failed")
+	}
+	return d.Driver.QueryWindows(ctx)
+}
+
+func TestWakeRoutineObservesRecoveredLaptopArrival(t *testing.T) {
+	for _, stage := range []string{"success", "later placement fails", "final observation fails"} {
+		t.Run(stage, func(t *testing.T) { testWakeRecoveryObservation(t, stage) })
+	}
+}
+
+func testWakeRecoveryObservation(t *testing.T, stage string) {
+	t.Helper()
+	profile := testProfile(t)
+	env := daemonEnv(t)
+	env.Topology = &commands.TopologyState{}
+	env.Nudge = func(context.Context, string) error { return nil }
+	driver := &wakeRecoveryDriver{Driver: fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 1728}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2}},
+		Windows:  []fake.SeedWindow{{ID: 90, App: "Extra", SpaceIndex: 2, Floating: true, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true}},
+	})}
+	if stage == "later placement fails" {
+		if err := driver.SpawnWindow(t.Context(), []string{"open", "-a", "Extra"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := driver.Driver.ToggleFloat(t.Context(), 91); err != nil {
+			t.Fatal(err)
+		}
+		if err := driver.MoveWindowToSpace(t.Context(), 91, "2"); err != nil {
+			t.Fatal(err)
+		}
+		driver.failPlacementID = 91
+	}
+	driver.failFinalQuery = stage == "final observation fails"
+	wakeErr := WakeRoutine(profile, driver, env, "/tmp/tess-recovery.sock")(t.Context())
+	if (wakeErr != nil) != (stage != "success") {
+		t.Fatalf("wake error = %v for stage %q", wakeErr, stage)
+	}
+	window, found, err := driver.QueryWindow(t.Context(), 90)
+	if err != nil || !found || window.Floating || window.DisplayIdx != 1 {
+		t.Fatalf("startup arrival not placed on laptop: %+v, %v", window, err)
+	}
+	driver.Driver = fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 2, Frame: &wm.Frame{W: 3440}}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 2}},
+		Windows: []fake.SeedWindow{
+			{ID: 6, App: "Linear", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
+			{ID: 90, App: "Extra", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
+		},
+	})
+	if _, err := DisplayWork(profile, driver, env)(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(driver.stacked, []int{90}) {
+		t.Fatalf("startup arrival not recovered after lid close: %v", driver.stacked)
 	}
 }

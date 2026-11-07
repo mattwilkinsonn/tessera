@@ -34,6 +34,7 @@ type TopologyState struct {
 	displayMu        sync.Mutex
 	previousDisplays int
 	previousKnown    bool
+	laptopWindows    map[int]struct{}
 }
 
 // SerializeCascade runs a full cascade in the same domain as arrivals.
@@ -87,6 +88,59 @@ func (state *TopologyState) RecordDisplays(count int) (previous int, known bool)
 	state.previousDisplays = count
 	state.previousKnown = true
 	return previous, known
+}
+
+// RecordLaptopHomeWindows replaces the IDs last seen in the laptop home space.
+func (state *TopologyState) RecordLaptopHomeWindows(ids []int) {
+	if state == nil {
+		return
+	}
+	windows := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		windows[id] = struct{}{}
+	}
+	state.displayMu.Lock()
+	state.laptopWindows = windows
+	state.displayMu.Unlock()
+}
+
+// RecordLaptopHomeWindow adds a confirmed placement without replacing prior observations.
+func (state *TopologyState) RecordLaptopHomeWindow(id int) {
+	if state == nil {
+		return
+	}
+	state.displayMu.Lock()
+	defer state.displayMu.Unlock()
+	if state.laptopWindows == nil {
+		state.laptopWindows = make(map[int]struct{})
+	}
+	state.laptopWindows[id] = struct{}{}
+}
+
+// LaptopHomeWindows returns the latest snapshot of laptop home-space IDs.
+func (state *TopologyState) LaptopHomeWindows() map[int]struct{} {
+	windows := make(map[int]struct{})
+	if state == nil {
+		return windows
+	}
+	state.displayMu.Lock()
+	defer state.displayMu.Unlock()
+	for id := range state.laptopWindows {
+		windows[id] = struct{}{}
+	}
+	return windows
+}
+
+// ConsumeLaptopHomeWindows removes only resolved lid-close candidates.
+func (state *TopologyState) ConsumeLaptopHomeWindows(ids map[int]struct{}) {
+	if state == nil {
+		return
+	}
+	state.displayMu.Lock()
+	for id := range ids {
+		delete(state.laptopWindows, id)
+	}
+	state.displayMu.Unlock()
 }
 
 func (state *TopologyState) lock(ctx context.Context) error {
