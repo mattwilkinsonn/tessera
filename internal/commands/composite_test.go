@@ -3,11 +3,13 @@ package commands
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 	"testing/synctest"
 
 	"github.com/mattwilkinsonn/tessera/internal/config"
 	"github.com/mattwilkinsonn/tessera/internal/effects"
+	"github.com/mattwilkinsonn/tessera/internal/engine"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 	"github.com/mattwilkinsonn/tessera/internal/wm/fake"
 )
@@ -63,7 +65,7 @@ func TestApplyRestoredBrowserWindows(t *testing.T) {
 					SpawnApp: "Zen",
 					Windows: []fake.SeedWindow{{
 						ID: 100, App: "Zen", Floating: true, SpaceIndex: 1,
-						Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true,
+						Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true,
 					}},
 				}
 				if laptop {
@@ -71,6 +73,10 @@ func TestApplyRestoredBrowserWindows(t *testing.T) {
 					seed.Spaces = append(seed.Spaces, fake.SeedSpace{DisplayIdx: 3, Layout: wm.LayoutStack})
 				}
 				driver := &restoringBrowserDriver{Driver: fake.New(seed)}
+				baseline, _, err := driver.QueryWindow(t.Context(), 100)
+				if err != nil || !IsTileCandidate(baseline) {
+					t.Fatalf("baseline must be tile-eligible: %+v err=%v", baseline, err)
+				}
 				env := commandEnv(t)
 				if err := Apply(t.Context(), profile, driver, env); err != nil {
 					t.Fatal(err)
@@ -141,11 +147,14 @@ type lateBrowserDriver struct {
 	*restoringBrowserDriver
 	lateEligibility bool
 	focusFailed     bool
+	eligibleAfter   int
+	disturbOwner    bool
+	disturbed       bool
 }
 
 func (d *lateBrowserDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
 	windows, err := d.restoringBrowserDriver.QueryWindows(ctx)
-	if d.lateEligibility && d.polls <= 16 {
+	if d.lateEligibility && d.polls <= d.eligibleAfter {
 		for i := range windows {
 			windows[i].CanMove = false
 		}
@@ -161,13 +170,30 @@ func (d *lateBrowserDriver) FocusWindow(ctx context.Context, id int) (bool, erro
 	return d.Driver.FocusWindow(ctx, id)
 }
 
+func (d *lateBrowserDriver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target wm.SpaceLayoutTarget) error {
+	if err := d.Driver.RealizeSpaceLayout(ctx, id, target); err != nil {
+		return err
+	}
+	if d.disturbOwner && !d.disturbed && d.polls >= 19 && id == "1" && len(target.Tracks) > 0 {
+		d.disturbed = true
+		return d.Driver.ToggleFloat(ctx, target.Tracks[0][0])
+	}
+	return nil
+}
+
 func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
-	for _, lateEligibility := range []bool{true, false} {
-		name := "adoption focus fails once"
-		if lateEligibility {
-			name = "eligible after adoption"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		eligibleAfter int
+		disturbOwner  bool
+	}{
+		{name: "adoption focus fails once"},
+		{name: "eligible after adoption", eligibleAfter: 16},
+		{name: "eligible after reconciliation snapshot", eligibleAfter: 18},
+		{name: "eligible at overflow boundary", eligibleAfter: 19},
+		{name: "owner floats during second plan", disturbOwner: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				profile := testProfile(t)
 				profile.Windows["arc"] = config.WindowSpec{
@@ -183,7 +209,9 @@ func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
 						Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3, Layout: wm.LayoutStack}},
 						SpawnApp: "Zen",
 					})},
-					lateEligibility: lateEligibility,
+					lateEligibility: test.eligibleAfter > 0,
+					eligibleAfter:   test.eligibleAfter,
+					disturbOwner:    test.disturbOwner,
 				}
 				env := commandEnv(t)
 				if err := Apply(t.Context(), profile, driver, env); err != nil {
@@ -196,20 +224,35 @@ func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
 				if len(memory.Slots) != 4 {
 					t.Fatalf("single Apply filled %d slots; want 4", len(memory.Slots))
 				}
-				for _, ref := range memory.Slots {
-					before, exists, err := driver.QueryWindow(t.Context(), ref.ID)
-					if err != nil || !exists || before.Floating {
-						t.Fatalf("slot owner %d is unavailable: exists=%t floating=%t err=%v", ref.ID, exists, before.Floating, err)
-					}
-					if err := HandleWindowCreated(t.Context(), profile, driver, env, ref.ID); err != nil {
-						t.Fatal(err)
-					}
-					after, _, err := driver.QueryWindow(t.Context(), ref.ID)
-					if err != nil || after.SpaceID != before.SpaceID || after.Floating {
-						t.Fatalf("queued creation event moved slot owner %d: before=%+v after=%+v err=%v", ref.ID, before, after, err)
-					}
-				}
+				assertReconciledOwners(t, profile, driver, env, memory)
 			})
 		})
+	}
+}
+
+func assertReconciledOwners(t *testing.T, profile *config.Profile, driver wm.Driver, env Env, memory engine.SlotMemory) {
+	t.Helper()
+	for key, ref := range memory.Slots {
+		before, exists, err := driver.QueryWindow(t.Context(), ref.ID)
+		if err != nil || !exists || before.Floating {
+			t.Fatalf("slot owner %d is unavailable: exists=%t floating=%t err=%v", ref.ID, exists, before.Floating, err)
+		}
+		wantDisplay := 3
+		if strings.HasPrefix(string(key), "desk:g9/") {
+			wantDisplay = 1
+		}
+		if strings.HasPrefix(string(key), "desk:aw/") {
+			wantDisplay = 2
+		}
+		if before.DisplayIdx != wantDisplay {
+			t.Fatalf("slot %s owner %d on display %d; want %d", key, ref.ID, before.DisplayIdx, wantDisplay)
+		}
+		if err := HandleWindowCreated(t.Context(), profile, driver, env, ref.ID); err != nil {
+			t.Fatal(err)
+		}
+		after, _, err := driver.QueryWindow(t.Context(), ref.ID)
+		if err != nil || after.SpaceID != before.SpaceID || after.Floating {
+			t.Fatalf("queued creation event moved slot owner %d: before=%+v after=%+v err=%v", ref.ID, before, after, err)
+		}
 	}
 }

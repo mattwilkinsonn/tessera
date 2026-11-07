@@ -60,8 +60,9 @@ Run `tess --help` (or `tess -h`) for the generated subcommand help. Run
 help.
 
 On a desk setup, `tess apply` adopts newly launched browser windows into configured
-slots. It reconciles late-eligible restored windows before placing surplus windows
-on the arrival stack. Existing floating windows are left alone.
+slots. A bounded reconciliation loop admits late-eligible restored windows and
+repairs disturbed owners before placing surplus windows on the arrival stack.
+Selected slot owners never become overflow. Existing floating windows are left alone.
 
 ### Exit codes
 

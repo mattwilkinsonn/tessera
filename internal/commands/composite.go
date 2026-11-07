@@ -113,6 +113,8 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 			}
 		}
 	}
+	world.Windows = fresh
+	filled = placedDeskSlots(profile, world, filled)
 	updated := engine.PruneSlots(profile, engine.RecordSlots(world.Slots, filled, displays, fresh), fresh)
 	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
 		return fmt.Errorf("persisting window slot memory: %w", err)
@@ -290,9 +292,25 @@ func adoptSpawnedWindows(ctx context.Context, profile *config.Profile, driver wm
 	return nil
 }
 
-// reconcileSpawnedWindows gives vacant slots first refusal on late eligible floats.
-// Persisted first-pass claims reserve their owners while the same planner selects
-// only the additional candidates needed by the remaining slots.
+func projectSpawnedFloats(profile *config.Profile, names []string, windows []wm.Window, baseline, protected map[int]struct{}) map[int]wm.Window {
+	candidates := make(map[int]wm.Window)
+	for i, window := range windows {
+		_, old := baseline[window.ID]
+		_, owner := protected[window.ID]
+		if old && !owner || !window.Floating || window.Minimized || !IsTileCandidate(window) {
+			continue
+		}
+		if !owner && !matchesSpawnedApp(profile, names, window) {
+			continue
+		}
+		candidates[window.ID] = window
+		windows[i].Floating = false
+	}
+	return candidates
+}
+
+// reconcileSpawnedWindows reserves owners and gives late floats first refusal on
+// vacant slots. Overflow uses the final reconciled snapshot, never a newer view.
 func reconcileSpawnedWindows(
 	ctx context.Context,
 	profile *config.Profile,
@@ -305,83 +323,136 @@ func reconcileSpawnedWindows(
 	if len(names) == 0 {
 		return world, filled, nil
 	}
-	fresh, err := worldSnapshot(ctx, driver)
-	if err != nil {
-		return world, filled, err
-	}
-	fresh.Slots = engine.RecordSlots(world.Slots, filled, engine.DisplaySet(profile, fresh.Displays), fresh.Windows)
+	protected := make(map[int]struct{}, len(filled))
 	baseline := make(map[int]struct{}, len(before))
 	for _, window := range before {
 		baseline[window.ID] = struct{}{}
 	}
-	candidates := make(map[int]wm.Window)
-	for i, window := range fresh.Windows {
-		if _, old := baseline[window.ID]; old || !window.Floating || window.Minimized || !IsTileCandidate(window) {
-			continue
+	for attempt := range spawnPolls {
+		fresh, err := worldSnapshot(ctx, driver)
+		if err != nil {
+			return world, filled, err
 		}
-		if !slices.ContainsFunc(names, func(name string) bool {
-			spec := profile.Windows[name]
-			return engine.MatchesSpec(config.WindowSpec{App: spec.App, AppRE: spec.AppRE}, window.App, window.Title)
-		}) {
-			continue
+		for _, id := range filled {
+			protected[id] = struct{}{}
 		}
-		candidates[window.ID] = window
-		fresh.Windows[i].Floating = false
-	}
-	_, selected := engine.DeskPlan(profile, fresh)
-	for _, id := range selected {
-		if window, ok := candidates[id]; ok {
-			if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
-				return world, filled, fmt.Errorf("reconciling spawned window %d: %w", id, err)
+		fresh.Slots = engine.RecordSlots(world.Slots, filled, engine.DisplaySet(profile, fresh.Displays), fresh.Windows)
+		candidates := projectSpawnedFloats(profile, names, fresh.Windows, baseline, protected)
+		_, selected := engine.DeskPlan(profile, fresh)
+		for _, id := range selected {
+			protected[id] = struct{}{}
+			if window, ok := candidates[id]; ok {
+				if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
+					return world, filled, fmt.Errorf("reconciling spawned window %d: %w", id, err)
+				}
+			}
+		}
+		fresh.Windows, err = driver.QueryWindows(ctx)
+		if err != nil {
+			return world, filled, err
+		}
+		ops, planned := engine.DeskPlan(profile, fresh)
+		for _, id := range planned {
+			protected[id] = struct{}{}
+		}
+		if err := executor.RunPlan(ctx, driver, ops, nil); err != nil {
+			return world, filled, err
+		}
+		fresh.Windows, err = driver.QueryWindows(ctx)
+		if err != nil {
+			return world, filled, err
+		}
+		filled = placedDeskSlots(profile, fresh, planned)
+		world = fresh
+		// With vacancies, keep the existing bounded wait for eligibility changes.
+		if len(filled) == deskSlotCount(profile, fresh.Displays) {
+			break
+		}
+		if attempt+1 < spawnPolls {
+			if err := waitForSpawnPoll(ctx); err != nil {
+				return world, filled, err
 			}
 		}
 	}
-	// Re-read actual state: a best-effort focus can leave a candidate floating.
-	fresh.Windows, err = driver.QueryWindows(ctx)
-	if err != nil {
-		return world, filled, err
+	return world, filled, placeSpawnedArrivals(ctx, profile, driver, names, baseline, world, protected)
+}
+
+func matchesSpawnedApp(profile *config.Profile, names []string, window wm.Window) bool {
+	return slices.ContainsFunc(names, func(name string) bool {
+		spec := profile.Windows[name]
+		return engine.MatchesSpec(config.WindowSpec{App: spec.App, AppRE: spec.AppRE}, window.App, window.Title)
+	})
+}
+
+func deskSlotCount(profile *config.Profile, displays []wm.Display) int {
+	count := 0
+	for _, layout := range engine.ResolveDesk(profile, displays) {
+		if _, present := engine.ResolveDisplay(profile, layout.Display, displays); present {
+			for _, track := range layout.Tracks {
+				count += len(track)
+			}
+		}
 	}
-	ops, filled := engine.DeskPlan(profile, fresh)
-	if err := executor.RunPlan(ctx, driver, ops, nil); err != nil {
-		return world, filled, err
+	return count
+}
+
+// A claim is successful only while its owner is tiled on the intended display.
+func placedDeskSlots(profile *config.Profile, world engine.World, planned map[engine.SlotKey]int) map[engine.SlotKey]int {
+	placed := make(map[engine.SlotKey]int, len(planned))
+	for key, id := range planned {
+		for _, layout := range engine.ResolveDesk(profile, world.Displays) {
+			if !strings.HasPrefix(string(key), "desk:"+string(layout.Display)+"/") {
+				continue
+			}
+			index, present := engine.ResolveDisplay(profile, layout.Display, world.Displays)
+			for _, window := range world.Windows {
+				if present && window.ID == id && !window.Floating && !window.Minimized && window.DisplayIdx == index {
+					placed[key] = id
+				}
+			}
+		}
 	}
-	return fresh, filled, placeSpawnedArrivals(ctx, profile, driver, names, before, fresh.Displays)
+	return placed
 }
 
 // placeSpawnedArrivals handles restore overflow after configured slots are filled.
 // The baseline excludes floats that existed before this apply's launches.
-func placeSpawnedArrivals(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, before []wm.Window, displays []wm.Display) error {
-	target, ok := arrivalTargetFor(profile, displays)
+func placeSpawnedArrivals(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, baseline map[int]struct{}, world engine.World, protected map[int]struct{}) error {
+	target, ok := arrivalTargetFor(profile, world.Displays)
 	if !ok || len(names) == 0 {
 		return nil
 	}
-	baseline := make(map[int]struct{}, len(before))
-	for _, window := range before {
-		baseline[window.ID] = struct{}{}
-	}
-	windows, err := driver.QueryWindows(ctx)
-	if err != nil {
-		return err
-	}
 	anchor := 0
 	if target.display != config.DisplayLaptop {
-		anchor = leftDeskSlotWindow(target, windows, 0)
+		anchor = leftDeskSlotWindow(target, world.Windows, 0)
 	}
-	for _, window := range windows {
+	// Project this exact overflow snapshot to protect any still-vacant slot candidate.
+	projected := world
+	projected.Windows = slices.Clone(world.Windows)
+	for i, window := range projected.Windows {
+		if _, old := baseline[window.ID]; !old && IsTileCandidate(window) && matchesSpawnedApp(profile, names, window) {
+			projected.Windows[i].Floating = false
+		}
+	}
+	_, selected := engine.DeskPlan(profile, projected)
+	for _, id := range selected {
+		protected[id] = struct{}{}
+	}
+	for _, window := range world.Windows {
 		if _, old := baseline[window.ID]; old || !window.Floating || window.Minimized || !IsTileCandidate(window) {
 			continue
 		}
-		spawnedApp := slices.ContainsFunc(names, func(name string) bool {
-			spec := profile.Windows[name]
-			return engine.MatchesSpec(config.WindowSpec{App: spec.App, AppRE: spec.AppRE}, window.App, window.Title)
-		})
-		if !spawnedApp {
+		if _, owner := protected[window.ID]; owner {
+			continue
+		}
+		if !matchesSpawnedApp(profile, names, window) {
 			continue
 		}
 		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
 			return fmt.Errorf("placing restored window %d: %w", window.ID, err)
 		}
 		if target.display != config.DisplayLaptop && anchor == 0 {
+			var err error
 			anchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
 			if err != nil {
 				return err
