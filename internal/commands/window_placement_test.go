@@ -389,66 +389,82 @@ func TestRunDisplayCascadeHandoff(t *testing.T) {
 		t.Fatalf("surviving arrival was not claimed by pinned convergence: %+v", window)
 	}
 }
-func TestRunDisplayCascadeStacksDisplacedDeskWindows(t *testing.T) {
-	driver := &arrivalTargetDriver{Driver: fake.New(fake.Seed{
-		Displays: []fake.SeedDisplay{
-			{Idx: 1, Frame: displayFrame(5120, 2160)},
-			{Idx: 2, Frame: displayFrame(3440, 1440)},
-		},
-		Spaces: []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}},
-		Windows: []fake.SeedWindow{
-			{ID: 1, App: "Arc", SpaceIndex: 2, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
-			{ID: 2, App: "Obsidian", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
-			{ID: 3, App: "Ghostty", Title: "pc", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
-			{ID: 4, App: "Ghostty", Title: "mbp", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
-			deskSlotWindow(5, "Code", 1, 0),
-			deskSlotWindow(6, "Linear", 2, 0),
-			deskSlotWindow(7, "Arc", 2, 0),
-			deskSlotWindow(8, "Arc", 2, 0),
-			deskSlotWindow(9, "Akiflow", 2, 0),
-			deskSlotWindow(30, "Spotify", 2, 0),
-			deskSlotWindow(31, "Discord", 2, 0),
-			deskSlotWindow(32, "Qalculate", 2, 0),
-			deskSlotWindow(33, "Unconfigured", 2, 0),
-		},
-	})}
-	env := commandEnv(t)
-	env.Topology = &TopologyState{}
-	env.Topology.RecordDisplays(3)
-	if _, err := RunDisplayCascade(t.Context(), testProfile(t), driver, env); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(driver.stackTargets, []int{6, 6, 6, 6}) || !slices.Equal(driver.stackedWindows, []int{30, 31, 32, 33}) {
-		t.Fatalf("displaced stack targets/windows = %v/%v; want left AW slot [6] for windows [30 31 32 33]", driver.stackTargets, driver.stackedWindows)
-	}
-	spaces, err := driver.QuerySpaces(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var g9, aw wm.Space
-	for _, space := range spaces {
-		switch space.Label {
-		case "main":
-			g9 = space
-		case "plan":
-			aw = space
-		}
-	}
-	if g9.Layout != wm.LayoutBSP || aw.Layout != wm.LayoutBSP {
-		t.Fatalf("desk layouts = G9 %q, AW %q; want configured BSP layouts", g9.Layout, aw.Layout)
-	}
+
+func TestRunDisplayCascadeStacksOnlyDisplacedLaptopWindows(t *testing.T) {
 	for _, test := range []struct {
-		id int
-		x  float64
+		name     string
+		displays []fake.SeedDisplay
+		anchorID int
 	}{
-		{id: 1, x: 0}, {id: 3, x: 1536}, {id: 4, x: 3584},
-		{id: 6, x: 0}, {id: 8, x: 1720},
+		{name: "AW only", displays: []fake.SeedDisplay{{Idx: 2, Frame: displayFrame(3440, 1440)}}, anchorID: 6},
+		{name: "G9 only", displays: []fake.SeedDisplay{{Idx: 3, Frame: displayFrame(5120, 2160)}}, anchorID: 1},
+		{name: "both externals", displays: []fake.SeedDisplay{{Idx: 2, Frame: displayFrame(3440, 1440)}, {Idx: 3, Frame: displayFrame(5120, 2160)}}, anchorID: 6},
 	} {
-		window, found, err := driver.QueryWindow(t.Context(), test.id)
-		if err != nil || !found || window.Frame.X != test.x {
-			t.Fatalf("window %d = %+v, %t, %v; want configured track x=%v", test.id, window, found, err, test.x)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			profile := testProfile(t)
+			initialSeed := fake.Seed{
+				Displays: append([]fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}}, test.displays...),
+				Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}},
+				Windows: []fake.SeedWindow{
+					deskSlotWindow(30, "1Password", 1, 0),
+					deskSlotWindow(31, "Extra", 1, 500),
+					deskSlotWindow(32, "Code", 1, 1000),
+				},
+			}
+			for _, display := range test.displays {
+				initialSeed.Spaces = append(initialSeed.Spaces, fake.SeedSpace{DisplayIdx: display.Idx})
+			}
+			initial, err := worldSnapshot(t.Context(), fake.New(initialSeed))
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := commandEnv(t)
+			env.Topology = &TopologyState{}
+			recordLaptopHomeWindows(profile, env.Topology, initial)
+			env.Topology.RecordDisplays(len(initialSeed.Displays))
+			survivor := displacedDeskSeed(test.displays)
+			survivor.Windows = append(survivor.Windows, initialSeed.Windows...)
+			driver := &arrivalTargetDriver{Driver: fake.New(survivor)}
+			if result, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil || result != CascadeApplied {
+				t.Fatalf("cascade = %q, %v", result, err)
+			}
+			want := []int{30, 31}
+			if test.name == "AW only" {
+				want = append(want, 32)
+			}
+			if !slices.Equal(driver.stackedWindows, want) {
+				t.Fatalf("stacked IDs = %v; want %v (no desk windows or current claims)", driver.stackedWindows, want)
+			}
+			for _, target := range driver.stackTargets {
+				if target != test.anchorID {
+					t.Fatalf("stack target = %d; want %d", target, test.anchorID)
+				}
+			}
+			if len(env.Topology.LaptopHomeWindows()) != 0 {
+				t.Fatal("displaced laptop IDs were not consumed")
+			}
+			if err := Apply(t.Context(), profile, driver, env); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(driver.stackedWindows, want) {
+				t.Fatalf("second Apply stacked IDs %v; want unchanged %v", driver.stackedWindows, want)
+			}
+		})
 	}
+}
+
+func displacedDeskSeed(displays []fake.SeedDisplay) fake.Seed {
+	seed := fake.Seed{Displays: displays}
+	for _, display := range displays {
+		seed.Spaces = append(seed.Spaces, fake.SeedSpace{DisplayIdx: display.Idx})
+		space := len(seed.Spaces)
+		if display.Frame.W == 3440 {
+			seed.Windows = append(seed.Windows, deskSlotWindow(6, "Linear", space, 0), deskSlotWindow(7, "Arc", space, 1720), deskSlotWindow(40, "AW deliberate", space, 2000))
+			continue
+		}
+		seed.Windows = append(seed.Windows, deskSlotWindow(1, "Arc", space, 0), deskSlotWindow(2, "Ghostty", space, 1800), deskSlotWindow(41, "G9 deliberate", space, 3500))
+	}
+	return seed
 }
 
 func TestStackDisplacedDeskWindowsUsesLeftSlotAnchor(t *testing.T) {
@@ -461,11 +477,11 @@ func TestStackDisplacedDeskWindowsUsesLeftSlotAnchor(t *testing.T) {
 		{ID: 100, App: "Arc", SpaceID: "1", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Frame: wm.Frame{X: 0}},
 		{ID: 200, App: "Spotify", SpaceID: "1", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Frame: wm.Frame{X: 1720}},
 		{ID: 201, App: "Discord", SpaceID: "1", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Frame: wm.Frame{X: 3440}},
-	}, map[int]struct{}{100: {}}); err != nil {
+	}, map[int]struct{}{200: {}, 201: {}}, map[int]struct{}{100: {}}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(anchor.stackTargets, []int{100, 100}) {
-		t.Fatalf("stack targets = %v; want both windows on the anchor", anchor.stackTargets)
+	if !slices.Equal(anchor.stackTargets, []int{100, 100}) || !slices.Equal(anchor.stackedWindows, []int{200, 201}) {
+		t.Fatalf("stack calls = targets %v, windows %v; want only displaced IDs 200 and 201", anchor.stackTargets, anchor.stackedWindows)
 	}
 }
 
@@ -937,4 +953,64 @@ func assertLeftAWArrival(t *testing.T, driver *arrivalTargetDriver) {
 	if !slices.Equal(driver.stackTargets, []int{100}) {
 		t.Fatalf("stack targets = %v; want [100]", driver.stackTargets)
 	}
+}
+
+func TestLaptopArrivalDoesNotFallThroughToDesk(t *testing.T) {
+	for _, path := range []string{"created", "recovery", "handoff"} {
+		for _, topology := range []string{"laptop first", "laptop last", "laptop missing spaces", "laptop and AW missing spaces"} {
+			t.Run(path+"/"+topology, func(t *testing.T) {
+				profile := testProfile(t)
+				seed := fake.Seed{
+					Displays: []fake.SeedDisplay{
+						{Idx: 1, Frame: displayFrame(1728, 1117)},
+						{Idx: 2, Frame: displayFrame(3440, 1440)},
+						{Idx: 3, Frame: displayFrame(5120, 2160)},
+					},
+					Spaces:  []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2}, {DisplayIdx: 3}},
+					Windows: []fake.SeedWindow{deskSlotWindow(90, "1Password", 1, 0), deskSlotWindow(100, "Anchor", 3, 0)},
+				}
+				seed.Windows[0].Floating = true
+				driver := &partialArrivalDisplayDriver{arrivalTargetDriver: &arrivalTargetDriver{Driver: fake.New(seed)}, topology: topology}
+				env := commandEnv(t)
+				var err error
+				switch path {
+				case "created":
+					err = HandleWindowCreated(t.Context(), profile, driver, env, 90)
+				case "recovery":
+					err = RecoverDeskWindows(t.Context(), profile, driver, env)
+				case "handoff":
+					err = HandoffDeskWindows(t.Context(), profile, driver)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				window, found, err := driver.QueryWindow(t.Context(), 90)
+				if err != nil || !found || window.SpaceID != "1" || len(driver.stackTargets) != 0 {
+					t.Fatalf("laptop arrival escaped home: window=%+v found=%t err=%v stacks=%v", window, found, err, driver.stackTargets)
+				}
+			})
+		}
+	}
+}
+
+type partialArrivalDisplayDriver struct {
+	*arrivalTargetDriver
+	topology string
+}
+
+func (d *partialArrivalDisplayDriver) QueryDisplays(ctx context.Context) ([]wm.Display, error) {
+	displays, err := d.Driver.QueryDisplays(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch d.topology {
+	case "laptop last":
+		slices.Reverse(displays)
+	case "laptop missing spaces":
+		displays[0].SpaceIDs = nil
+	case "laptop and AW missing spaces":
+		displays[0].SpaceIDs = nil
+		displays[1].SpaceIDs = nil
+	}
+	return displays, nil
 }

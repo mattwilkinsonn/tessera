@@ -56,7 +56,7 @@ func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	return nil
 }
 
-func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arrivalTarget, windows []wm.Window, claimed map[int]struct{}) error {
+func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arrivalTarget, windows []wm.Window, displaced, claimed map[int]struct{}) error {
 	plannedWindows := make([]wm.Window, 0, len(claimed))
 	for _, window := range windows {
 		if _, planned := claimed[window.ID]; planned {
@@ -66,7 +66,10 @@ func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arr
 	leftSlotWindowID := leftDeskSlotWindow(target, plannedWindows, 0)
 	var batchAnchor int
 	for _, window := range windows {
-		if window.SpaceID != target.space || window.Minimized || window.Floating || !IsTileCandidate(window) {
+		if _, displaced := displaced[window.ID]; !displaced {
+			continue
+		}
+		if window.Minimized || window.Floating || !IsTileCandidate(window) {
 			continue
 		}
 		if _, exists := claimed[window.ID]; exists || window.ID == leftSlotWindowID {

@@ -93,9 +93,12 @@ for display quiet, then serializes targeted placement with display and wake casc
 
 Eligible arrivals use the laptop home stack when the laptop is present; without
 the laptop display, they stack into the AW left desk slot, or the G9 left slot if
-the AW is absent. After a lid-close display cascade reclaims the connected desk,
-any displaced laptop windows and other unclaimed windows on the AW or G9 home
-space stack into that same arrival target. This preserves each desk's tracks.
+the AW is absent. A lid-close display cascade applies the desk plan even with
+only one recognized external display. It then stacks only IDs last seen on the
+laptop home space, excluding current desk-plan claims. The snapshot is captured
+before desk teardown and consumed after recovery; later Apply calls do not
+restack deliberate or unrelated desk windows. AW's two-column and G9's
+three-column layouts keep their planned anchors.
 On desk-to-laptop transitions, Tessera hands off surviving floating arrivals
 before laptop convergence. Startup recovers floating candidates not owned by
 reclaimed desk slots. Laptop-only arrival rules and flex convergence remain

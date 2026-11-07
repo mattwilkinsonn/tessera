@@ -145,21 +145,21 @@ func RunDisplayCascade(ctx context.Context, profile *config.Profile, driver wm.D
 		}
 	}
 	env.Topology.RecordDisplays(len(displays))
-	if len(displays) <= 1 {
-		result, err := laptop(ctx, profile, driver, env, true)
-		switch result {
-		case LaptopContended:
-			return CascadeContended, err
-		case LaptopSkipped:
-			return CascadeSkipped, err
-		default:
-			return CascadeRan, err
+	if len(displays) > 1 || externalDeskOnly(profile, displays) {
+		if err := Apply(ctx, profile, driver, env); err != nil {
+			return "", err
 		}
+		return CascadeApplied, nil
 	}
-	if err := Apply(ctx, profile, driver, env); err != nil {
-		return "", err
+	result, err := laptop(ctx, profile, driver, env, true)
+	switch result {
+	case LaptopContended:
+		return CascadeContended, err
+	case LaptopSkipped:
+		return CascadeSkipped, err
+	default:
+		return CascadeRan, err
 	}
-	return CascadeApplied, nil
 }
 
 // RunFlexConverge converges a laptop event without spawning windows or reaping blank spaces.

@@ -25,7 +25,6 @@ const (
 	columnsIterationCap = 200
 )
 
-// Apply lays out each present display and nudges sketchybar once.
 func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
 	paths, nudge, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
@@ -50,6 +49,8 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	if err != nil {
 		return err
 	}
+	recordLaptopHomeWindows(profile, env.Topology, world)
+	laptopWindows := env.Topology.LaptopHomeWindows()
 	names := make([]string, 0)
 	for _, layout := range engine.ResolveDesk(profile, world.Displays) {
 		if _, present := engine.ResolveDisplay(profile, layout.Display, world.Displays); !present {
@@ -69,6 +70,7 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	if err != nil {
 		return err
 	}
+	recordLaptopHomeWindows(profile, env.Topology, world)
 	memory, err := effects.ReadSlots(paths.WindowSlots)
 	if err != nil {
 		return err
@@ -89,26 +91,24 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	if err != nil {
 		return fmt.Errorf("querying windows after desk plan: %w", err)
 	}
-	displays := engine.DisplaySet(profile, world.Displays)
-	if _, hasLaptop := engine.ResolveDisplay(profile, config.DisplayLaptop, world.Displays); !hasLaptop {
-		target, hasTarget := arrivalTargetFor(profile, world.Displays)
-		if hasTarget && target.display != config.DisplayLaptop {
-			claimed := make(map[int]struct{}, len(filled))
-			for _, id := range filled {
-				claimed[id] = struct{}{}
-			}
-			if err := stackDisplacedDeskWindows(ctx, driver, target, fresh, claimed); err != nil {
-				return fmt.Errorf("stacking displaced desk windows: %w", err)
-			}
-			fresh, err = driver.QueryWindows(ctx)
-			if err != nil {
-				return fmt.Errorf("querying windows after displaced-window stacking: %w", err)
-			}
+	target, hasTarget := arrivalTargetFor(profile, world.Displays)
+	if hasTarget && target.display != config.DisplayLaptop && len(laptopWindows) > 0 {
+		claimed := make(map[int]struct{}, len(filled))
+		for _, id := range filled {
+			claimed[id] = struct{}{}
 		}
+		if err := stackDisplacedDeskWindows(ctx, driver, target, fresh, laptopWindows, claimed); err != nil {
+			return fmt.Errorf("stacking displaced laptop windows: %w", err)
+		}
+		fresh, err = driver.QueryWindows(ctx)
+		if err != nil {
+			return fmt.Errorf("querying windows after displaced-window stacking: %w", err)
+		}
+		env.Topology.ConsumeLaptopHomeWindows()
 	}
 	world.Windows = fresh
 	filled = placedDeskSlots(profile, world, filled)
-	updated := engine.PruneSlots(profile, engine.RecordSlots(world.Slots, filled, displays, fresh), fresh)
+	updated := engine.PruneSlots(profile, engine.RecordSlots(world.Slots, filled, engine.DisplaySet(profile, world.Displays), fresh), fresh)
 	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
 		return fmt.Errorf("persisting window slot memory: %w", err)
 	}
@@ -240,6 +240,7 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 		return "", fmt.Errorf("querying windows after laptop converge: %w", err)
 	}
 	updated := engine.PruneSlots(profile, engine.RecordSlots(memory, final.Filled, engine.DisplaySet(profile, displays), fresh), fresh)
+	recordLaptopHomeWindows(profile, env.Topology, engine.World{Windows: fresh, Spaces: initialWorld.Spaces, Displays: initialWorld.Displays})
 	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
 		return "", fmt.Errorf("persisting window slot memory: %w", err)
 	}
@@ -247,6 +248,35 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 		return "", err
 	}
 	return LaptopRan, nil
+}
+
+func recordLaptopHomeWindows(profile *config.Profile, topology *TopologyState, world engine.World) {
+	laptopDisplay, found := engine.ResolveDisplay(profile, config.DisplayLaptop, world.Displays)
+	if !found {
+		return
+	}
+	var home wm.SpaceID
+	for _, space := range world.Spaces {
+		if space.DisplayIdx == laptopDisplay && space.Label == "laptop" {
+			home = space.ID
+			break
+		}
+	}
+	if home == "" {
+		for _, display := range world.Displays {
+			if display.Idx == laptopDisplay && len(display.SpaceIDs) > 0 {
+				home = display.SpaceIDs[0]
+				break
+			}
+		}
+	}
+	ids := make([]int, 0)
+	for _, window := range world.Windows {
+		if home != "" && window.SpaceID == home {
+			ids = append(ids, window.ID)
+		}
+	}
+	topology.RecordLaptopHomeWindows(ids)
 }
 
 func projectSpawnedFloats(profile *config.Profile, names []string, windows []wm.Window, baseline, protected map[int]struct{}) map[int]wm.Window {
