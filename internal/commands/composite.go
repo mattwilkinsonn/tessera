@@ -328,7 +328,10 @@ func reconcileSpawnedWindows(
 	for _, window := range before {
 		baseline[window.ID] = struct{}{}
 	}
-	for attempt := range spawnPolls {
+	deadline := time.Now().Add(5 * time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	for time.Now().Before(deadline) {
 		fresh, err := worldSnapshot(ctx, driver)
 		if err != nil {
 			return world, filled, err
@@ -355,8 +358,11 @@ func reconcileSpawnedWindows(
 		for _, id := range planned {
 			protected[id] = struct{}{}
 		}
-		if err := executor.RunPlan(ctx, driver, ops, nil); err != nil {
-			return world, filled, err
+		placed := placedDeskSlots(profile, fresh, planned)
+		if !maps.Equal(planned, filled) || !maps.Equal(placed, planned) {
+			if err := executor.RunPlan(ctx, driver, ops, nil); err != nil {
+				return world, filled, err
+			}
 		}
 		fresh.Windows, err = driver.QueryWindows(ctx)
 		if err != nil {
@@ -364,14 +370,11 @@ func reconcileSpawnedWindows(
 		}
 		filled = placedDeskSlots(profile, fresh, planned)
 		world = fresh
-		// With vacancies, keep the existing bounded wait for eligibility changes.
-		if len(filled) == deskSlotCount(profile, fresh.Displays) {
+		if spawnedDemandFilled(profile, names, fresh.Displays, filled) {
 			break
 		}
-		if attempt+1 < spawnPolls {
-			if err := waitForSpawnPoll(ctx); err != nil {
-				return world, filled, err
-			}
+		if err := waitForSpawnPoll(ctx); err != nil {
+			return world, filled, err
 		}
 	}
 	return world, filled, placeSpawnedArrivals(ctx, profile, driver, names, baseline, world, protected)
@@ -384,16 +387,25 @@ func matchesSpawnedApp(profile *config.Profile, names []string, window wm.Window
 	})
 }
 
-func deskSlotCount(profile *config.Profile, displays []wm.Display) int {
-	count := 0
+func spawnedDemandFilled(profile *config.Profile, names []string, displays []wm.Display, filled map[engine.SlotKey]int) bool {
 	for _, layout := range engine.ResolveDesk(profile, displays) {
-		if _, present := engine.ResolveDisplay(profile, layout.Display, displays); present {
-			for _, track := range layout.Tracks {
-				count += len(track)
+		if _, present := engine.ResolveDisplay(profile, layout.Display, displays); !present {
+			continue
+		}
+		configured := make([]string, 0)
+		for _, track := range layout.Tracks {
+			configured = append(configured, track...)
+		}
+		keys := engine.SlotKeys("desk", layout.Display, configured)
+		for i, name := range configured {
+			if slices.Contains(names, name) {
+				if _, ok := filled[keys[i]]; !ok {
+					return false
+				}
 			}
 		}
 	}
-	return count
+	return true
 }
 
 // A claim is successful only while its owner is tiled on the intended display.
@@ -405,8 +417,14 @@ func placedDeskSlots(profile *config.Profile, world engine.World, planned map[en
 				continue
 			}
 			index, present := engine.ResolveDisplay(profile, layout.Display, world.Displays)
+			home := wm.SpaceID("")
+			for _, display := range world.Displays {
+				if display.Idx == index && len(display.SpaceIDs) > 0 {
+					home = display.SpaceIDs[0]
+				}
+			}
 			for _, window := range world.Windows {
-				if present && window.ID == id && !window.Floating && !window.Minimized && window.DisplayIdx == index {
+				if present && window.ID == id && !window.Floating && !window.Minimized && window.DisplayIdx == index && window.SpaceID == home {
 					placed[key] = id
 				}
 			}

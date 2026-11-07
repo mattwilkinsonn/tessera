@@ -63,6 +63,9 @@ On a desk setup, `tess apply` adopts newly launched browser windows into configu
 slots. A bounded reconciliation loop admits late-eligible restored windows and
 repairs disturbed owners before placing surplus windows on the arrival stack.
 Selected slot owners never become overflow. Existing floating windows are left alone.
+Reconciliation polls eligibility for up to five seconds, without rebuilding
+unchanged layouts or waiting for unrelated missing apps. Owners must be tiled on
+the configured desk home space before their slots are recorded.
 
 ### Exit codes
 

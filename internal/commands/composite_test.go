@@ -150,6 +150,7 @@ type lateBrowserDriver struct {
 	eligibleAfter   int
 	disturbOwner    bool
 	disturbed       bool
+	layoutCalls     int
 }
 
 func (d *lateBrowserDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
@@ -171,6 +172,7 @@ func (d *lateBrowserDriver) FocusWindow(ctx context.Context, id int) (bool, erro
 }
 
 func (d *lateBrowserDriver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target wm.SpaceLayoutTarget) error {
+	d.layoutCalls++
 	if err := d.Driver.RealizeSpaceLayout(ctx, id, target); err != nil {
 		return err
 	}
@@ -217,6 +219,11 @@ func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
 				if err := Apply(t.Context(), profile, driver, env); err != nil {
 					t.Fatal(err)
 				}
+				// The profile includes absent non-spawnable apps. They must not
+				// force repeated rebuilds once all four browser slots are filled.
+				if driver.layoutCalls > 9 {
+					t.Fatalf("realized %d layouts; want at most 9", driver.layoutCalls)
+				}
 				memory, err := effects.ReadSlots(env.Paths.WindowSlots)
 				if err != nil {
 					t.Fatal(err)
@@ -227,6 +234,22 @@ func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
 				assertReconciledOwners(t, profile, driver, env, memory)
 			})
 		})
+	}
+}
+
+func TestPlacedDeskSlotsRejectsWrongSpace(t *testing.T) {
+	profile := testProfile(t)
+	key := engine.SlotKey("desk:g9/arc#1")
+	world := engine.World{
+		Displays: []wm.Display{{Idx: 1, Frame: *displayFrame(5120, 2160), SpaceIDs: []wm.SpaceID{"home", "other"}}},
+		Windows:  []wm.Window{{ID: 1, App: "Arc", DisplayIdx: 1, SpaceID: "other"}},
+	}
+	if got := placedDeskSlots(profile, world, map[engine.SlotKey]int{key: 1}); len(got) != 0 {
+		t.Fatalf("wrong-space owner recorded: %v", got)
+	}
+	world.Windows[0].SpaceID = "home"
+	if got := placedDeskSlots(profile, world, map[engine.SlotKey]int{key: 1}); got[key] != 1 {
+		t.Fatalf("home-space owner rejected: %v", got)
 	}
 }
 
