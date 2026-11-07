@@ -44,7 +44,7 @@ func Rules(ctx context.Context, profile *config.Profile, driver wm.Driver) error
 	if err != nil {
 		return err
 	}
-	if len(displays) > 1 {
+	if len(displays) > 1 || externalDeskOnly(profile, displays) {
 		manage := false
 		return ops.Add(ctx, wm.Rule{Label: "auto:desk-manage-off", App: "^.*$", Manage: &manage})
 	}

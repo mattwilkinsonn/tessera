@@ -86,15 +86,15 @@ At daemon startup, Tessera waits up to 60 seconds for yabai to answer a display
 query before running the initial wake cascade. If yabai is still unavailable,
 the daemon keeps serving; a later `tess wake` can retry the cascade.
 
-
-On a desk with multiple displays, newly created tile-type windows are floated by
-yabai and placed on the laptop home stack by the resident daemon. Placement
-waits for display changes to settle and shares serialization with wake and
-display cascades. It focuses the arriving window and only un-floats it when the
-active space is still the laptop target. Laptop-only arrival rules and flex
-convergence remain unchanged. A desk-to-laptop transition hands off surviving
-floating arrivals before laptop convergence.
-The engine remains pure, so layout behavior can be tested without spawning yabai.
+On a desk, newly created tile-type windows are floated by yabai and placed by
+the resident daemon. The laptop home stack remains the target when the laptop
+display is connected. With the laptop absent, arrivals use AW's left slot when
+AW is connected, or G9's left slot otherwise. When the target slot has an
+eligible tiled window, Tessera stacks the arrival onto the leftmost such window.
+Placement waits for display changes to settle and shares serialization with wake
+and display cascades. Laptop-only arrival rules and flex convergence remain
+unchanged. A desk-to-laptop transition hands off surviving floating arrivals
+before laptop convergence.
 
 ## Configuration
 

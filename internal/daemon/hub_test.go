@@ -348,18 +348,31 @@ func (d *pausedArrivalQueryDriver) QueryDisplays(ctx context.Context) ([]wm.Disp
 	return d.Driver.QueryDisplays(ctx)
 }
 
+func (d *pausedArrivalQueryDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
+	if err := d.pause(ctx, "windows"); err != nil {
+		return nil, err
+	}
+	return d.Driver.QueryWindows(ctx)
+}
+
 func (d *pausedArrivalQueryDriver) MoveWindowToSpace(ctx context.Context, id int, space wm.SpaceID) error {
 	d.mutations.Add(1)
 	return d.Driver.MoveWindowToSpace(ctx, id, space)
 }
 
-func (d *pausedArrivalQueryDriver) ToggleFloat(ctx context.Context, id int) error {
-	if err := d.Driver.ToggleFloat(ctx, id); err != nil {
+func (d *pausedArrivalQueryDriver) StackOnto(ctx context.Context, targetID, windowID int) error {
+	if err := d.Driver.StackOnto(ctx, targetID, windowID); err != nil {
 		return err
 	}
+	d.mutations.Add(1)
 	close(d.placed)
 	return nil
 }
+
+func (d *pausedArrivalQueryDriver) ToggleFloat(ctx context.Context, id int) error {
+	return d.Driver.ToggleFloat(ctx, id)
+}
+
 func (d *pausedArrivalQueryDriver) pause(ctx context.Context, stage string) error {
 	if stage != d.stage {
 		return nil
@@ -377,15 +390,18 @@ func (d *pausedArrivalQueryDriver) pause(ctx context.Context, stage string) erro
 }
 
 func TestHubArrivalDefersDisplayEventDuringQuery(t *testing.T) {
-	for _, stage := range []string{"window", "displays"} {
+	for _, stage := range []string{"window", "displays", "windows"} {
 		t.Run(stage, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				driver := &pausedArrivalQueryDriver{Driver: fake.New(fake.Seed{
-					Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 3, Frame: &wm.Frame{W: 1728}}},
-					Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 3}},
-					Windows:  []fake.SeedWindow{{ID: 90, App: "Code", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Floating: true}},
+					Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}},
+					Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}},
+					Windows: []fake.SeedWindow{
+						{ID: 100, App: "Arc", SpaceIndex: 2, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true},
+						{ID: 90, App: "Code", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Floating: true},
+					},
 				}), stage: stage, entered: make(chan struct{}), release: make(chan struct{}), placed: make(chan struct{})}
 				cascadeEntered, cascadeRelease := make(chan struct{}), make(chan struct{})
 				env := daemonEnv(t)

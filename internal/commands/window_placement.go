@@ -20,7 +20,7 @@ func IsTileCandidate(window wm.Window) bool {
 	return rootAXWindow && window.Level == 0 && window.CanMove && !window.Sticky && !fixedAndUndersized
 }
 
-// HandoffDeskWindows moves floating desk arrivals before laptop convergence.
+// HandoffDeskWindows moves floating desk arrivals before display convergence.
 func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.Driver) error {
 	windows, err := driver.QueryWindows(ctx)
 	if err != nil {
@@ -30,16 +30,27 @@ func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	if err != nil {
 		return err
 	}
-	target, ok := laptopHome(profile, displays)
+	target, ok := arrivalTargetFor(profile, displays)
 	if !ok {
 		return nil
 	}
+	var batchAnchor int
 	for _, window := range windows {
 		if !window.Floating || !IsTileCandidate(window) {
 			continue
 		}
-		if err := placeWindow(ctx, driver, window, target); err != nil {
-			return fmt.Errorf("handing off window %d to laptop: %w", window.ID, err)
+		anchor := batchAnchor
+		if anchor == 0 && target.display != config.DisplayLaptop {
+			anchor = leftDeskSlotWindow(target, windows, window.ID)
+		}
+		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
+			return fmt.Errorf("handing off window %d to arrival target: %w", window.ID, err)
+		}
+		if target.display != config.DisplayLaptop && anchor == 0 {
+			batchAnchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
+			if err != nil {
+				return fmt.Errorf("refreshing handoff anchor for window %d: %w", window.ID, err)
+			}
 		}
 	}
 	return nil
@@ -60,11 +71,9 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	if err != nil {
 		return err
 	}
-	if len(displays) <= 1 {
-		return nil
-	}
-	target, ok := laptopHome(profile, displays)
-	if !ok {
+	target, hasTarget := arrivalTargetFor(profile, displays)
+	shouldRecover := externalDeskOnly(profile, displays) || len(displays) > 1 && hasTarget
+	if !shouldRecover || !hasTarget {
 		return nil
 	}
 	windows, err := driver.QueryWindows(ctx)
@@ -72,6 +81,7 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		return err
 	}
 	claimed := env.ReclaimedDeskWindows
+	var batchAnchor int
 	for _, window := range windows {
 		if !window.Floating || !IsTileCandidate(window) {
 			continue
@@ -79,8 +89,18 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		if _, exists := claimed[window.ID]; exists {
 			continue
 		}
-		if err := placeWindow(ctx, driver, window, target); err != nil {
-			return fmt.Errorf("recovering window %d to laptop: %w", window.ID, err)
+		anchor := batchAnchor
+		if anchor == 0 && target.display != config.DisplayLaptop {
+			anchor = leftDeskSlotWindow(target, windows, window.ID)
+		}
+		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
+			return fmt.Errorf("recovering window %d to arrival target: %w", window.ID, err)
+		}
+		if target.display != config.DisplayLaptop && anchor == 0 {
+			batchAnchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
+			if err != nil {
+				return fmt.Errorf("refreshing recovery anchor for window %d: %w", window.ID, err)
+			}
 		}
 	}
 	return nil
@@ -114,17 +134,29 @@ func HandleWindowCreated(ctx context.Context, profile *config.Profile, driver wm
 	if err != nil {
 		return err
 	}
-	if len(displays) <= 1 {
+	deskTopology := len(displays) > 1 || externalDeskOnly(profile, displays)
+	if !deskTopology {
 		return nil
 	}
-	target, ok := laptopHome(profile, displays)
+	target, ok := arrivalTargetFor(profile, displays)
 	if !ok {
 		return nil
 	}
 	if env.ArrivalReady != nil && !env.ArrivalReady() {
 		return ErrDisplayPending
 	}
-	return placeWindow(placementCtx, driver, window, target)
+	if target.display != config.DisplayLaptop {
+		windows, err := driver.QueryWindows(placementCtx)
+		if err != nil {
+			return err
+		}
+		anchor := leftDeskSlotWindow(target, windows, window.ID)
+		if env.ArrivalReady != nil && !env.ArrivalReady() {
+			return ErrDisplayPending
+		}
+		return placeArrivalWindow(placementCtx, driver, window, target, anchor)
+	}
+	return placeWindow(placementCtx, driver, window, target.space)
 }
 
 func acquirePlacementLocks(ctx context.Context, paths effects.Paths) (interface{ Unlock() error }, interface{ Unlock() error }, error) {
@@ -200,23 +232,109 @@ func lockPlacement(ctx context.Context, paths effects.Paths) (func(), error) {
 	}, nil
 }
 
-func laptopHome(profile *config.Profile, displays []wm.Display) (wm.SpaceID, bool) {
-	index, ok := engine.ResolveDisplay(profile, config.DisplayLaptop, displays)
-	if !ok {
-		return "", false
+type arrivalTarget struct {
+	space   wm.SpaceID
+	display config.DisplayName
+}
+
+func externalDeskOnly(profile *config.Profile, displays []wm.Display) bool {
+	if len(displays) != 1 {
+		return false
 	}
-	for _, display := range displays {
-		if display.Idx == index && len(display.SpaceIDs) > 0 {
-			return display.SpaceIDs[0], true
+	if _, hasLaptop := engine.ResolveDisplay(profile, config.DisplayLaptop, displays); hasLaptop {
+		return false
+	}
+	return arrivalTargetIsDesk(profile, displays)
+}
+
+func arrivalTargetIsDesk(profile *config.Profile, displays []wm.Display) bool {
+	_, hasAW := engine.ResolveDisplay(profile, config.DisplayAW, displays)
+	_, hasG9 := engine.ResolveDisplay(profile, config.DisplayG9, displays)
+	return hasAW || hasG9
+}
+
+func arrivalTargetFor(profile *config.Profile, displays []wm.Display) (arrivalTarget, bool) {
+	for _, name := range [...]config.DisplayName{config.DisplayLaptop, config.DisplayAW, config.DisplayG9} {
+		index, ok := engine.ResolveDisplay(profile, name, displays)
+		if !ok {
+			continue
+		}
+		for _, display := range displays {
+			if display.Idx != index {
+				continue
+			}
+			if len(display.SpaceIDs) == 0 {
+				return arrivalTarget{}, false
+			}
+			return arrivalTarget{space: display.SpaceIDs[0], display: name}, true
+		}
+		return arrivalTarget{}, false
+	}
+	return arrivalTarget{}, false
+}
+
+func leftDeskSlotWindow(target arrivalTarget, windows []wm.Window, arrivingID int) int {
+	var anchor wm.Window
+	hasAnchor := false
+	for _, window := range windows {
+		if window.ID == arrivingID || window.SpaceID != target.space || window.Minimized || window.Floating || !IsTileCandidate(window) {
+			continue
+		}
+		if !hasAnchor || window.Frame.X < anchor.Frame.X || window.Frame.X == anchor.Frame.X && window.ID < anchor.ID {
+			anchor = window
+			hasAnchor = true
 		}
 	}
-	return "", false
+	if !hasAnchor {
+		return 0
+	}
+	return anchor.ID
+}
+
+func placedArrivalAnchor(ctx context.Context, driver wm.Driver, target arrivalTarget, placedID int) (int, error) {
+	window, exists, err := driver.QueryWindow(ctx, placedID)
+	if err != nil {
+		return 0, err
+	}
+	if !exists || window.Floating || window.Minimized || !IsTileCandidate(window) || window.SpaceID != target.space {
+		return 0, nil
+	}
+	return window.ID, nil
+}
+
+func placeArrivalWindow(ctx context.Context, driver wm.Driver, window wm.Window, target arrivalTarget, leftSlotWindowID int) error {
+	if leftSlotWindowID <= 0 {
+		return placeWindow(ctx, driver, window, target.space)
+	}
+	if window.SpaceID != target.space {
+		if err := driver.MoveWindowToSpace(ctx, window.ID, target.space); err != nil {
+			return fmt.Errorf("moving arrival to left desk slot: %w", err)
+		}
+	}
+	focused, err := driver.FocusWindow(ctx, window.ID)
+	if err != nil {
+		return fmt.Errorf("focusing arriving window: %w", err)
+	}
+	if !focused {
+		return nil
+	}
+	active, exists, err := driver.QueryFocusedSpace(ctx)
+	if err != nil {
+		return fmt.Errorf("verifying active space: %w", err)
+	}
+	if !exists || active.ID != target.space {
+		return nil
+	}
+	if err := driver.StackOnto(ctx, leftSlotWindowID, window.ID); err != nil {
+		return fmt.Errorf("stacking arriving window in left desk slot: %w", err)
+	}
+	return nil
 }
 
 func placeWindow(ctx context.Context, driver wm.Driver, window wm.Window, target wm.SpaceID) error {
 	if window.SpaceID != target {
 		if err := driver.MoveWindowToSpace(ctx, window.ID, target); err != nil {
-			return fmt.Errorf("moving window to laptop home stack: %w", err)
+			return fmt.Errorf("moving window to arrival target: %w", err)
 		}
 	}
 	focused, err := driver.FocusWindow(ctx, window.ID)
