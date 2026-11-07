@@ -87,7 +87,8 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 		return err
 	}
 	if deskTopology {
-		if err := placeSpawnedArrivals(ctx, profile, driver, spawnedNames, beforeSpawn, world.Displays); err != nil {
+		world, filled, err = reconcileSpawnedWindows(ctx, profile, driver, spawnedNames, beforeSpawn, world, filled)
+		if err != nil {
 			return err
 		}
 	}
@@ -287,6 +288,64 @@ func adoptSpawnedWindows(ctx context.Context, profile *config.Profile, driver wm
 		}
 	}
 	return nil
+}
+
+// reconcileSpawnedWindows gives vacant slots first refusal on late eligible floats.
+// Persisted first-pass claims reserve their owners while the same planner selects
+// only the additional candidates needed by the remaining slots.
+func reconcileSpawnedWindows(
+	ctx context.Context,
+	profile *config.Profile,
+	driver wm.Driver,
+	names []string,
+	before []wm.Window,
+	world engine.World,
+	filled map[engine.SlotKey]int,
+) (engine.World, map[engine.SlotKey]int, error) {
+	if len(names) == 0 {
+		return world, filled, nil
+	}
+	fresh, err := worldSnapshot(ctx, driver)
+	if err != nil {
+		return world, filled, err
+	}
+	fresh.Slots = engine.RecordSlots(world.Slots, filled, engine.DisplaySet(profile, fresh.Displays), fresh.Windows)
+	baseline := make(map[int]struct{}, len(before))
+	for _, window := range before {
+		baseline[window.ID] = struct{}{}
+	}
+	candidates := make(map[int]wm.Window)
+	for i, window := range fresh.Windows {
+		if _, old := baseline[window.ID]; old || !window.Floating || window.Minimized || !IsTileCandidate(window) {
+			continue
+		}
+		if !slices.ContainsFunc(names, func(name string) bool {
+			spec := profile.Windows[name]
+			return engine.MatchesSpec(config.WindowSpec{App: spec.App, AppRE: spec.AppRE}, window.App, window.Title)
+		}) {
+			continue
+		}
+		candidates[window.ID] = window
+		fresh.Windows[i].Floating = false
+	}
+	_, selected := engine.DeskPlan(profile, fresh)
+	for _, id := range selected {
+		if window, ok := candidates[id]; ok {
+			if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
+				return world, filled, fmt.Errorf("reconciling spawned window %d: %w", id, err)
+			}
+		}
+	}
+	// Re-read actual state: a best-effort focus can leave a candidate floating.
+	fresh.Windows, err = driver.QueryWindows(ctx)
+	if err != nil {
+		return world, filled, err
+	}
+	ops, filled := engine.DeskPlan(profile, fresh)
+	if err := executor.RunPlan(ctx, driver, ops, nil); err != nil {
+		return world, filled, err
+	}
+	return fresh, filled, placeSpawnedArrivals(ctx, profile, driver, names, before, fresh.Displays)
 }
 
 // placeSpawnedArrivals handles restore overflow after configured slots are filled.

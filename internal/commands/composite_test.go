@@ -61,7 +61,10 @@ func TestApplyRestoredBrowserWindows(t *testing.T) {
 					Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}},
 					Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}},
 					SpawnApp: "Zen",
-					Windows:  []fake.SeedWindow{{ID: 100, App: "Zen", Floating: true, SpaceIndex: 1}},
+					Windows: []fake.SeedWindow{{
+						ID: 100, App: "Zen", Floating: true, SpaceIndex: 1,
+						Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true,
+					}},
 				}
 				if laptop {
 					seed.Displays = append(seed.Displays, fake.SeedDisplay{Idx: 3, Frame: displayFrame(1728, 1117)})
@@ -109,8 +112,8 @@ func assertRestoredBrowsers(t *testing.T, windows []wm.Window, claimed map[int]b
 	claimedByDisplay := make(map[int]int)
 	for _, window := range windows {
 		if window.ID == 100 {
-			if !window.Floating {
-				t.Fatal("pre-existing float was adopted")
+			if !window.Floating || window.DisplayIdx != 1 || window.SpaceID != "1" {
+				t.Fatal("pre-existing float was adopted or moved")
 			}
 			continue
 		}
@@ -129,5 +132,84 @@ func assertRestoredBrowsers(t *testing.T, windows []wm.Window, claimed map[int]b
 	}
 	if laptop && claimedByDisplay[3] != 1 {
 		t.Errorf("claimed laptop browsers = %d; want 1", claimedByDisplay[3])
+	}
+}
+
+// The first adoption sees unavailable windows, or cannot focus one once.
+// Later snapshots expose the same IDs as eligible without another launch.
+type lateBrowserDriver struct {
+	*restoringBrowserDriver
+	lateEligibility bool
+	focusFailed     bool
+}
+
+func (d *lateBrowserDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
+	windows, err := d.restoringBrowserDriver.QueryWindows(ctx)
+	if d.lateEligibility && d.polls <= 16 {
+		for i := range windows {
+			windows[i].CanMove = false
+		}
+	}
+	return windows, err
+}
+
+func (d *lateBrowserDriver) FocusWindow(ctx context.Context, id int) (bool, error) {
+	if !d.lateEligibility && !d.focusFailed {
+		d.focusFailed = true
+		return false, nil
+	}
+	return d.Driver.FocusWindow(ctx, id)
+}
+
+func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
+	for _, lateEligibility := range []bool{true, false} {
+		name := "adoption focus fails once"
+		if lateEligibility {
+			name = "eligible after adoption"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				profile := testProfile(t)
+				profile.Windows["arc"] = config.WindowSpec{
+					App: "Zen", AppRE: regexp.MustCompile("Zen"), Spawn: []string{"open", "-na", "Zen"},
+				}
+				driver := &lateBrowserDriver{
+					restoringBrowserDriver: &restoringBrowserDriver{Driver: fake.New(fake.Seed{
+						Displays: []fake.SeedDisplay{
+							{Idx: 1, Frame: displayFrame(5120, 2160)},
+							{Idx: 2, Frame: displayFrame(3440, 1440)},
+							{Idx: 3, Frame: displayFrame(1728, 1117)},
+						},
+						Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3, Layout: wm.LayoutStack}},
+						SpawnApp: "Zen",
+					})},
+					lateEligibility: lateEligibility,
+				}
+				env := commandEnv(t)
+				if err := Apply(t.Context(), profile, driver, env); err != nil {
+					t.Fatal(err)
+				}
+				memory, err := effects.ReadSlots(env.Paths.WindowSlots)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memory.Slots) != 4 {
+					t.Fatalf("single Apply filled %d slots; want 4", len(memory.Slots))
+				}
+				for _, ref := range memory.Slots {
+					before, exists, err := driver.QueryWindow(t.Context(), ref.ID)
+					if err != nil || !exists || before.Floating {
+						t.Fatalf("slot owner %d is unavailable: exists=%t floating=%t err=%v", ref.ID, exists, before.Floating, err)
+					}
+					if err := HandleWindowCreated(t.Context(), profile, driver, env, ref.ID); err != nil {
+						t.Fatal(err)
+					}
+					after, _, err := driver.QueryWindow(t.Context(), ref.ID)
+					if err != nil || after.SpaceID != before.SpaceID || after.Floating {
+						t.Fatalf("queued creation event moved slot owner %d: before=%+v after=%+v err=%v", ref.ID, before, after, err)
+					}
+				}
+			})
+		})
 	}
 }

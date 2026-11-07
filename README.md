@@ -59,6 +59,10 @@ Run `tess --help` (or `tess -h`) for the generated subcommand help. Run
 `tess --version` (or `tess -v`) for the version. Bare `tess` also prints the
 help.
 
+On a desk setup, `tess apply` adopts newly launched browser windows into configured
+slots. It reconciles late-eligible restored windows before placing surplus windows
+on the arrival stack. Existing floating windows are left alone.
+
 ### Exit codes
 
 - `0` — success, help/version output, or bare `tess` displaying help.
