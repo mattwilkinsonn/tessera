@@ -17,7 +17,6 @@ import (
 	"github.com/mattwilkinsonn/tessera/internal/engine"
 	"github.com/mattwilkinsonn/tessera/internal/executor"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
-	"github.com/samber/mo"
 )
 
 const (
@@ -250,42 +249,6 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 	return LaptopRan, nil
 }
 
-// adoptSpawnedWindows admits only new matching tile candidates before desk claims.
-// The caller holds the apply and slot locks and the signal guard throughout spawning.
-func adoptSpawnedWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, before []wm.Window) error {
-	baseline := make(map[int]struct{}, len(before))
-	for _, window := range before {
-		baseline[window.ID] = struct{}{}
-	}
-	windows, err := driver.QueryWindows(ctx)
-	if err != nil {
-		return err
-	}
-	// Project only eligible new floats as available to reuse the planner's exact
-	// match, spawn fallback, classification, and distinct-ID selection policy.
-	candidates := make([]wm.Window, 0, len(windows))
-	for _, window := range windows {
-		if _, old := baseline[window.ID]; old || !window.Floating || window.Minimized || !IsTileCandidate(window) {
-			continue
-		}
-		window.Floating = false
-		candidates = append(candidates, window)
-	}
-	claims := engine.NewClaimSet(profile, engine.SlotMemory{}, nil)
-	for _, id := range claims.ClaimMany(candidates, names, mo.None[int]()) {
-		for _, window := range windows {
-			if window.ID != id {
-				continue
-			}
-			if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
-				return fmt.Errorf("adopting spawned window %d: %w", window.ID, err)
-			}
-			break
-		}
-	}
-	return nil
-}
-
 func projectSpawnedFloats(profile *config.Profile, names []string, windows []wm.Window, baseline, protected map[int]struct{}) map[int]wm.Window {
 	candidates := make(map[int]wm.Window)
 	for i, window := range windows {
@@ -346,12 +309,13 @@ func reconcileSpawnedWindows(
 	}
 	// Phases B and C: one unconditional rebuild, then at most one repair for
 	// candidates or owners that changed while that rebuild was running.
+	previousSelection := make(map[engine.SlotKey]int)
 	for rebuild := range 2 {
 		projected := world
 		projected.Windows = slices.Clone(world.Windows)
 		candidates := projectSpawnedFloats(profile, names, projected.Windows, baseline, protected)
 		_, selected := engine.DeskPlan(profile, projected)
-		if rebuild > 0 && maps.Equal(placedDeskSlots(profile, world, selected), selected) {
+		if rebuild > 0 && maps.Equal(selected, previousSelection) && maps.Equal(placedDeskSlots(profile, world, selected), selected) {
 			break
 		}
 		for _, id := range selected {
@@ -379,7 +343,8 @@ func reconcileSpawnedWindows(
 			return world, filled, err
 		}
 		filled = placedDeskSlots(profile, world, planned)
-		world.Slots = engine.RecordSlots(projected.Slots, planned, engine.DisplaySet(profile, world.Displays), world.Windows)
+		world.Slots = engine.RecordSlots(projected.Slots, filled, engine.DisplaySet(profile, world.Displays), world.Windows)
+		previousSelection = planned
 	}
 	return world, filled, placeSpawnedArrivals(ctx, profile, driver, names, baseline, world, protected)
 }

@@ -334,3 +334,69 @@ func assertReconciledOwners(t *testing.T, profile *config.Profile, driver wm.Dri
 		}
 	}
 }
+
+type rebuildReviewDriver struct {
+	*fake.Driver
+	lateTiled   bool
+	mutated     bool
+	failedOwner int
+}
+
+func (d *rebuildReviewDriver) FocusWindow(ctx context.Context, id int) (bool, error) {
+	if d.failedOwner == id {
+		return false, nil
+	}
+	return d.Driver.FocusWindow(ctx, id)
+}
+
+func (d *rebuildReviewDriver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target wm.SpaceLayoutTarget) error {
+	if err := d.Driver.RealizeSpaceLayout(ctx, id, target); err != nil {
+		return err
+	}
+	if d.mutated || len(target.Tracks) == 0 {
+		return nil
+	}
+	d.mutated = true
+	if d.lateTiled {
+		return d.Driver.SpawnWindow(ctx, []string{"restored tiled browser"})
+	}
+	d.failedOwner = target.Tracks[0][0]
+	return d.Driver.ToggleFloat(ctx, d.failedOwner)
+}
+
+func TestReconciliationRecordsValidatedSelections(t *testing.T) {
+	for _, lateTiled := range []bool{true, false} {
+		name := "failed repair is not recorded"
+		if lateTiled {
+			name = "late tiled selection is recorded"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				profile := testProfile(t)
+				profile.Windows["arc"] = config.WindowSpec{App: "Zen", AppRE: regexp.MustCompile("Zen"), Spawn: []string{"open"}}
+				profile.Desk = []config.DeskLayout{{Display: config.DisplayLaptop, Kind: config.LayoutStack, Tracks: [][]string{{"arc", "arc"}}}}
+				driver := &rebuildReviewDriver{Driver: fake.New(fake.Seed{
+					Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}},
+					Spaces:   []fake.SeedSpace{{DisplayIdx: 1}}, SpawnApp: "Zen",
+					Windows: []fake.SeedWindow{{ID: 1, App: "Zen", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true}},
+				}), lateTiled: lateTiled}
+				world, err := worldSnapshot(t.Context(), driver)
+				if err != nil {
+					t.Fatal(err)
+				}
+				world.Slots = engine.SlotMemory{Slots: make(map[engine.SlotKey]engine.WindowRef)}
+				world, filled, err := reconcileSpawnedWindows(t.Context(), profile, driver, []string{"arc"}, nil, world, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := 0
+				if lateTiled {
+					want = 2
+				}
+				if len(filled) != want || len(world.Slots.Slots) != want {
+					t.Fatalf("filled=%v recorded=%v; want %d validated owners", filled, world.Slots.Slots, want)
+				}
+			})
+		})
+	}
+}

@@ -614,7 +614,7 @@ func TestRecoverDeskWindowsIgnoresHistoricalClaims(t *testing.T) {
 	}
 }
 
-func TestAdoptSpawnedWindowsClaimPolicy(t *testing.T) {
+func TestProjectSpawnedFloatsClaimPolicy(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		titles   []string
@@ -657,13 +657,27 @@ func TestAdoptSpawnedWindowsClaimPolicy(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := runPlacementCommand(t.Context(), commandEnv(t), func(ctx context.Context) error {
-				return adoptSpawnedWindows(ctx, profile, driver, []string{"ghostty-wave"}, before)
-			}); err != nil {
+			windows, err := driver.QueryWindows(t.Context())
+			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(driver.toggled, test.want) {
-				t.Fatalf("adopted %v; want %v", driver.toggled, test.want)
+			baseline := make(map[int]struct{}, len(before))
+			for _, window := range before {
+				baseline[window.ID] = struct{}{}
+			}
+			profile.Desk = []config.DeskLayout{{Display: config.DisplayG9, Kind: config.LayoutColumns, Tracks: [][]string{{"ghostty-wave"}}}}
+			projectSpawnedFloats(profile, []string{"ghostty-wave"}, windows, baseline, nil)
+			displays, err := driver.QueryDisplays(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, selected := engine.DeskPlan(profile, engine.World{Windows: windows, Displays: displays})
+			ids := make([]int, 0, len(selected))
+			for _, id := range selected {
+				ids = append(ids, id)
+			}
+			if !slices.Equal(ids, test.want) {
+				t.Fatalf("selected %v; want %v", ids, test.want)
 			}
 		})
 	}
