@@ -38,7 +38,10 @@ func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		if !window.Floating || !IsTileCandidate(window) {
 			continue
 		}
-		anchor := leftDeskSlotWindow(profile, target, displays, windows, window.ID)
+		anchor := 0
+		if target.display != config.DisplayLaptop {
+			anchor = leftDeskSlotWindow(target, windows, window.ID)
+		}
 		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
 			return fmt.Errorf("handing off window %d to arrival target: %w", window.ID, err)
 		}
@@ -61,7 +64,8 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	if err != nil {
 		return err
 	}
-	if len(displays) <= 1 {
+	shouldRecover := externalDeskOnly(profile, displays) || len(displays) > 1 && arrivalTargetIsDesk(profile, displays)
+	if !shouldRecover {
 		return nil
 	}
 	target, ok := arrivalTargetFor(profile, displays)
@@ -80,7 +84,10 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		if _, exists := claimed[window.ID]; exists {
 			continue
 		}
-		anchor := leftDeskSlotWindow(profile, target, displays, windows, window.ID)
+		anchor := 0
+		if target.display != config.DisplayLaptop {
+			anchor = leftDeskSlotWindow(target, windows, window.ID)
+		}
 		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
 			return fmt.Errorf("recovering window %d to arrival target: %w", window.ID, err)
 		}
@@ -116,7 +123,8 @@ func HandleWindowCreated(ctx context.Context, profile *config.Profile, driver wm
 	if err != nil {
 		return err
 	}
-	if len(displays) <= 1 {
+	deskTopology := len(displays) > 1 || externalDeskOnly(profile, displays)
+	if !deskTopology {
 		return nil
 	}
 	target, ok := arrivalTargetFor(profile, displays)
@@ -131,7 +139,10 @@ func HandleWindowCreated(ctx context.Context, profile *config.Profile, driver wm
 		if err != nil {
 			return err
 		}
-		anchor := leftDeskSlotWindow(profile, target, displays, windows, window.ID)
+		anchor := leftDeskSlotWindow(target, windows, window.ID)
+		if env.ArrivalReady != nil && !env.ArrivalReady() {
+			return ErrDisplayPending
+		}
 		return placeArrivalWindow(placementCtx, driver, window, target, anchor)
 	}
 	return placeWindow(placementCtx, driver, window, target.space)
@@ -215,6 +226,22 @@ type arrivalTarget struct {
 	display config.DisplayName
 }
 
+func externalDeskOnly(profile *config.Profile, displays []wm.Display) bool {
+	if len(displays) != 1 {
+		return false
+	}
+	if _, hasLaptop := engine.ResolveDisplay(profile, config.DisplayLaptop, displays); hasLaptop {
+		return false
+	}
+	return arrivalTargetIsDesk(profile, displays)
+}
+
+func arrivalTargetIsDesk(profile *config.Profile, displays []wm.Display) bool {
+	_, hasAW := engine.ResolveDisplay(profile, config.DisplayAW, displays)
+	_, hasG9 := engine.ResolveDisplay(profile, config.DisplayG9, displays)
+	return hasAW || hasG9
+}
+
 func arrivalTargetFor(profile *config.Profile, displays []wm.Display) (arrivalTarget, bool) {
 	for _, name := range [...]config.DisplayName{config.DisplayLaptop, config.DisplayAW, config.DisplayG9} {
 		index, ok := engine.ResolveDisplay(profile, name, displays)
@@ -235,49 +262,51 @@ func arrivalTargetFor(profile *config.Profile, displays []wm.Display) (arrivalTa
 	return arrivalTarget{}, false
 }
 
-func leftDeskSlotWindow(profile *config.Profile, target arrivalTarget, displays []wm.Display, windows []wm.Window, arrivingID int) int {
-	if target.display == config.DisplayLaptop {
-		return 0
-	}
-	layouts := engine.ResolveDesk(profile, displays)
-	for _, layout := range layouts {
-		if layout.Display != target.display || len(layout.Tracks) == 0 || len(layout.Tracks[0]) == 0 {
+func leftDeskSlotWindow(target arrivalTarget, windows []wm.Window, arrivingID int) int {
+	var anchor wm.Window
+	hasAnchor := false
+	for _, window := range windows {
+		if window.ID == arrivingID || window.SpaceID != target.space || window.Minimized || window.Floating || !IsTileCandidate(window) {
 			continue
 		}
-		var anchor wm.Window
-		hasAnchor := false
-		for _, window := range windows {
-			if window.ID == arrivingID || window.SpaceID != target.space || window.Minimized || window.Floating {
-				continue
-			}
-			for _, name := range layout.Tracks[0] {
-				spec, exists := profile.Windows[name]
-				if !exists || !engine.MatchesSpec(spec, window.App, window.Title) {
-					continue
-				}
-				if !hasAnchor || window.Frame.X < anchor.Frame.X || window.Frame.X == anchor.Frame.X && window.ID < anchor.ID {
-					anchor = window
-					hasAnchor = true
-				}
-				break
-			}
+		if !hasAnchor || window.Frame.X < anchor.Frame.X || window.Frame.X == anchor.Frame.X && window.ID < anchor.ID {
+			anchor = window
+			hasAnchor = true
 		}
-		if hasAnchor {
-			return anchor.ID
-		}
+	}
+	if !hasAnchor {
 		return 0
 	}
-	return 0
+	return anchor.ID
 }
 
 func placeArrivalWindow(ctx context.Context, driver wm.Driver, window wm.Window, target arrivalTarget, leftSlotWindowID int) error {
-	if leftSlotWindowID > 0 {
-		if err := driver.StackOnto(ctx, leftSlotWindowID, window.ID); err != nil {
-			return fmt.Errorf("stacking arriving window in left desk slot: %w", err)
-		}
-		window.SpaceID = target.space
+	if leftSlotWindowID <= 0 {
+		return placeWindow(ctx, driver, window, target.space)
 	}
-	return placeWindow(ctx, driver, window, target.space)
+	if window.SpaceID != target.space {
+		if err := driver.MoveWindowToSpace(ctx, window.ID, target.space); err != nil {
+			return fmt.Errorf("moving arrival to left desk slot: %w", err)
+		}
+	}
+	focused, err := driver.FocusWindow(ctx, window.ID)
+	if err != nil {
+		return fmt.Errorf("focusing arriving window: %w", err)
+	}
+	if !focused {
+		return nil
+	}
+	active, exists, err := driver.QueryFocusedSpace(ctx)
+	if err != nil {
+		return fmt.Errorf("verifying active space: %w", err)
+	}
+	if !exists || active.ID != target.space {
+		return nil
+	}
+	if err := driver.StackOnto(ctx, leftSlotWindowID, window.ID); err != nil {
+		return fmt.Errorf("stacking arriving window in left desk slot: %w", err)
+	}
+	return nil
 }
 
 func placeWindow(ctx context.Context, driver wm.Driver, window wm.Window, target wm.SpaceID) error {

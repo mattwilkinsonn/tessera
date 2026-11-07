@@ -22,6 +22,14 @@ func candidate() wm.Window {
 	return wm.Window{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Floating: true, SpaceID: "1"}
 }
 
+func deskSlotWindow(id int, app string, spaceIndex int, x float64) fake.SeedWindow {
+	return fake.SeedWindow{
+		ID: id, App: app, SpaceIndex: spaceIndex, Root: true,
+		Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true,
+		Frame: &wm.Frame{X: x, W: 1000, H: 1000},
+	}
+}
+
 func TestHandleWindowCreatedWaits(t *testing.T) {
 	for _, name := range []string{"manual lock release without event", "manual apply already tiled", "crashed guard expires", "bounded lock wait"} {
 		t.Run(name, func(t *testing.T) { synctest.Test(t, func(t *testing.T) { testPlacementWait(t, name) }) })
@@ -111,6 +119,151 @@ func TestHandleWindowCreatedRechecksReadiness(t *testing.T) {
 			t.Fatal("placed while new display work was pending")
 		}
 	})
+}
+
+func TestHandleWindowCreatedRechecksReadinessAfterAnchorQuery(t *testing.T) {
+	profile := testProfile(t)
+	driver := &readinessAfterWindowsDriver{Driver: fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}},
+		Windows: []fake.SeedWindow{
+			deskSlotWindow(100, "Arc", 2, 0),
+			{ID: 90, App: "Code", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Floating: true},
+		},
+	})}
+	var ready atomic.Bool
+	ready.Store(true)
+	env := commandEnv(t)
+	env.ArrivalReady = ready.Load
+	driver.onQueryWindows = func() { ready.Store(false) }
+	if err := HandleWindowCreated(t.Context(), profile, driver, env, 90); !errors.Is(err, ErrDisplayPending) {
+		t.Fatalf("arrival error = %v; want display pending", err)
+	}
+	if driver.StackCalls != 0 || driver.ToggleCalls != 0 || driver.MoveCalls != 0 {
+		t.Fatalf("placement mutated before readiness: stack=%d toggle=%d move=%d", driver.StackCalls, driver.ToggleCalls, driver.MoveCalls)
+	}
+}
+
+type readinessAfterWindowsDriver struct {
+	*fake.Driver
+	onQueryWindows func()
+	StackCalls     int
+	ToggleCalls    int
+	MoveCalls      int
+}
+
+func (d *readinessAfterWindowsDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
+	windows, err := d.Driver.QueryWindows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if d.onQueryWindows != nil {
+		d.onQueryWindows()
+	}
+	return windows, nil
+}
+
+func (d *readinessAfterWindowsDriver) StackOnto(ctx context.Context, targetID, windowID int) error {
+	d.StackCalls++
+	return d.Driver.StackOnto(ctx, targetID, windowID)
+}
+
+func (d *readinessAfterWindowsDriver) MoveWindowToSpace(ctx context.Context, windowID int, space wm.SpaceID) error {
+	d.MoveCalls++
+	return d.Driver.MoveWindowToSpace(ctx, windowID, space)
+}
+
+func (d *readinessAfterWindowsDriver) ToggleFloat(ctx context.Context, windowID int) error {
+	d.ToggleCalls++
+	return d.Driver.ToggleFloat(ctx, windowID)
+}
+
+func TestArrivalPlacementStacksAfterFocusAndActiveSpaceChecks(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		focusFailed bool
+		focusErr    error
+		activeWrong bool
+	}{
+		{name: "focus rejected", focusFailed: true},
+		{name: "focus errored", focusFailed: true, focusErr: errors.New("focus failed")},
+		{name: "active space changed", activeWrong: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			driver := &stackFailureDriver{
+				Driver: fake.New(fake.Seed{
+					Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}},
+					Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}},
+					Windows: []fake.SeedWindow{
+						deskSlotWindow(100, "Arc", 2, 0),
+						{ID: 90, App: "Code", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Floating: true},
+						{ID: 91, App: "Code", SpaceIndex: 1, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, Floating: true},
+					},
+				}),
+				focusFailed: test.focusFailed,
+				focusErr:    test.focusErr,
+				activeWrong: test.activeWrong,
+			}
+			err := HandleWindowCreated(t.Context(), testProfile(t), driver, commandEnv(t), 90)
+			if !errors.Is(err, test.focusErr) {
+				t.Fatalf("placement error = %v; want %v", err, test.focusErr)
+			}
+			if driver.stackCalls != 0 || driver.toggleCalls != 0 || driver.moves != 1 {
+				t.Fatalf("aborted placement side effects: stack=%d toggle=%d moves=%d", driver.stackCalls, driver.toggleCalls, driver.moves)
+			}
+			driver.focusFailed, driver.focusErr, driver.activeWrong = false, nil, false
+			if err := HandleWindowCreated(t.Context(), testProfile(t), driver, commandEnv(t), 91); err != nil {
+				t.Fatal(err)
+			}
+			if driver.stackCalls != 1 || driver.toggleCalls != 0 || driver.stacked != 1 {
+				t.Fatalf("second arrival did not stack cleanly: stack=%d toggle=%d stacked=%d", driver.stackCalls, driver.toggleCalls, driver.stacked)
+			}
+		})
+	}
+}
+
+type stackFailureDriver struct {
+	*fake.Driver
+	focusFailed bool
+	focusErr    error
+	activeWrong bool
+	stackCalls  int
+	toggleCalls int
+	moves       int
+	stacked     int
+}
+
+func (d *stackFailureDriver) FocusWindow(ctx context.Context, id int) (bool, error) {
+	if d.focusFailed {
+		return false, d.focusErr
+	}
+	return d.Driver.FocusWindow(ctx, id)
+}
+
+func (d *stackFailureDriver) QueryFocusedSpace(ctx context.Context) (wm.Space, bool, error) {
+	if d.activeWrong {
+		return wm.Space{}, false, nil
+	}
+	return d.Driver.QueryFocusedSpace(ctx)
+}
+
+func (d *stackFailureDriver) MoveWindowToSpace(ctx context.Context, windowID int, space wm.SpaceID) error {
+	d.moves++
+	return d.Driver.MoveWindowToSpace(ctx, windowID, space)
+}
+
+func (d *stackFailureDriver) StackOnto(ctx context.Context, targetID, windowID int) error {
+	d.stackCalls++
+	if err := d.Driver.StackOnto(ctx, targetID, windowID); err != nil {
+		return err
+	}
+	d.stacked++
+	return nil
+}
+
+func (d *stackFailureDriver) ToggleFloat(ctx context.Context, windowID int) error {
+	d.toggleCalls++
+	return d.Driver.ToggleFloat(ctx, windowID)
 }
 
 func TestRunTopologyCommandsSerializePlacement(t *testing.T) {
@@ -405,11 +558,11 @@ func TestAdoptSpawnedWindowsClaimPolicy(t *testing.T) {
 				Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 3, Frame: displayFrame(1728, 1117)}},
 				Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 3}},
 			}
+			subrole := "AXStandardWindow"
+			if test.dialog {
+				subrole = "AXDialog"
+			}
 			for i, title := range test.titles {
-				subrole := "AXStandardWindow"
-				if test.dialog {
-					subrole = "AXDialog"
-				}
 				seed.Windows = append(seed.Windows, fake.SeedWindow{
 					ID: i + 1, App: "Ghostty", Title: title, SpaceIndex: 1,
 					Root: true, Role: "AXWindow", Subrole: subrole,
@@ -452,25 +605,26 @@ func TestHandleWindowCreatedArrivalTargets(t *testing.T) {
 		},
 		{
 			name:             "g9 and aw use the left aw column",
-			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "aw-home"}}, Windows: []fake.SeedWindow{{ID: 100, App: "Arc", SpaceIndex: 2}, {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "aw-home"}}, Windows: []fake.SeedWindow{deskSlotWindow(100, "Arc", 2, 0), {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
 			wantSpaceLabel:   "aw-home",
 			wantStackTargets: []int{100},
 		},
 		{
 			name:             "g9 without aw falls back to left g9 column",
-			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(2560, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "external-home"}}, Windows: []fake.SeedWindow{{ID: 100, App: "Arc", SpaceIndex: 1}, {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 2, Floating: true}}},
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(2560, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "external-home"}}, Windows: []fake.SeedWindow{deskSlotWindow(100, "Arc", 1, 50), {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 2, Floating: true}}},
 			wantSpaceLabel:   "g9-home",
 			wantStackTargets: []int{100},
 		},
 		{
-			name:           "empty aw left slot moves and tiles arrival",
-			seed:           fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "aw-home"}}, Windows: []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
-			wantSpaceLabel: "aw-home",
+			name:             "G9-only topology targets left slot",
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}}, Windows: []fake.SeedWindow{deskSlotWindow(100, "Arc", 1, 40), {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
+			wantSpaceLabel:   "g9-home",
+			wantStackTargets: []int{100},
 		},
 		{
-			name:                    "single g9 keeps current rules and placement",
-			seed:                    fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}}, Windows: []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
-			wantSpaceLabel:          "g9-home",
+			name:                    "laptop-only keeps single-display rules and placement",
+			seed:                    fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(1728, 1117)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop-home"}}, Windows: []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
+			wantSpaceLabel:          "laptop-home",
 			wantFloating:            true,
 			checkSingleDisplayRules: true,
 		},
@@ -479,6 +633,30 @@ func TestHandleWindowCreatedArrivalTargets(t *testing.T) {
 			seed:           fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(2560, 1440)}, {Idx: 2, Frame: displayFrame(1920, 1080)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "external-one"}, {DisplayIdx: 2, Label: "external-two"}}, Windows: []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
 			wantSpaceLabel: "external-one",
 			wantFloating:   true,
+		},
+		{
+			name:             "swapped windows stack into current leftmost slot",
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}, {Idx: 2, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "aw-home"}, {DisplayIdx: 2, Label: "g9-home"}}, Windows: []fake.SeedWindow{deskSlotWindow(100, "Akiflow", 1, 0), deskSlotWindow(101, "Arc", 1, 1200), {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 2, Floating: true}}},
+			wantSpaceLabel:   "aw-home",
+			wantStackTargets: []int{100},
+		},
+		{
+			name:             "unmatched leftmost app still anchors arrival",
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}, {Idx: 2, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "aw-home"}, {DisplayIdx: 2, Label: "g9-home"}}, Windows: []fake.SeedWindow{deskSlotWindow(100, "Unconfigured", 1, 0), deskSlotWindow(101, "Arc", 1, 1200), {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 2, Floating: true}}},
+			wantSpaceLabel:   "aw-home",
+			wantStackTargets: []int{100},
+		},
+		{
+			name:             "duplicate app anchor chooses leftmost position",
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}, {Idx: 2, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "aw-home"}, {DisplayIdx: 2, Label: "g9-home"}}, Windows: []fake.SeedWindow{deskSlotWindow(100, "Arc", 1, 0), deskSlotWindow(101, "Arc", 1, 1200), {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 2, Floating: true}}},
+			wantSpaceLabel:   "aw-home",
+			wantStackTargets: []int{100},
+		},
+		{
+			name:             "missing configured first-track apps still stack into left slot",
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}, {Idx: 2, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "aw-home"}, {DisplayIdx: 2, Label: "g9-home"}}, Windows: []fake.SeedWindow{deskSlotWindow(100, "Spotify", 1, 0), deskSlotWindow(101, "Discord", 1, 1200), {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 2, Floating: true}}},
+			wantSpaceLabel:   "aw-home",
+			wantStackTargets: []int{100},
 		},
 	}
 	for _, test := range tests {
@@ -504,7 +682,7 @@ func testArrivalTarget(t *testing.T, test struct {
 			t.Fatal(err)
 		}
 		if slices.ContainsFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == "auto:desk-manage-off" }) {
-			t.Fatal("single g9 display unexpectedly installs desk manage-off rule")
+			t.Fatal("single laptop display unexpectedly installs desk manage-off rule")
 		}
 	}
 	if err := HandleWindowCreated(t.Context(), profile, driver, commandEnv(t), 90); err != nil {
@@ -571,7 +749,7 @@ func newLidClosedArrivalDriver() *arrivalTargetDriver {
 			{DisplayIdx: 2, Label: "aw-home"},
 		},
 		Windows: []fake.SeedWindow{
-			{ID: 100, App: "Arc", SpaceIndex: 2},
+			deskSlotWindow(100, "Arc", 2, 0),
 			{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true},
 		},
 	})}

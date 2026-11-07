@@ -109,6 +109,10 @@ func ArmInsertArgs(windowID int, direction string) []string {
 	return []string{"-m", windowMode, strconv.Itoa(windowID), "--insert", direction}
 }
 
+func StackWindowArgs(targetWindowID, windowID int) []string {
+	return []string{"-m", windowMode, strconv.Itoa(targetWindowID), "--stack", strconv.Itoa(windowID)}
+}
+
 func SwapWindowsArgs(direction wm.Direction) []string {
 	return []string{"-m", windowMode, "--swap", string(direction)}
 }

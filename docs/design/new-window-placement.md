@@ -87,10 +87,9 @@ Keep full startup/wake reclamation unchanged. After it completes, classify eligi
 
 ## Global Constraints
 
-- Desk arrivals have a best-effort no-reshuffle contract: failed active-space verification leaves the arrival floating and changes no existing geometry. A space switch between verification and unfloat remains a documented race.
-- Startup/wake cascades remain explicit full layout reclamation with today's behavior.
-- Desk-mode arrivals use the laptop home stack when present; otherwise they target the AW left slot and then the G9 left slot. Single-display arrival rules remain unchanged.
-- In desk mode, install catch-all manage-off. In laptop-only mode, retain today's placement, manage-standard, and exception rules.
+- Desk arrivals have a best-effort no-reshuffle contract: failed focus or active-space verification changes no existing geometry and leaves the arrival floating. A space switch between verification and the final stack operation remains a documented race.
+- When the target is a desk, arrivals use the laptop home stack when present; otherwise they target AW's left slot if AW is connected, then G9's left slot, including a G9-only topology. The live leftmost eligible tiled window anchors the stack. Laptop-only arrival behavior remains unchanged.
+- In desk mode, install catch-all manage-off, including single external AW/G9 topologies. In laptop-only mode, retain today's placement, manage-standard, and exception rules.
 - Desk-to-laptop transition hands off surviving floating tile-type arrivals before laptop convergence.
 - Preserve the 3-second display quiet interval, do not add flex debounce to arrivals, and keep event-only lines for non-arrival signals.
 - Reuse existing daemon, WM, lock, and guard patterns. Do not add broad polling, a profile abstraction, or AXUnknown handling.

@@ -897,6 +897,29 @@ func TestRules(t *testing.T) {
 			t.Fatalf("apply calls = %d; want no bulk apply", recorder.applied)
 		}
 	})
+	t.Run("laptop and desk displays install catch-all manage-off", func(t *testing.T) {
+		driver := fake.New(fake.Seed{
+			Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}, {Idx: 3, Frame: displayFrame(1728, 1117)}},
+			Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3}},
+		})
+		recorder := &ruleRecorder{}
+		if err := Rules(t.Context(), testProfile(t), &ruleDriver{Driver: driver, rules: recorder}); err != nil {
+			t.Fatal(err)
+		}
+		if len(recorder.added) != 1 || recorder.added[0].Label != "auto:desk-manage-off" || recorder.added[0].Manage == nil || *recorder.added[0].Manage {
+			t.Fatalf("laptop+desk rules = %+v; want catch-all manage-off", recorder.added)
+		}
+	})
+	t.Run("G9-only desk topology installs catch-all manage-off", func(t *testing.T) {
+		driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}})
+		recorder := &ruleRecorder{}
+		if err := Rules(t.Context(), testProfile(t), &ruleDriver{Driver: driver, rules: recorder}); err != nil {
+			t.Fatal(err)
+		}
+		if len(recorder.added) != 1 || recorder.added[0].Label != "auto:desk-manage-off" || recorder.added[0].Manage == nil || *recorder.added[0].Manage {
+			t.Fatalf("G9-only rules = %+v; want catch-all manage-off", recorder.added)
+		}
+	})
 	t.Run("Rules leaves populated BSP management, space, and geometry unchanged", testRulesPreserveBSP)
 	t.Run("no-op when the backend has no rules capability", func(t *testing.T) {
 		if err := Rules(t.Context(), testProfile(t), fake.New(fake.Seed{})); err != nil {

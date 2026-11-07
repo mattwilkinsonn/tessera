@@ -299,16 +299,14 @@ func (d *Driver) ArmInsert(ctx context.Context, windowID int, direction wm.Direc
 }
 
 func (d *Driver) StackOnto(ctx context.Context, targetWindowID, windowID int) error {
-	var target RawYabaiWindow
-	found, err := d.queryOrNull(ctx, QueryWindowArgs(targetWindowID), &target)
-	if err != nil || !found {
+	_, exitCode, err := d.run(ctx, StackWindowArgs(targetWindowID, windowID))
+	if err != nil {
 		return err
 	}
-	if _, _, err := d.run(ctx, ArmInsertArgs(targetWindowID, "stack")); err != nil {
-		return err
+	if exitCode != 0 {
+		return fmt.Errorf("stacking window %d onto %d failed (exit %d)", windowID, targetWindowID, exitCode)
 	}
-	_, _, err = d.run(ctx, MoveWindowToSpaceArgs(windowID, target.Space))
-	return err
+	return nil
 }
 
 func (d *Driver) SwapWindows(ctx context.Context, direction wm.Direction) (bool, error) {

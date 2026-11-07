@@ -549,6 +549,7 @@ func (d *Driver) StackOnto(ctx context.Context, targetID int, windowID int) erro
 	if target != nil && window != nil {
 		window.SpaceID = target.SpaceID
 		window.DisplayIdx = target.DisplayIdx
+		window.Floating = false
 	}
 	return nil
 }
