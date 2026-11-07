@@ -56,7 +56,11 @@ func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	return nil
 }
 
-func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arrivalTarget, windows []wm.Window, displaced, claimed map[int]struct{}) error {
+func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arrivalTarget, windows []wm.Window, displaced, claimed map[int]struct{}) (map[int]struct{}, error) {
+	consumed := make(map[int]struct{}, len(displaced))
+	for id := range displaced {
+		consumed[id] = struct{}{}
+	}
 	plannedWindows := make([]wm.Window, 0, len(claimed))
 	for _, window := range windows {
 		if _, planned := claimed[window.ID]; planned {
@@ -79,18 +83,23 @@ func stackDisplacedDeskWindows(ctx context.Context, driver wm.Driver, target arr
 		if anchor == 0 {
 			anchor = batchAnchor
 		}
-		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
-			return fmt.Errorf("stacking displaced desk window %d: %w", window.ID, err)
+		placed, err := placeArrivalWindowOutcome(ctx, driver, window, target, anchor)
+		if err != nil {
+			return nil, fmt.Errorf("stacking displaced desk window %d: %w", window.ID, err)
+		}
+		if !placed {
+			delete(consumed, window.ID)
+			continue
 		}
 		if anchor == 0 {
 			var err error
 			batchAnchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)
 			if err != nil {
-				return fmt.Errorf("refreshing displaced window anchor %d: %w", window.ID, err)
+				return nil, fmt.Errorf("refreshing displaced window anchor %d: %w", window.ID, err)
 			}
 		}
 	}
-	return nil
+	return consumed, nil
 }
 
 // RecoverDeskWindows restores floating tile candidates not claimed by desk slots.
@@ -193,7 +202,15 @@ func HandleWindowCreated(ctx context.Context, profile *config.Profile, driver wm
 		}
 		return placeArrivalWindow(placementCtx, driver, window, target, anchor)
 	}
-	return placeWindow(placementCtx, driver, window, target.space)
+	if err := placeWindow(placementCtx, driver, window, target.space); err != nil {
+		return err
+	}
+	world, err := worldSnapshot(placementCtx, driver)
+	if err != nil {
+		return err
+	}
+	recordLaptopHomeWindows(profile, env.Topology, world)
+	return nil
 }
 
 func acquirePlacementLocks(ctx context.Context, paths effects.Paths) (interface{ Unlock() error }, interface{ Unlock() error }, error) {
@@ -340,58 +357,68 @@ func placedArrivalAnchor(ctx context.Context, driver wm.Driver, target arrivalTa
 }
 
 func placeArrivalWindow(ctx context.Context, driver wm.Driver, window wm.Window, target arrivalTarget, leftSlotWindowID int) error {
+	_, err := placeArrivalWindowOutcome(ctx, driver, window, target, leftSlotWindowID)
+	return err
+}
+
+func placeArrivalWindowOutcome(ctx context.Context, driver wm.Driver, window wm.Window, target arrivalTarget, leftSlotWindowID int) (bool, error) {
 	if leftSlotWindowID <= 0 {
-		return placeWindow(ctx, driver, window, target.space)
+		return placeWindowOutcome(ctx, driver, window, target.space)
 	}
 	if window.SpaceID != target.space {
 		if err := driver.MoveWindowToSpace(ctx, window.ID, target.space); err != nil {
-			return fmt.Errorf("moving arrival to left desk slot: %w", err)
+			return false, fmt.Errorf("moving arrival to left desk slot: %w", err)
 		}
 	}
 	focused, err := driver.FocusWindow(ctx, window.ID)
 	if err != nil {
-		return fmt.Errorf("focusing arriving window: %w", err)
+		return false, fmt.Errorf("focusing arriving window: %w", err)
 	}
 	if !focused {
-		return nil
+		return false, nil
 	}
 	active, exists, err := driver.QueryFocusedSpace(ctx)
 	if err != nil {
-		return fmt.Errorf("verifying active space: %w", err)
+		return false, fmt.Errorf("verifying active space: %w", err)
 	}
 	if !exists || active.ID != target.space {
-		return nil
+		return false, nil
 	}
 	if err := driver.StackOnto(ctx, leftSlotWindowID, window.ID); err != nil {
-		return fmt.Errorf("stacking arriving window in left desk slot: %w", err)
+		return false, fmt.Errorf("stacking arriving window in left desk slot: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func placeWindow(ctx context.Context, driver wm.Driver, window wm.Window, target wm.SpaceID) error {
+	_, err := placeWindowOutcome(ctx, driver, window, target)
+	return err
+}
+
+func placeWindowOutcome(ctx context.Context, driver wm.Driver, window wm.Window, target wm.SpaceID) (bool, error) {
 	if window.SpaceID != target {
 		if err := driver.MoveWindowToSpace(ctx, window.ID, target); err != nil {
-			return fmt.Errorf("moving window to arrival target: %w", err)
+			return false, fmt.Errorf("moving window to arrival target: %w", err)
 		}
 	}
 	focused, err := driver.FocusWindow(ctx, window.ID)
 	if err != nil {
-		return fmt.Errorf("focusing arriving window: %w", err)
+		return false, fmt.Errorf("focusing arriving window: %w", err)
 	}
 	if !focused {
-		return nil
+		return false, nil
 	}
 	active, exists, err := driver.QueryFocusedSpace(ctx)
 	if err != nil {
-		return fmt.Errorf("verifying active space: %w", err)
+		return false, fmt.Errorf("verifying active space: %w", err)
 	}
 	if !exists || active.ID != target {
-		return nil
+		return false, nil
 	}
 	if window.Floating {
 		if err := driver.ToggleFloat(ctx, window.ID); err != nil {
-			return fmt.Errorf("unfloating arriving window: %w", err)
+			return false, fmt.Errorf("unfloating arriving window: %w", err)
 		}
 	}
-	return nil
+	return true, nil
 }

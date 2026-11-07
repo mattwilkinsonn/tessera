@@ -97,17 +97,19 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 		for _, id := range filled {
 			claimed[id] = struct{}{}
 		}
-		if err := stackDisplacedDeskWindows(ctx, driver, target, fresh, laptopWindows, claimed); err != nil {
+		consumed, err := stackDisplacedDeskWindows(ctx, driver, target, fresh, laptopWindows, claimed)
+		if err != nil {
 			return fmt.Errorf("stacking displaced laptop windows: %w", err)
 		}
 		fresh, err = driver.QueryWindows(ctx)
 		if err != nil {
 			return fmt.Errorf("querying windows after displaced-window stacking: %w", err)
 		}
-		env.Topology.ConsumeLaptopHomeWindows()
+		env.Topology.ConsumeLaptopHomeWindows(consumed)
 	}
 	world.Windows = fresh
 	filled = placedDeskSlots(profile, world, filled)
+	recordLaptopHomeWindows(profile, env.Topology, world)
 	updated := engine.PruneSlots(profile, engine.RecordSlots(world.Slots, filled, engine.DisplaySet(profile, world.Displays), fresh), fresh)
 	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
 		return fmt.Errorf("persisting window slot memory: %w", err)

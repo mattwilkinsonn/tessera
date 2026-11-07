@@ -118,13 +118,15 @@ func (state *TopologyState) LaptopHomeWindows() map[int]struct{} {
 	return windows
 }
 
-// ConsumeLaptopHomeWindows clears the snapshot after a lid-close pass.
-func (state *TopologyState) ConsumeLaptopHomeWindows() {
+// ConsumeLaptopHomeWindows removes only resolved lid-close candidates.
+func (state *TopologyState) ConsumeLaptopHomeWindows(ids map[int]struct{}) {
 	if state == nil {
 		return
 	}
 	state.displayMu.Lock()
-	state.laptopWindows = nil
+	for id := range ids {
+		delete(state.laptopWindows, id)
+	}
 	state.displayMu.Unlock()
 }
 
