@@ -60,12 +60,12 @@ Run `tess --help` (or `tess -h`) for the generated subcommand help. Run
 help.
 
 On a desk setup, `tess apply` adopts newly launched browser windows into configured
-slots. A bounded reconciliation loop admits late-eligible restored windows and
-repairs disturbed owners before placing surplus windows on the arrival stack.
-Selected slot owners never become overflow. Existing floating windows are left alone.
-Reconciliation polls eligibility for up to five seconds, without rebuilding
-unchanged layouts or waiting for unrelated missing apps. Owners must be tiled on
-the configured desk home space before their slots are recorded.
+slots. Eligibility polling has a five-second budget and does not mutate layouts.
+Apply then rebuilds the desk once, with at most one additional rebuild for windows
+or owners that changed during the first. Layout execution uses the caller's context,
+not the polling budget. Selected slot owners never become overflow. Existing
+floating windows are left alone. Owners must be tiled on the configured desk home
+space before their slots are recorded.
 
 ### Exit codes
 

@@ -66,11 +66,6 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	}
 	beforeSpawn := world.Windows
 	deskTopology := len(world.Displays) > 1 || externalDeskOnly(profile, world.Displays)
-	if deskTopology {
-		if err := adoptSpawnedWindows(ctx, profile, driver, spawnedNames, world.Windows); err != nil {
-			return err
-		}
-	}
 	world, err = worldSnapshot(ctx, driver)
 	if err != nil {
 		return err
@@ -81,16 +76,15 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 	}
 	world.Slots = engine.PruneSlots(profile, memory, world.Windows)
 	ops, filled := engine.DeskPlan(profile, world)
-	if err := executor.RunPlan(ctx, driver, ops, func(engine.Op) error {
-		return effects.SuppressSignals(paths.SignalGuard)
-	}); err != nil {
-		return err
-	}
-	if deskTopology {
+	if deskTopology && len(spawnedNames) > 0 {
 		world, filled, err = reconcileSpawnedWindows(ctx, profile, driver, spawnedNames, beforeSpawn, world, filled)
-		if err != nil {
-			return err
-		}
+	} else {
+		err = executor.RunPlan(ctx, driver, ops, func(engine.Op) error {
+			return effects.SuppressSignals(paths.SignalGuard)
+		})
+	}
+	if err != nil {
+		return err
 	}
 	fresh, err := driver.QueryWindows(ctx)
 	if err != nil {
@@ -328,54 +322,64 @@ func reconcileSpawnedWindows(
 	for _, window := range before {
 		baseline[window.ID] = struct{}{}
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	for time.Now().Before(deadline) {
+	for _, id := range filled {
+		protected[id] = struct{}{}
+	}
+	// Phase A spends only its polling budget. No layout mutation occurs here.
+	for poll := 0; ; poll++ {
 		fresh, err := worldSnapshot(ctx, driver)
 		if err != nil {
 			return world, filled, err
 		}
-		for _, id := range filled {
-			protected[id] = struct{}{}
-		}
-		fresh.Slots = engine.RecordSlots(world.Slots, filled, engine.DisplaySet(profile, fresh.Displays), fresh.Windows)
-		candidates := projectSpawnedFloats(profile, names, fresh.Windows, baseline, protected)
-		_, selected := engine.DeskPlan(profile, fresh)
-		for _, id := range selected {
-			protected[id] = struct{}{}
-			if window, ok := candidates[id]; ok {
-				if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
-					return world, filled, fmt.Errorf("reconciling spawned window %d: %w", id, err)
-				}
-			}
-		}
-		fresh.Windows, err = driver.QueryWindows(ctx)
-		if err != nil {
-			return world, filled, err
-		}
-		ops, planned := engine.DeskPlan(profile, fresh)
-		for _, id := range planned {
-			protected[id] = struct{}{}
-		}
-		placed := placedDeskSlots(profile, fresh, planned)
-		if !maps.Equal(planned, filled) || !maps.Equal(placed, planned) {
-			if err := executor.RunPlan(ctx, driver, ops, nil); err != nil {
-				return world, filled, err
-			}
-		}
-		fresh.Windows, err = driver.QueryWindows(ctx)
-		if err != nil {
-			return world, filled, err
-		}
-		filled = placedDeskSlots(profile, fresh, planned)
+		fresh.Slots = world.Slots
+		projected := fresh
+		projected.Windows = slices.Clone(fresh.Windows)
+		projectSpawnedFloats(profile, names, projected.Windows, baseline, protected)
+		_, available := engine.DeskPlan(profile, projected)
 		world = fresh
-		if spawnedDemandFilled(profile, names, fresh.Displays, filled) {
+		if spawnedDemandFilled(profile, names, fresh.Displays, available) || poll >= spawnPolls {
 			break
 		}
 		if err := waitForSpawnPoll(ctx); err != nil {
 			return world, filled, err
 		}
+	}
+	// Phases B and C: one unconditional rebuild, then at most one repair for
+	// candidates or owners that changed while that rebuild was running.
+	for rebuild := range 2 {
+		projected := world
+		projected.Windows = slices.Clone(world.Windows)
+		candidates := projectSpawnedFloats(profile, names, projected.Windows, baseline, protected)
+		_, selected := engine.DeskPlan(profile, projected)
+		if rebuild > 0 && maps.Equal(placedDeskSlots(profile, world, selected), selected) {
+			break
+		}
+		for _, id := range selected {
+			protected[id] = struct{}{}
+			if window, ok := candidates[id]; ok {
+				if err := placeWindow(ctx, driver, window, window.SpaceID); err != nil {
+					return world, filled, err
+				}
+			}
+		}
+		var err error
+		world.Windows, err = driver.QueryWindows(ctx)
+		if err != nil {
+			return world, filled, err
+		}
+		ops, planned := engine.DeskPlan(profile, world)
+		for _, id := range planned {
+			protected[id] = struct{}{}
+		}
+		if err := executor.RunPlan(ctx, driver, ops, nil); err != nil {
+			return world, filled, err
+		}
+		world, err = worldSnapshot(ctx, driver)
+		if err != nil {
+			return world, filled, err
+		}
+		filled = placedDeskSlots(profile, world, planned)
+		world.Slots = engine.RecordSlots(projected.Slots, planned, engine.DisplaySet(profile, world.Displays), world.Windows)
 	}
 	return world, filled, placeSpawnedArrivals(ctx, profile, driver, names, baseline, world, protected)
 }
@@ -388,15 +392,17 @@ func matchesSpawnedApp(profile *config.Profile, names []string, window wm.Window
 }
 
 func spawnedDemandFilled(profile *config.Profile, names []string, displays []wm.Display, filled map[engine.SlotKey]int) bool {
+	namesByDisplay := make(map[config.DisplayName][]string)
 	for _, layout := range engine.ResolveDesk(profile, displays) {
 		if _, present := engine.ResolveDisplay(profile, layout.Display, displays); !present {
 			continue
 		}
-		configured := make([]string, 0)
 		for _, track := range layout.Tracks {
-			configured = append(configured, track...)
+			namesByDisplay[layout.Display] = append(namesByDisplay[layout.Display], track...)
 		}
-		keys := engine.SlotKeys("desk", layout.Display, configured)
+	}
+	for display, configured := range namesByDisplay {
+		keys := engine.SlotKeys("desk", display, configured)
 		for i, name := range configured {
 			if slices.Contains(names, name) {
 				if _, ok := filled[keys[i]]; !ok {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/config"
 	"github.com/mattwilkinsonn/tessera/internal/effects"
@@ -151,6 +152,7 @@ type lateBrowserDriver struct {
 	disturbOwner    bool
 	disturbed       bool
 	layoutCalls     int
+	layoutDelay     time.Duration
 }
 
 func (d *lateBrowserDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
@@ -173,10 +175,17 @@ func (d *lateBrowserDriver) FocusWindow(ctx context.Context, id int) (bool, erro
 
 func (d *lateBrowserDriver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target wm.SpaceLayoutTarget) error {
 	d.layoutCalls++
+	if d.layoutDelay > 0 {
+		select {
+		case <-time.After(d.layoutDelay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if err := d.Driver.RealizeSpaceLayout(ctx, id, target); err != nil {
 		return err
 	}
-	if d.disturbOwner && !d.disturbed && d.polls >= 19 && id == "1" && len(target.Tracks) > 0 {
+	if d.disturbOwner && !d.disturbed && id == "1" && len(target.Tracks) > 0 {
 		d.disturbed = true
 		return d.Driver.ToggleFloat(ctx, target.Tracks[0][0])
 	}
@@ -188,12 +197,15 @@ func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
 		name          string
 		eligibleAfter int
 		disturbOwner  bool
+		layoutDelay   time.Duration
 	}{
 		{name: "adoption focus fails once"},
 		{name: "eligible after adoption", eligibleAfter: 16},
 		{name: "eligible after reconciliation snapshot", eligibleAfter: 18},
 		{name: "eligible at overflow boundary", eligibleAfter: 19},
 		{name: "owner floats during second plan", disturbOwner: true},
+		{name: "slow staggered eligibility", eligibleAfter: 55, layoutDelay: 3 * time.Second},
+		{name: "slow floated owner", disturbOwner: true, layoutDelay: 3 * time.Second},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -210,10 +222,12 @@ func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
 						},
 						Spaces:   []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 2}, {DisplayIdx: 3, Layout: wm.LayoutStack}},
 						SpawnApp: "Zen",
+						Windows:  populatedNonBrowserSeed(test.layoutDelay > 0),
 					})},
 					lateEligibility: test.eligibleAfter > 0,
 					eligibleAfter:   test.eligibleAfter,
 					disturbOwner:    test.disturbOwner,
+					layoutDelay:     test.layoutDelay,
 				}
 				env := commandEnv(t)
 				if err := Apply(t.Context(), profile, driver, env); err != nil {
@@ -228,12 +242,53 @@ func TestApplyReconcilesLateSpawnedWindows(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(memory.Slots) != 4 {
-					t.Fatalf("single Apply filled %d slots; want 4", len(memory.Slots))
+				wantSlots := 4
+				if test.layoutDelay > 0 {
+					wantSlots = 13
+				}
+				if len(memory.Slots) != wantSlots {
+					t.Fatalf("single Apply filled %d slots; want %d", len(memory.Slots), wantSlots)
 				}
 				assertReconciledOwners(t, profile, driver, env, memory)
 			})
 		})
+	}
+}
+
+func populatedNonBrowserSeed(enabled bool) []fake.SeedWindow {
+	windows := make([]fake.SeedWindow, 0)
+	if !enabled {
+		return windows
+	}
+	for i, item := range []struct {
+		app, title string
+		space      int
+	}{
+		{app: "Obsidian", space: 1}, {app: "Ghostty", title: "pc", space: 1},
+		{app: "Ghostty", title: "mbp", space: 1}, {app: "Code", space: 1},
+		{app: "Linear", space: 2}, {app: "Akiflow", space: 2},
+		{app: "Spotify", space: 3}, {app: "Discord", space: 3}, {app: "Qalculate", space: 3},
+	} {
+		windows = append(windows, fake.SeedWindow{ID: 100 + i, App: item.app, Title: item.title, SpaceIndex: item.space,
+			Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true})
+	}
+	return windows
+}
+
+func TestSpawnedDemandAcrossLayouts(t *testing.T) {
+	profile := testProfile(t)
+	profile.Desk = []config.DeskLayout{
+		{Display: config.DisplayAW, Tracks: [][]string{{"arc"}}},
+		{Display: config.DisplayAW, Tracks: [][]string{{"arc"}}},
+	}
+	displays := []wm.Display{{Idx: 2, Frame: *displayFrame(3440, 1440), SpaceIDs: []wm.SpaceID{"2"}}}
+	filled := map[engine.SlotKey]int{"desk:aw/arc#1": 1}
+	if spawnedDemandFilled(profile, []string{"arc"}, displays, filled) {
+		t.Fatal("second layout's browser vacancy was ignored")
+	}
+	filled["desk:aw/arc#2"] = 2
+	if !spawnedDemandFilled(profile, []string{"arc"}, displays, filled) {
+		t.Fatal("complete browser demand was rejected")
 	}
 }
 
