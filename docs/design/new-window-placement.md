@@ -2,7 +2,7 @@
 
 ## Decisions
 
-RIG-8331 rulings: Q1=A sends every desk-mode tile-type arrival to the laptop home stack. Code and Linear retain G9/AW slots only during setup, wake, and reclamation. Q2=A keeps laptop-only rules and flex behavior unchanged. Q3=A uses best-effort move → focus → verify active space → conditional unfloat.
+RIG-8331 rulings: Q1=A originally sent every desk-mode tile-type arrival to the laptop home stack. RIG-8505 supersedes that target rule: use the laptop home stack when the laptop is present, otherwise the AW left slot, then the G9 left slot. Q2=A keeps laptop-only rules and flex behavior unchanged. Q3=A uses best-effort move → focus → verify active space → conditional unfloat.
 
 ## Direction
 
@@ -37,12 +37,10 @@ After display readiness, acquire the Apply and laptop locks in fixed order and w
 Query only the event's window ID after locks and guard are acquired. Add role, subrole, root, level, movable, resizable, and floating to the targeted query model. yabai serializes `is-floating` but no managed flag (`WINDOW_PROPERTY_LIST`, `src/window.h`), so tess never derives one (`internal/wm/types.go`, `internal/wm/yabai/normalize.go`). `QueryWindow` may query spaces too: yabai serializes `space` as a Mission Control index, not stable SpaceID: `int space = space_manager_mission_control_index(sid);` (`window_serialize`, yabai `src/window.c`). `NormalizeWindow` needs an index-to-SpaceID mapping. Test with an index that differs from SpaceID.
 
 Mirror yabai's creation heuristic (`window_manager_create_and_add_window`, `src/window_manager.c`). A tile candidate is a root `AXWindow` / `AXStandardWindow` at normal level, movable, non-sticky, and not both fixed-size and undersized. Yabai's predicate is `(!window_can_resize(window) && window_is_undersized(window))`; `window_is_undersized` returns true when width or height is `<= 500.0f` (`src/window_manager.c`, `src/window.c`). AXUnknown remains out of scope under RIG-8327. Exceptions and heuristic floats stay at their opening location.
-
-For a desk-mode tile-type arrival, resolve a valid target SpaceID, then call `MoveWindowToSpace` only when needed. Focus the arriving window (`yabai -m window <id> --focus`; `FocusWindow` in the WM API), then verify that the active space equals the target immediately before `ToggleFloat`. Focus follows the new window to its target, matching macOS focus on open. Yabai's unfloat path calls `space_manager_tile_window_on_space(sm, window, space_manager_active_space())` (`window_manager_make_window_floating`, `src/window_manager.c`). If verification fails, leave the window floating at its target and do not unfloat it.
+For each desk-mode tile-type arrival, keep the targeted query, lock and guard order above. When more than one display is connected, resolve the destination by priority: laptop home stack, AW first-track left slot, then G9 first-track left slot. When only one display is connected, keep the existing no-op arrival path: single-display yabai rules own placement. For a desk target, stack onto an existing matching window in the first configured track when available; otherwise move and tile the arrival in that display's home space. Focus the arriving window (`yabai -m window <id> --focus`; `FocusWindow` in the WM API), then verify that the active space equals the target immediately before `ToggleFloat`. Focus follows the new window to its target, matching macOS focus on open. Yabai's unfloat path calls `space_manager_tile_window_on_space(sm, window, space_manager_active_space())` (`window_manager_make_window_floating`, `src/window_manager.c`). If verification fails, leave the window floating at its target and do not unfloat it.
 
 This is best-effort destination safety, not an atomic no-reshuffle guarantee. The active-space check and `ToggleFloat` are separate yabai commands; a space switch in that gap can make yabai insert into the newly active BSP. Eliminating the gap needs an atomic yabai operation, tracked as RIG-8327 option B (the yabai fork). Test failed verification: the arrival remains floating at its target and existing geometry does not change.
 
-Every desk-mode arrival targets the laptop home stack, including Code, Linear, and Akiflow. Code→G9 and Linear→AW remain full-layout reclamation behavior, not arrival targeting. Never rebuild a BSP in the arrival path. In laptop-only mode, new windows use today's placement and management rules; the existing laptop flex convergence then places pinned, flex-tail, and stack-app windows as before.
 
 ### Desk-to-laptop transition
 
@@ -91,6 +89,7 @@ Keep full startup/wake reclamation unchanged. After it completes, classify eligi
 
 - Desk arrivals have a best-effort no-reshuffle contract: failed active-space verification leaves the arrival floating and changes no existing geometry. A space switch between verification and unfloat remains a documented race.
 - Startup/wake cascades remain explicit full layout reclamation with today's behavior.
+- Desk-mode arrivals use the laptop home stack when present; otherwise they target the AW left slot and then the G9 left slot. Single-display arrival rules remain unchanged.
 - In desk mode, install catch-all manage-off. In laptop-only mode, retain today's placement, manage-standard, and exception rules.
 - Desk-to-laptop transition hands off surviving floating tile-type arrivals before laptop convergence.
 - Preserve the 3-second display quiet interval, do not add flex debounce to arrivals, and keep event-only lines for non-arrival signals.

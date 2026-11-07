@@ -20,7 +20,7 @@ func IsTileCandidate(window wm.Window) bool {
 	return rootAXWindow && window.Level == 0 && window.CanMove && !window.Sticky && !fixedAndUndersized
 }
 
-// HandoffDeskWindows moves floating desk arrivals before laptop convergence.
+// HandoffDeskWindows moves floating desk arrivals before display convergence.
 func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.Driver) error {
 	windows, err := driver.QueryWindows(ctx)
 	if err != nil {
@@ -30,7 +30,7 @@ func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	if err != nil {
 		return err
 	}
-	target, ok := laptopHome(profile, displays)
+	target, ok := arrivalTargetFor(profile, displays)
 	if !ok {
 		return nil
 	}
@@ -38,8 +38,9 @@ func HandoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		if !window.Floating || !IsTileCandidate(window) {
 			continue
 		}
-		if err := placeWindow(ctx, driver, window, target); err != nil {
-			return fmt.Errorf("handing off window %d to laptop: %w", window.ID, err)
+		anchor := leftDeskSlotWindow(profile, target, displays, windows, window.ID)
+		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
+			return fmt.Errorf("handing off window %d to arrival target: %w", window.ID, err)
 		}
 	}
 	return nil
@@ -63,7 +64,7 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	if len(displays) <= 1 {
 		return nil
 	}
-	target, ok := laptopHome(profile, displays)
+	target, ok := arrivalTargetFor(profile, displays)
 	if !ok {
 		return nil
 	}
@@ -79,8 +80,9 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		if _, exists := claimed[window.ID]; exists {
 			continue
 		}
-		if err := placeWindow(ctx, driver, window, target); err != nil {
-			return fmt.Errorf("recovering window %d to laptop: %w", window.ID, err)
+		anchor := leftDeskSlotWindow(profile, target, displays, windows, window.ID)
+		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
+			return fmt.Errorf("recovering window %d to arrival target: %w", window.ID, err)
 		}
 	}
 	return nil
@@ -117,14 +119,22 @@ func HandleWindowCreated(ctx context.Context, profile *config.Profile, driver wm
 	if len(displays) <= 1 {
 		return nil
 	}
-	target, ok := laptopHome(profile, displays)
+	target, ok := arrivalTargetFor(profile, displays)
 	if !ok {
 		return nil
 	}
 	if env.ArrivalReady != nil && !env.ArrivalReady() {
 		return ErrDisplayPending
 	}
-	return placeWindow(placementCtx, driver, window, target)
+	if target.display != config.DisplayLaptop {
+		windows, err := driver.QueryWindows(placementCtx)
+		if err != nil {
+			return err
+		}
+		anchor := leftDeskSlotWindow(profile, target, displays, windows, window.ID)
+		return placeArrivalWindow(placementCtx, driver, window, target, anchor)
+	}
+	return placeWindow(placementCtx, driver, window, target.space)
 }
 
 func acquirePlacementLocks(ctx context.Context, paths effects.Paths) (interface{ Unlock() error }, interface{ Unlock() error }, error) {
@@ -200,23 +210,80 @@ func lockPlacement(ctx context.Context, paths effects.Paths) (func(), error) {
 	}, nil
 }
 
-func laptopHome(profile *config.Profile, displays []wm.Display) (wm.SpaceID, bool) {
-	index, ok := engine.ResolveDisplay(profile, config.DisplayLaptop, displays)
-	if !ok {
-		return "", false
-	}
-	for _, display := range displays {
-		if display.Idx == index && len(display.SpaceIDs) > 0 {
-			return display.SpaceIDs[0], true
+type arrivalTarget struct {
+	space   wm.SpaceID
+	display config.DisplayName
+}
+
+func arrivalTargetFor(profile *config.Profile, displays []wm.Display) (arrivalTarget, bool) {
+	for _, name := range [...]config.DisplayName{config.DisplayLaptop, config.DisplayAW, config.DisplayG9} {
+		index, ok := engine.ResolveDisplay(profile, name, displays)
+		if !ok {
+			continue
 		}
+		for _, display := range displays {
+			if display.Idx != index {
+				continue
+			}
+			if len(display.SpaceIDs) == 0 {
+				return arrivalTarget{}, false
+			}
+			return arrivalTarget{space: display.SpaceIDs[0], display: name}, true
+		}
+		return arrivalTarget{}, false
 	}
-	return "", false
+	return arrivalTarget{}, false
+}
+
+func leftDeskSlotWindow(profile *config.Profile, target arrivalTarget, displays []wm.Display, windows []wm.Window, arrivingID int) int {
+	if target.display == config.DisplayLaptop {
+		return 0
+	}
+	layouts := engine.ResolveDesk(profile, displays)
+	for _, layout := range layouts {
+		if layout.Display != target.display || len(layout.Tracks) == 0 || len(layout.Tracks[0]) == 0 {
+			continue
+		}
+		var anchor wm.Window
+		hasAnchor := false
+		for _, window := range windows {
+			if window.ID == arrivingID || window.SpaceID != target.space || window.Minimized || window.Floating {
+				continue
+			}
+			for _, name := range layout.Tracks[0] {
+				spec, exists := profile.Windows[name]
+				if !exists || !engine.MatchesSpec(spec, window.App, window.Title) {
+					continue
+				}
+				if !hasAnchor || window.Frame.X < anchor.Frame.X || window.Frame.X == anchor.Frame.X && window.ID < anchor.ID {
+					anchor = window
+					hasAnchor = true
+				}
+				break
+			}
+		}
+		if hasAnchor {
+			return anchor.ID
+		}
+		return 0
+	}
+	return 0
+}
+
+func placeArrivalWindow(ctx context.Context, driver wm.Driver, window wm.Window, target arrivalTarget, leftSlotWindowID int) error {
+	if leftSlotWindowID > 0 {
+		if err := driver.StackOnto(ctx, leftSlotWindowID, window.ID); err != nil {
+			return fmt.Errorf("stacking arriving window in left desk slot: %w", err)
+		}
+		window.SpaceID = target.space
+	}
+	return placeWindow(ctx, driver, window, target.space)
 }
 
 func placeWindow(ctx context.Context, driver wm.Driver, window wm.Window, target wm.SpaceID) error {
 	if window.SpaceID != target {
 		if err := driver.MoveWindowToSpace(ctx, window.ID, target); err != nil {
-			return fmt.Errorf("moving window to laptop home stack: %w", err)
+			return fmt.Errorf("moving window to arrival target: %w", err)
 		}
 	}
 	focused, err := driver.FocusWindow(ctx, window.ID)

@@ -88,12 +88,13 @@ the daemon keeps serving; a later `tess wake` can retry the cascade.
 
 
 On a desk with multiple displays, newly created tile-type windows are floated by
-yabai and placed on the laptop home stack by the resident daemon. Placement
-waits for display changes to settle and shares serialization with wake and
-display cascades. It focuses the arriving window and only un-floats it when the
-active space is still the laptop target. Laptop-only arrival rules and flex
-convergence remain unchanged. A desk-to-laptop transition hands off surviving
-floating arrivals before laptop convergence.
+yabai and placed by the resident daemon: the laptop home stack when available,
+otherwise the AW left slot, then the G9 left slot. Placement waits for display
+changes to settle and shares serialization with wake and display cascades. It
+focuses the arriving window and only un-floats it when the active space is still
+the target. Laptop-only arrival rules and flex convergence remain unchanged. A
+desk-to-laptop transition hands off surviving floating arrivals before laptop
+convergence.
 The engine remains pure, so layout behavior can be tested without spawning yabai.
 
 ## Configuration

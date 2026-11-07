@@ -436,3 +436,168 @@ func TestAdoptSpawnedWindowsClaimPolicy(t *testing.T) {
 		})
 	}
 }
+func TestHandleWindowCreatedArrivalTargets(t *testing.T) {
+	tests := []struct {
+		name                    string
+		seed                    fake.Seed
+		wantSpaceLabel          string
+		wantFloating            bool
+		wantStackTargets        []int
+		checkSingleDisplayRules bool
+	}{
+		{
+			name:           "laptop and both desks use laptop stack",
+			seed:           fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}, {Idx: 3, Frame: displayFrame(1728, 1117)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "aw-home"}, {DisplayIdx: 3, Label: "laptop-home"}}, Windows: []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
+			wantSpaceLabel: "laptop-home",
+		},
+		{
+			name:             "g9 and aw use the left aw column",
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "aw-home"}}, Windows: []fake.SeedWindow{{ID: 100, App: "Arc", SpaceIndex: 2}, {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
+			wantSpaceLabel:   "aw-home",
+			wantStackTargets: []int{100},
+		},
+		{
+			name:             "g9 without aw falls back to left g9 column",
+			seed:             fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(2560, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "external-home"}}, Windows: []fake.SeedWindow{{ID: 100, App: "Arc", SpaceIndex: 1}, {ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 2, Floating: true}}},
+			wantSpaceLabel:   "g9-home",
+			wantStackTargets: []int{100},
+		},
+		{
+			name:           "empty aw left slot moves and tiles arrival",
+			seed:           fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}, {Idx: 2, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}, {DisplayIdx: 2, Label: "aw-home"}}, Windows: []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
+			wantSpaceLabel: "aw-home",
+		},
+		{
+			name:                    "single g9 keeps current rules and placement",
+			seed:                    fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "g9-home"}}, Windows: []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
+			wantSpaceLabel:          "g9-home",
+			wantFloating:            true,
+			checkSingleDisplayRules: true,
+		},
+		{
+			name:           "unmatched displays skip placement",
+			seed:           fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(2560, 1440)}, {Idx: 2, Frame: displayFrame(1920, 1080)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1, Label: "external-one"}, {DisplayIdx: 2, Label: "external-two"}}, Windows: []fake.SeedWindow{{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true}}},
+			wantSpaceLabel: "external-one",
+			wantFloating:   true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) { testArrivalTarget(t, test) })
+	}
+}
+
+func testArrivalTarget(t *testing.T, test struct {
+	name                    string
+	seed                    fake.Seed
+	wantSpaceLabel          string
+	wantFloating            bool
+	wantStackTargets        []int
+	checkSingleDisplayRules bool
+}) {
+	t.Helper()
+	base := fake.New(test.seed)
+	driver := &arrivalTargetDriver{Driver: base}
+	profile := testProfile(t)
+	if test.checkSingleDisplayRules {
+		recorder := &ruleRecorder{}
+		if err := Rules(t.Context(), profile, &ruleDriver{Driver: base, rules: recorder}); err != nil {
+			t.Fatal(err)
+		}
+		if slices.ContainsFunc(recorder.added, func(rule wm.Rule) bool { return rule.Label == "auto:desk-manage-off" }) {
+			t.Fatal("single g9 display unexpectedly installs desk manage-off rule")
+		}
+	}
+	if err := HandleWindowCreated(t.Context(), profile, driver, commandEnv(t), 90); err != nil {
+		t.Fatal(err)
+	}
+	window, found, err := driver.QueryWindow(t.Context(), 90)
+	if err != nil || !found {
+		t.Fatalf("arrival window = %t, %v", found, err)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSpaceLabel := ""
+	for _, space := range spaces {
+		if space.ID == window.SpaceID {
+			gotSpaceLabel = space.Label
+			break
+		}
+	}
+	if gotSpaceLabel != test.wantSpaceLabel || window.Floating != test.wantFloating {
+		t.Fatalf("arrival = %+v in %q; want floating=%t in %q", window, gotSpaceLabel, test.wantFloating, test.wantSpaceLabel)
+	}
+	if !slices.Equal(driver.stackTargets, test.wantStackTargets) {
+		t.Fatalf("stack targets = %v; want %v", driver.stackTargets, test.wantStackTargets)
+	}
+}
+func TestHandoffDeskWindowsUsesLeftAWColumn(t *testing.T) {
+	driver := newLidClosedArrivalDriver()
+	if err := HandoffDeskWindows(t.Context(), testProfile(t), driver); err != nil {
+		t.Fatal(err)
+	}
+	assertLeftAWArrival(t, driver)
+}
+
+func TestRecoverDeskWindowsUsesLeftAWColumn(t *testing.T) {
+	driver := newLidClosedArrivalDriver()
+	env := commandEnv(t)
+	env.ReclaimedDeskWindows = make(map[int]struct{})
+	if err := RecoverDeskWindows(t.Context(), testProfile(t), driver, env); err != nil {
+		t.Fatal(err)
+	}
+	assertLeftAWArrival(t, driver)
+}
+
+type arrivalTargetDriver struct {
+	*fake.Driver
+	stackTargets []int
+}
+
+func (d *arrivalTargetDriver) StackOnto(ctx context.Context, targetID, windowID int) error {
+	d.stackTargets = append(d.stackTargets, targetID)
+	return d.Driver.StackOnto(ctx, targetID, windowID)
+}
+
+func newLidClosedArrivalDriver() *arrivalTargetDriver {
+	return &arrivalTargetDriver{Driver: fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{
+			{Idx: 1, Frame: displayFrame(5120, 2160)},
+			{Idx: 2, Frame: displayFrame(3440, 1440)},
+		},
+		Spaces: []fake.SeedSpace{
+			{DisplayIdx: 1, Label: "g9-home"},
+			{DisplayIdx: 2, Label: "aw-home"},
+		},
+		Windows: []fake.SeedWindow{
+			{ID: 100, App: "Arc", SpaceIndex: 2},
+			{ID: 90, App: "Code", Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true, SpaceIndex: 1, Floating: true},
+		},
+	})}
+}
+
+func assertLeftAWArrival(t *testing.T, driver *arrivalTargetDriver) {
+	t.Helper()
+	window, found, err := driver.QueryWindow(t.Context(), 90)
+	if err != nil || !found {
+		t.Fatalf("arrival window = %t, %v", found, err)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSpaceLabel := ""
+	for _, space := range spaces {
+		if space.ID == window.SpaceID {
+			gotSpaceLabel = space.Label
+			break
+		}
+	}
+	if gotSpaceLabel != "aw-home" || window.Floating {
+		t.Fatalf("arrival = %+v in %q; want tiled in aw-home", window, gotSpaceLabel)
+	}
+	if !slices.Equal(driver.stackTargets, []int{100}) {
+		t.Fatalf("stack targets = %v; want [100]", driver.stackTargets)
+	}
+}
