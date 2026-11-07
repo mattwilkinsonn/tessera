@@ -88,6 +88,22 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 		return fmt.Errorf("querying windows after desk plan: %w", err)
 	}
 	displays := engine.DisplaySet(profile, world.Displays)
+	if _, hasLaptop := engine.ResolveDisplay(profile, config.DisplayLaptop, world.Displays); !hasLaptop {
+		target, hasTarget := arrivalTargetFor(profile, world.Displays)
+		if hasTarget && target.display != config.DisplayLaptop {
+			claimed := make(map[int]struct{}, len(filled))
+			for _, id := range filled {
+				claimed[id] = struct{}{}
+			}
+			if err := stackDisplacedDeskWindows(ctx, driver, target, fresh, claimed); err != nil {
+				return fmt.Errorf("stacking displaced desk windows: %w", err)
+			}
+			fresh, err = driver.QueryWindows(ctx)
+			if err != nil {
+				return fmt.Errorf("querying windows after displaced-window stacking: %w", err)
+			}
+		}
+	}
 	updated := engine.PruneSlots(profile, engine.RecordSlots(world.Slots, filled, displays, fresh), fresh)
 	if err := effects.WriteSlots(paths.WindowSlots, updated); err != nil {
 		return fmt.Errorf("persisting window slot memory: %w", err)
