@@ -480,7 +480,10 @@ func seedDisplays(displays []fake.SeedDisplay) []wm.Display {
 
 type wakeRecoveryDriver struct {
 	*fake.Driver
-	stacked []int
+	stacked         []int
+	failPlacementID int
+	failFinalQuery  bool
+	recovered       bool
 }
 
 func (d *wakeRecoveryDriver) StackOnto(ctx context.Context, target, id int) error {
@@ -488,7 +491,33 @@ func (d *wakeRecoveryDriver) StackOnto(ctx context.Context, target, id int) erro
 	return d.Driver.StackOnto(ctx, target, id)
 }
 
+func (d *wakeRecoveryDriver) ToggleFloat(ctx context.Context, id int) error {
+	if id == d.failPlacementID {
+		return errors.New("startup placement rejected")
+	}
+	if err := d.Driver.ToggleFloat(ctx, id); err != nil {
+		return err
+	}
+	d.recovered = true
+	return nil
+}
+
+func (d *wakeRecoveryDriver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
+	if d.recovered && d.failFinalQuery {
+		d.failFinalQuery = false
+		return nil, errors.New("startup observation failed")
+	}
+	return d.Driver.QueryWindows(ctx)
+}
+
 func TestWakeRoutineObservesRecoveredLaptopArrival(t *testing.T) {
+	for _, stage := range []string{"success", "later placement fails", "final observation fails"} {
+		t.Run(stage, func(t *testing.T) { testWakeRecoveryObservation(t, stage) })
+	}
+}
+
+func testWakeRecoveryObservation(t *testing.T, stage string) {
+	t.Helper()
 	profile := testProfile(t)
 	env := daemonEnv(t)
 	env.Topology = &commands.TopologyState{}
@@ -498,8 +527,22 @@ func TestWakeRoutineObservesRecoveredLaptopArrival(t *testing.T) {
 		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2}},
 		Windows:  []fake.SeedWindow{{ID: 90, App: "Extra", SpaceIndex: 2, Floating: true, Root: true, Role: "AXWindow", Subrole: "AXStandardWindow", CanMove: true, CanResize: true}},
 	})}
-	if err := WakeRoutine(profile, driver, env, "/tmp/tess-recovery.sock")(t.Context()); err != nil {
-		t.Fatal(err)
+	if stage == "later placement fails" {
+		if err := driver.SpawnWindow(t.Context(), []string{"open", "-a", "Extra"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := driver.Driver.ToggleFloat(t.Context(), 91); err != nil {
+			t.Fatal(err)
+		}
+		if err := driver.MoveWindowToSpace(t.Context(), 91, "2"); err != nil {
+			t.Fatal(err)
+		}
+		driver.failPlacementID = 91
+	}
+	driver.failFinalQuery = stage == "final observation fails"
+	wakeErr := WakeRoutine(profile, driver, env, "/tmp/tess-recovery.sock")(t.Context())
+	if (wakeErr != nil) != (stage != "success") {
+		t.Fatalf("wake error = %v for stage %q", wakeErr, stage)
 	}
 	window, found, err := driver.QueryWindow(t.Context(), 90)
 	if err != nil || !found || window.Floating || window.DisplayIdx != 1 {

@@ -104,6 +104,19 @@ func (state *TopologyState) RecordLaptopHomeWindows(ids []int) {
 	state.displayMu.Unlock()
 }
 
+// RecordLaptopHomeWindow adds a confirmed placement without replacing prior observations.
+func (state *TopologyState) RecordLaptopHomeWindow(id int) {
+	if state == nil {
+		return
+	}
+	state.displayMu.Lock()
+	defer state.displayMu.Unlock()
+	if state.laptopWindows == nil {
+		state.laptopWindows = make(map[int]struct{})
+	}
+	state.laptopWindows[id] = struct{}{}
+}
+
 // LaptopHomeWindows returns the latest snapshot of laptop home-space IDs.
 func (state *TopologyState) LaptopHomeWindows() map[int]struct{} {
 	windows := make(map[int]struct{})

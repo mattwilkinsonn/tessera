@@ -145,8 +145,12 @@ func RecoverDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 		if anchor == 0 && target.display != config.DisplayLaptop {
 			anchor = leftDeskSlotWindow(target, windows, window.ID)
 		}
-		if err := placeArrivalWindow(ctx, driver, window, target, anchor); err != nil {
+		placed, err := placeArrivalWindowOutcome(ctx, driver, window, target, anchor)
+		if err != nil {
 			return fmt.Errorf("recovering window %d to arrival target: %w", window.ID, err)
+		}
+		if placed && target.display == config.DisplayLaptop {
+			env.Topology.RecordLaptopHomeWindow(window.ID)
 		}
 		if target.display != config.DisplayLaptop && anchor == 0 {
 			batchAnchor, err = placedArrivalAnchor(ctx, driver, target, window.ID)

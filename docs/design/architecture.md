@@ -97,7 +97,9 @@ the AW is absent. A lid-close display cascade applies the desk plan even with
 only one recognized external display. It then stacks only IDs last seen on the
 laptop home space, excluding current desk-plan claims. The snapshot is refreshed
 after desk Apply, laptop arrivals, and startup recovery while the laptop is
-connected. Removal keeps the last connected observation. Recovery consumes placed
+connected. Each confirmed startup placement is recorded immediately, before later
+placements or the final observation can fail. Removal keeps the last connected
+observation. Recovery consumes placed
 or intentionally excluded IDs even when a later placement or query fails; focus
 or active-space aborts keep candidates for a later cascade. Unrelated
 or deliberately placed unclaimed desk windows are never stacked by this recovery
