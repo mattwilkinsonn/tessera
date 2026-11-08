@@ -530,7 +530,7 @@ func startMissingWindows(ctx context.Context, profile *config.Profile, driver wm
 	blocked := make(map[string]bool, len(ledger))
 	for name, times := range ledger {
 		for _, at := range times {
-			if now.Sub(at) < 5*time.Minute {
+			if now.Sub(at) < effects.SpawnCooldown {
 				blocked[name] = true
 			}
 		}
@@ -553,7 +553,7 @@ func startMissingWindows(ctx context.Context, profile *config.Profile, driver wm
 			}
 			targets[spec.App] = target
 		}
-		ledger[name] = append(ledger[name], now)
+		ledger[name] = []time.Time{now}
 		if err := effects.WriteSpawns(ledgerPath, ledger); err != nil {
 			return nil, err
 		}

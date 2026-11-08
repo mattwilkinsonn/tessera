@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os/exec" //nolint:depguard // yabai requires subprocess execution.
 	"strconv"
 	"strings"
@@ -231,22 +230,11 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 	if target.Kind == wm.TargetStack {
 		for _, track := range target.Tracks {
 			for _, windowID := range track {
-				windows, err := d.QueryWindows(ctx)
+				allowed, err := wm.CanAddToSpace(ctx, d, id, windowID)
 				if err != nil {
 					return err
 				}
-				count := 0
-				already := false
-				for _, window := range windows {
-					if window.SpaceID == id && !window.Floating && !window.Minimized {
-						count++
-						if window.ID == windowID {
-							already = true
-						}
-					}
-				}
-				if !already && count >= wm.StackWindowCap {
-					slog.Warn("holding window outside full stack", "window", windowID, "stack_size", count)
+				if !allowed {
 					continue
 				}
 				if _, _, err := d.run(ctx, MoveWindowToSpaceArgs(windowID, index)); err != nil {
@@ -306,6 +294,10 @@ func (d *Driver) MoveWindowToSpace(ctx context.Context, windowID int, id wm.Spac
 	if err != nil || !found {
 		return err
 	}
+	allowed, err := wm.CanAddToSpace(ctx, d, id, windowID)
+	if err != nil || !allowed {
+		return err
+	}
 	if _, _, err := d.run(ctx, MoveWindowToSpaceArgs(windowID, index)); err != nil {
 		return err
 	}
@@ -328,7 +320,17 @@ func (d *Driver) ToggleSplit(ctx context.Context, windowID int) error {
 }
 
 func (d *Driver) ToggleFloat(ctx context.Context, windowID int) error {
-	_, _, err := d.run(ctx, ToggleFloatArgs(windowID))
+	window, exists, err := d.QueryWindow(ctx, windowID)
+	if err != nil || !exists {
+		return err
+	}
+	if window.Floating {
+		allowed, err := wm.CanAddToSpace(ctx, d, window.SpaceID, windowID)
+		if err != nil || !allowed {
+			return err
+		}
+	}
+	_, _, err = d.run(ctx, ToggleFloatArgs(windowID))
 	return err
 }
 
@@ -533,6 +535,15 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 	var raw RawYabaiWindow
 	found, err := d.queryOrNull(ctx, QueryWindowArgs(windowID), &raw)
 	if err != nil || !found || !raw.IsFloating {
+		return err
+	}
+	var spaces []RawYabaiSpace
+	if err := d.query(ctx, QuerySpacesArgs(), &spaces); err != nil {
+		return err
+	}
+	space := IndexToSpaceID(spaces)[raw.Space]
+	allowed, err := wm.CanAddToSpace(ctx, d, space, windowID)
+	if err != nil || !allowed {
 		return err
 	}
 	if _, _, err := d.run(ctx, ToggleFloatArgs(windowID)); err != nil {

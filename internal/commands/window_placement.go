@@ -425,6 +425,18 @@ func placeWindow(ctx context.Context, driver wm.Driver, window wm.Window, target
 }
 
 func placeWindowOutcome(ctx context.Context, driver wm.Driver, window wm.Window, target wm.SpaceID) (bool, error) {
+	allowed, err := wm.CanAddToSpace(ctx, driver, target, window.ID)
+	if err != nil {
+		return false, err
+	}
+	if !allowed {
+		if !window.Floating {
+			if err := driver.ToggleFloat(ctx, window.ID); err != nil {
+				return false, fmt.Errorf("floating rejected arrival: %w", err)
+			}
+		}
+		return false, nil
+	}
 	if window.SpaceID != target {
 		if err := driver.MoveWindowToSpace(ctx, window.ID, target); err != nil {
 			return false, fmt.Errorf("moving window to arrival target: %w", err)

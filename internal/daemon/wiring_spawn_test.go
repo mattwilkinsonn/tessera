@@ -6,6 +6,7 @@ import (
 	"net"
 	"path/filepath"
 	"regexp"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,5 +66,73 @@ func TestWakeRetriesHeldSpawns(t *testing.T) {
 	}
 	if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
 		t.Fatal(err)
+	}
+}
+
+func TestServeSpawnRetryLifetime(t *testing.T) {
+	for _, cancelEarly := range []bool{false, true} {
+		name := "retry survives bounded wake"
+		if cancelEarly {
+			name = "shutdown cancels retry"
+		}
+		t.Run(name, func(t *testing.T) {
+			profile := testProfile(t)
+			profile.Windows["arc"] = config.WindowSpec{AppRE: regexp.MustCompile("Zen"), Spawn: []string{"open", "Zen"}}
+			driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120, H: 2160}}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}})
+			driver.Uptime = 29 * time.Second
+			env := daemonEnv(t)
+			env.Nudge = func(context.Context, string) error { return nil }
+			sock := filepath.Join(shortDir(t), "serve.sock")
+			listener, err := net.Listen("unix", sock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			finished := make(chan error, 4)
+			var calls atomic.Int32
+			routine := WakeRoutine(profile, driver, env, sock)
+			wake := func(ctx context.Context) error { calls.Add(1); err := routine(ctx); finished <- err; return err }
+			done := make(chan error, 1)
+			go func() { done <- Serve(ctx, listener, NewHub(idle, idle), Wakes{Run: wake}) }()
+			select {
+			case err := <-finished:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("held wake blocked")
+			}
+			if cancelEarly {
+				cancel()
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-finished:
+					t.Fatal("retry ran after shutdown")
+				case <-time.After(1200 * time.Millisecond):
+				}
+				if calls.Load() != 1 {
+					t.Fatalf("wakes = %d", calls.Load())
+				}
+				return
+			}
+			select {
+			case err := <-finished:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("deferred wake was lost after bounded context ended")
+			}
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if calls.Load() != 2 {
+				t.Fatalf("wakes = %d, want two", calls.Load())
+			}
+		})
 	}
 }

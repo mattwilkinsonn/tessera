@@ -624,8 +624,18 @@ query
 
 -m
 query
+--spaces
+
+-m
+query
 --windows
 --window
+
+-m
+query
+--windows
+--window
+2383
 
 -m
 window

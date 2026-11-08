@@ -12,6 +12,24 @@ import (
 // SpawnLedger is accessed only while holding the window-slots lock.
 type SpawnLedger map[string][]time.Time
 
+const SpawnCooldown = 5 * time.Minute
+
+func PruneSpawns(ledger SpawnLedger, now time.Time) {
+	for name, times := range ledger {
+		var latest time.Time
+		for _, at := range times {
+			if at.After(latest) {
+				latest = at
+			}
+		}
+		if latest.IsZero() || now.Sub(latest) >= SpawnCooldown {
+			delete(ledger, name)
+			continue
+		}
+		ledger[name] = []time.Time{latest}
+	}
+}
+
 func ReadSpawns(path string) (SpawnLedger, error) {
 	ledger := make(SpawnLedger)
 	data, err := os.ReadFile(path) //nolint:gosec // Caller-selected state path.
@@ -31,6 +49,7 @@ func ReadSpawns(path string) (SpawnLedger, error) {
 }
 
 func WriteSpawns(path string, ledger SpawnLedger) error {
+	PruneSpawns(ledger, time.Now())
 	data, err := json.Marshal(ledger)
 	if err != nil {
 		return fmt.Errorf("encoding spawn ledger: %w", err)

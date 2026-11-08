@@ -6,20 +6,32 @@ import (
 )
 
 func SpawnsNeeded(profile *config.Profile, names []string, windows []wm.Window) []string {
-	consumed := make([]bool, len(windows))
+	owners := make([]int, len(windows))
+	for i := range owners {
+		owners[i] = -1
+	}
 	satisfied := make([]bool, len(names))
-	// Specific slots claim first so generic slots cannot consume their matches.
+	var match func(int, []bool) bool
+	match = func(slot int, seen []bool) bool {
+		spec := profile.Windows[names[slot]]
+		for j, window := range windows {
+			if seen[j] || !MatchesSpec(spec, window.App, window.Title) {
+				continue
+			}
+			seen[j] = true
+			if owners[j] < 0 || match(owners[j], seen) {
+				owners[j] = slot
+				return true
+			}
+		}
+		return false
+	}
+	// Earlier titled matches remain satisfied when generic slots seek augmenting paths.
 	for _, titled := range []bool{true, false} {
 		for i, name := range names {
 			spec, exists := profile.Windows[name]
-			if !exists || (spec.TitleRE != nil) != titled {
-				continue
-			}
-			for j, window := range windows {
-				if !consumed[j] && MatchesSpec(spec, window.App, window.Title) {
-					consumed[j], satisfied[i] = true, true
-					break
-				}
+			if exists && (spec.TitleRE != nil) == titled {
+				satisfied[i] = match(i, make([]bool, len(windows)))
 			}
 		}
 	}

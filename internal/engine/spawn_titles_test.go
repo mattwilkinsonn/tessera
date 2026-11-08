@@ -30,3 +30,24 @@ func TestSpawnsNeededPreservesTitles(t *testing.T) {
 		})
 	}
 }
+
+func TestSpawnsNeededAugmentingPaths(t *testing.T) {
+	profile := &config.Profile{Windows: map[string]config.WindowSpec{}}
+	for name, title := range map[string]string{"broad": "work|scratch", "narrow": "^work$"} {
+		profile.Windows[name] = config.WindowSpec{AppRE: regexp.MustCompile("Ghostty"), TitleRE: regexp.MustCompile(title), Spawn: []string{"open", "Ghostty"}}
+	}
+	for _, order := range []struct {
+		name   string
+		titles []string
+	}{
+		{name: "work first", titles: []string{"work", "scratch"}},
+		{name: "scratch first", titles: []string{"scratch", "work"}},
+	} {
+		t.Run(order.name, func(t *testing.T) {
+			windows := []wm.Window{{ID: 1, App: "Ghostty", Title: order.titles[0], Floating: true}, {ID: 2, App: "Ghostty", Title: order.titles[1], Floating: true}}
+			if got := SpawnsNeeded(profile, []string{"broad", "narrow"}, windows); len(got) != 0 {
+				t.Fatalf("spawns = %v, want none", got)
+			}
+		})
+	}
+}
