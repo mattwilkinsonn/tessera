@@ -382,6 +382,18 @@ func placeArrivalWindowOutcome(ctx context.Context, driver wm.Driver, window wm.
 	if leftSlotWindowID <= 0 {
 		return placeWindowOutcome(ctx, driver, window, target.space)
 	}
+	allowed, err := wm.CanStack(ctx, driver, leftSlotWindowID, window.ID)
+	if err != nil {
+		return false, err
+	}
+	if !allowed {
+		if !window.Floating {
+			if err := driver.ToggleFloat(ctx, window.ID); err != nil {
+				return false, fmt.Errorf("floating rejected stack window: %w", err)
+			}
+		}
+		return false, nil
+	}
 	if window.SpaceID != target.space {
 		if err := driver.MoveWindowToSpace(ctx, window.ID, target.space); err != nil {
 			return false, fmt.Errorf("moving arrival to left desk slot: %w", err)

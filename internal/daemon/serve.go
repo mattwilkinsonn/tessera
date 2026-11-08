@@ -26,10 +26,13 @@ type Wakes struct {
 	Ready func(context.Context) error
 }
 
+type wakeLifetimeKey struct{}
+
 // Serve runs the startup wake and dispatches one line per connection until ctx ends.
 // It closes ln and waits for every goroutine it started. A wedged work call or accept failure ends it with that error.
 func Serve(ctx context.Context, ln net.Listener, h *Hub, w Wakes) error {
 	ctx, cancel := context.WithCancel(ctx)
+	ctx = context.WithValue(ctx, wakeLifetimeKey{}, ctx)
 	var wg sync.WaitGroup
 	wakes := make(chan struct{}, 1)
 	if w.Ready == nil {

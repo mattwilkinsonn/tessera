@@ -31,6 +31,17 @@ Each layout remembers which window filled each slot, per display and mode, in
 windows back. It survives tess and daemon restarts. An app restart gives its
 windows new ids, so the next layout relearns them. Delete the file to reset.
 
+Spawn demand counts matching app and title windows on every space, including
+floating and minimized windows. Title-specific slots claim before app-only slots.
+`spawn-ledger.json`, next to `window-slots.json`, records a
+JSON object from window-spec names to arrays of RFC 3339 timestamps. The shared
+slot lock protects it. Each name has a five-minute launch cooldown, including
+launches whose windows never appear. Spawns wait until yabai has been up for
+30 seconds and stop after a query failure. A held wake arms one cancellable
+timer that sends a fresh wake through the daemon socket without blocking the
+current wake. Stack insertions stop at 24 windows; rejected
+arrivals remain floating.
+
 ```text
 tess apply                      converge the active space onto its configured layout
 tess laptop                     converge the laptop-only fallback layout

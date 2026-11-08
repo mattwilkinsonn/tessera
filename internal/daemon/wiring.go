@@ -8,6 +8,7 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/commands"
@@ -101,7 +102,9 @@ func FlexWork(profile *config.Profile, driver wm.Driver, env commands.Env) Work 
 
 // WakeRoutine registers signals, then runs the startup reclaim cascade and recovery.
 func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, sock string) func(context.Context) error {
+	var retryPending atomic.Bool
 	return func(ctx context.Context) error {
+		ctx = wm.TrackQueryFailures(ctx)
 		if src, ok := driver.(wm.EventSource); ok {
 			if err := RegisterSignals(ctx, src, sock); err != nil {
 				return err
@@ -109,10 +112,44 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 		}
 		wakeEnv := env
 		wakeEnv.ReclaimedDeskWindows = make(map[int]struct{})
+		held := false
+		var retryDelay time.Duration
+		wakeEnv.SpawnsHeld = func(delay time.Duration) { held, retryDelay = true, delay }
 		if _, err := commands.RunDisplayCascade(ctx, profile, driver, wakeEnv); err != nil {
 			return err
 		}
-		return commands.RecoverDeskWindows(ctx, profile, driver, wakeEnv)
+		if err := commands.RecoverDeskWindows(ctx, profile, driver, wakeEnv); err != nil {
+			return err
+		}
+		if !held || !retryPending.CompareAndSwap(false, true) {
+			return nil
+		}
+		retryCtx := ctx
+		if lifetime, ok := ctx.Value(wakeLifetimeKey{}).(context.Context); ok {
+			retryCtx = lifetime
+		}
+		var stopCancel func() bool
+		registered := make(chan struct{})
+		timer := time.AfterFunc(retryDelay, func() {
+			<-registered
+			retryPending.Store(false)
+			if stopCancel != nil {
+				stopCancel()
+			}
+			if retryCtx.Err() != nil {
+				return
+			}
+			if err := commands.Wake(retryCtx, profile, driver, env, sock); err != nil {
+				slog.WarnContext(retryCtx, "sending deferred spawn wake", "error", err)
+			}
+		})
+		stopCancel = context.AfterFunc(retryCtx, func() {
+			if timer.Stop() {
+				retryPending.Store(false)
+			}
+		})
+		close(registered)
+		return nil
 	}
 }
 

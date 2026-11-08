@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec" //nolint:depguard // yabai requires subprocess execution.
 	"strconv"
 	"strings"
@@ -230,6 +231,24 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 	if target.Kind == wm.TargetStack {
 		for _, track := range target.Tracks {
 			for _, windowID := range track {
+				windows, err := d.QueryWindows(ctx)
+				if err != nil {
+					return err
+				}
+				count := 0
+				already := false
+				for _, window := range windows {
+					if window.SpaceID == id && !window.Floating && !window.Minimized {
+						count++
+						if window.ID == windowID {
+							already = true
+						}
+					}
+				}
+				if !already && count >= wm.StackWindowCap {
+					slog.Warn("holding window outside full stack", "window", windowID, "stack_size", count)
+					continue
+				}
 				if _, _, err := d.run(ctx, MoveWindowToSpaceArgs(windowID, index)); err != nil {
 					return err
 				}
@@ -244,7 +263,27 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 		_, _, err := d.run(ctx, SetSpaceLayoutArgs(index, wm.LayoutStack))
 		return err
 	}
-	for _, step := range BSPSteps(index, target, nil) {
+	steps := BSPSteps(index, target, nil)
+	for i := 0; i < len(steps); i++ {
+		step := steps[i]
+		if len(step.Args) >= 5 && step.Args[3] == "--insert" && step.Args[4] == "stack" {
+			anchor, err := strconv.Atoi(step.Args[2])
+			if err != nil {
+				return err
+			}
+			windowID := 0
+			if i+1 < len(steps) {
+				windowID = steps[i+1].Unfloat
+			}
+			allowed, err := wm.CanStack(ctx, d, anchor, windowID)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				i++
+				continue
+			}
+		}
 		if _, _, err := d.run(ctx, step.Args); err != nil {
 			return err
 		}
@@ -294,11 +333,21 @@ func (d *Driver) ToggleFloat(ctx context.Context, windowID int) error {
 }
 
 func (d *Driver) ArmInsert(ctx context.Context, windowID int, direction wm.Direction) error {
+	if string(direction) == "stack" {
+		allowed, err := wm.CanStack(ctx, d, windowID, 0)
+		if err != nil || !allowed {
+			return err
+		}
+	}
 	_, _, err := d.run(ctx, ArmInsertArgs(windowID, string(direction)))
 	return err
 }
 
 func (d *Driver) StackOnto(ctx context.Context, targetWindowID, windowID int) error {
+	allowed, err := wm.CanStack(ctx, d, targetWindowID, windowID)
+	if err != nil || !allowed {
+		return err
+	}
 	_, exitCode, err := d.run(ctx, StackWindowArgs(targetWindowID, windowID))
 	if err != nil {
 		return err
@@ -426,7 +475,12 @@ func (d *Driver) runOutput(ctx context.Context, args []string) ([]byte, string, 
 	return stdout.Bytes(), stderr.String(), -1, fmt.Errorf("running yabai %s: %w", strings.Join(args, " "), err)
 }
 
-func (d *Driver) query(ctx context.Context, args []string, target any) error {
+func (d *Driver) query(ctx context.Context, args []string, target any) (err error) {
+	defer func() {
+		if err != nil {
+			wm.MarkQueryFailed(ctx)
+		}
+	}()
 	stdout, exitCode, err := d.run(ctx, args)
 	if err != nil {
 		return err
@@ -440,12 +494,20 @@ func (d *Driver) query(ctx context.Context, args []string, target any) error {
 	return nil
 }
 
-func (d *Driver) queryOrNull(ctx context.Context, args []string, target any) (bool, error) {
+func (d *Driver) queryOrNull(ctx context.Context, args []string, target any) (found bool, err error) {
+	defer func() {
+		if err != nil {
+			wm.MarkQueryFailed(ctx)
+		}
+	}()
 	stdout, exitCode, err := d.run(ctx, args)
 	if err != nil {
 		return false, err
 	}
 	if exitCode != 0 || len(bytes.TrimSpace(stdout)) == 0 {
+		if exitCode != 0 {
+			wm.MarkQueryFailed(ctx)
+		}
 		return false, nil
 	}
 	if err := json.Unmarshal(stdout, target); err != nil {

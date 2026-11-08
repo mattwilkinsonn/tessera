@@ -233,17 +233,17 @@ func TestSpawnsNeeded(t *testing.T) {
 	spec := profile.Windows["ghostty-wave"]
 	spec.Spawn = []string{"open", "-na", "Ghostty"}
 	profile.Windows["ghostty-wave"] = spec
-	t.Run("returns only names without a matching or blank candidate", func(t *testing.T) {
+	t.Run("unmatched title does not satisfy demand", func(t *testing.T) {
 		windows := []wm.Window{{ID: 1, App: "Ghostty", Title: "blank"}}
 		got := SpawnsNeeded(profile, []string{"ghostty-wave", "ghostty-wave"}, windows)
-		if diff := cmp.Diff([]string{"ghostty-wave"}, got); diff != "" {
+		if diff := cmp.Diff([]string{"ghostty-wave", "ghostty-wave"}, got); diff != "" {
 			t.Fatalf("SpawnsNeeded() mismatch (-want +got):\n%s", diff)
 		}
 	})
-	t.Run("does not request spawn when blank app window can be claimed", func(t *testing.T) {
+	t.Run("blank title does not satisfy titled demand", func(t *testing.T) {
 		windows := []wm.Window{{ID: 1, App: "Ghostty"}}
-		if got := SpawnsNeeded(profile, []string{"ghostty-wave"}, windows); len(got) != 0 {
-			t.Fatalf("SpawnsNeeded() = %v, want empty", got)
+		if got := SpawnsNeeded(profile, []string{"ghostty-wave"}, windows); len(got) != 1 {
+			t.Fatalf("SpawnsNeeded() = %v, want one spawn", got)
 		}
 	})
 }

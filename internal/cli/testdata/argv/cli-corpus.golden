@@ -123,6 +123,14 @@ window
 abs:0.5714
 
 -m
+query
+--spaces
+
+-m
+query
+--windows
+
+-m
 window
 77
 --insert
@@ -214,6 +222,14 @@ window
 abs:0.5000
 
 -m
+query
+--spaces
+
+-m
+query
+--windows
+
+-m
 window
 88
 --insert
@@ -224,6 +240,14 @@ window
 6979
 --space
 1
+
+-m
+query
+--spaces
+
+-m
+query
+--windows
 
 -m
 query
@@ -541,6 +565,14 @@ south
 -m
 query
 --spaces
+
+-m
+query
+--spaces
+
+-m
+query
+--windows
 
 -m
 query
