@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -149,4 +150,91 @@ func TestPreserveFocusBusyCleanup(t *testing.T) {
 			}
 		})
 	}
+}
+
+type focusOrderDriver struct {
+	*fake.Driver
+	events *[]string
+}
+
+func (d *focusOrderDriver) FocusWindow(ctx context.Context, id int) (bool, error) {
+	*d.events = append(*d.events, "restore")
+	return d.Driver.FocusWindow(ctx, id)
+}
+
+func TestPreserveFocusBusyRestoreOrder(t *testing.T) {
+	for _, panics := range []bool{false, true} {
+		name := "normal"
+		if panics {
+			name = "panic"
+		}
+		t.Run(name, func(t *testing.T) {
+			events := []string{}
+			driver := &focusOrderDriver{
+				Driver: fake.New(fake.Seed{
+					Spaces:  []fake.SeedSpace{{DisplayIdx: 1}},
+					Windows: []fake.SeedWindow{{ID: 1, SpaceIndex: 1}},
+				}),
+				events: &events,
+			}
+			if ok, err := driver.Driver.FocusWindow(t.Context(), 1); err != nil || !ok {
+				t.Fatalf("initial focus = %t, %v", ok, err)
+			}
+			nudge := func(_ context.Context, _ string, variables ...string) error {
+				events = append(events, variables[0])
+				return errors.New("sketchybar unavailable")
+			}
+			panicValue := &struct{ message string }{message: "rebuild panic"}
+			var recovered any
+			func() {
+				defer func() { recovered = recover() }()
+				err := PreserveFocus(t.Context(), driver, nudge, func(context.Context) error {
+					events = append(events, "rebuild")
+					if panics {
+						panic(panicValue)
+					}
+					return nil
+				})
+				if err != nil {
+					t.Errorf("rebuild = %v", err)
+				}
+			}()
+			if panics && recovered != panicValue {
+				t.Fatalf("recovered = %v, want original panic value", recovered)
+			}
+			if !panics && recovered != nil {
+				t.Fatalf("unexpected panic: %v", recovered)
+			}
+			if !slices.Equal(events, []string{"STATE=on", "rebuild", "restore", "STATE=off"}) {
+				t.Fatalf("rebuild sequence = %v", events)
+			}
+		})
+	}
+}
+
+func TestPreserveFocusBusyTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		states := []string{}
+		nudge := func(ctx context.Context, _ string, variables ...string) error {
+			states = append(states, variables[0])
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		ran := false
+		rebuildErr := errors.New("rebuild failed")
+		start := time.Now()
+		err := PreserveFocus(t.Context(), fake.New(fake.Seed{}), nudge, func(context.Context) error {
+			ran = true
+			return rebuildErr
+		})
+		if !ran || err != rebuildErr {
+			t.Fatalf("ran = %t, result = %v", ran, err)
+		}
+		if !slices.Equal(states, []string{"STATE=on", "STATE=off"}) {
+			t.Fatalf("busy states = %v", states)
+		}
+		if elapsed := time.Since(start); elapsed > 4*time.Second {
+			t.Fatalf("signals exceeded bounded timeout: %v", elapsed)
+		}
+	})
 }
