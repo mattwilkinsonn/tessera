@@ -167,7 +167,7 @@ func runDisplayCascade(ctx context.Context, profile *config.Profile, driver wm.D
 		}
 		return CascadeApplied, nil
 	}
-	result, err := laptop(ctx, profile, driver, env, true)
+	result, err := laptop(ctx, profile, driver, env, true, !known || previous != len(displays))
 	switch result {
 	case LaptopContended:
 		return CascadeContended, err
@@ -180,7 +180,7 @@ func runDisplayCascade(ctx context.Context, profile *config.Profile, driver wm.D
 
 // RunFlexConverge converges a laptop event without spawning windows or reaping blank spaces.
 func RunFlexConverge(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) (LaptopResult, error) {
-	return laptop(ctx, profile, driver, env, false)
+	return laptop(ctx, profile, driver, env, false, false)
 }
 
 // Wake asks a running daemon to run its wake routine.

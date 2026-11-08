@@ -308,7 +308,7 @@ func laptopConvergeOrderCases(t *testing.T, profile *config.Profile) {
 	})
 	t.Run("space ids remain stable throughout converge", func(t *testing.T) {
 		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, nil, true)
-		state := InitialConvergeState("home", nil, true)
+		state := InitialConvergeState("home", nil, true, true)
 		referenced := make(map[wm.SpaceID]struct{})
 		for range 1000 {
 			action, next, ok := LaptopConvergeStep(profile, laptopSnapshot(world), state)
@@ -335,6 +335,41 @@ func laptopConvergeOrderCases(t *testing.T, profile *config.Profile) {
 		}
 		if _, ok := live["home"]; !ok {
 			t.Fatal("home space identity did not survive")
+		}
+	})
+	t.Run("daemon preserves flex between pinned spaces", func(t *testing.T) {
+		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, []string{"lap-arc", "lap-spotify", "lap-arc-2"}, true)
+		actions := runLaptopConverge(t, profile, world, false)
+		for _, action := range actions {
+			if move, ok := action.(MoveSpaceAction); ok {
+				t.Fatalf("daemon moved existing space: %v", move)
+			}
+		}
+		want := []string{"laptop", "lap-arc", "lap-spotify", "lap-arc-2"}
+		if diff := cmp.Diff(want, laptopLabels(world)); diff != "" {
+			t.Fatalf("label order mismatch (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("explicit converge resets flex between pinned spaces", func(t *testing.T) {
+		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, []string{"lap-arc", "lap-spotify", "lap-arc-2"}, true)
+		runLaptopConverge(t, profile, world, true)
+		want := []string{"laptop", "lap-arc", "lap-arc-2", "lap-spotify"}
+		if diff := cmp.Diff(want, laptopLabels(world)); diff != "" {
+			t.Fatalf("label order mismatch (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("daemon inserts new pinned after existing predecessor", func(t *testing.T) {
+		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, []string{"lap-arc", "lap-spotify"}, true)
+		existing := slices.Clone(world.order)
+		actions := runLaptopConverge(t, profile, world, false)
+		for _, action := range actions {
+			if move, ok := action.(MoveSpaceAction); ok && slices.Contains(existing, move.Space) {
+				t.Fatalf("daemon moved existing space: %v", move)
+			}
+		}
+		want := []string{"laptop", "lap-arc", "lap-arc-2", "lap-spotify"}
+		if diff := cmp.Diff(want, laptopLabels(world)); diff != "" {
+			t.Fatalf("label order mismatch (-want +got):\n%s", diff)
 		}
 	})
 	t.Run("phase D reorders existing out-of-order lap spaces", func(t *testing.T) {
@@ -450,7 +485,7 @@ func (world *laptopTestWorld) destroy(id wm.SpaceID) {
 
 func runLaptopConverge(t *testing.T, profile *config.Profile, world *laptopTestWorld, reap bool) []ConvergeAction {
 	t.Helper()
-	state := InitialConvergeState("home", nil, reap)
+	state := InitialConvergeState("home", nil, reap, reap)
 	actions := make([]ConvergeAction, 0)
 	for range 1000 {
 		action, next, ok := LaptopConvergeStep(profile, laptopSnapshot(world), state)

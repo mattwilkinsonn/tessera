@@ -144,7 +144,7 @@ func Laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 	var result LaptopResult
 	err := PreserveFocus(ctx, driver, env.Nudge, func(ctx context.Context) error {
 		var err error
-		result, err = laptop(ctx, profile, driver, env, true)
+		result, err = laptop(ctx, profile, driver, env, true, true)
 		return err
 	})
 	return result, err
@@ -163,7 +163,7 @@ func handoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 	return HandoffDeskWindows(ctx, profile, driver)
 }
 
-func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env, explicit bool) (LaptopResult, error) {
+func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env, explicit, resetOrder bool) (LaptopResult, error) {
 	ctx = wm.TrackQueryFailures(ctx)
 	paths, nudge, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
@@ -230,7 +230,7 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 	if err != nil {
 		return "", err
 	}
-	initial := engine.InitialConvergeState(home, persisted, explicit)
+	initial := engine.InitialConvergeState(home, persisted, explicit, resetOrder)
 	initial.Filled = make(map[engine.SlotKey]int)
 	var guardErr error
 	final, err := executor.RunConverge(ctx, driver, func(world engine.World, state engine.ConvergeState) (engine.ConvergeAction, engine.ConvergeState, bool) {

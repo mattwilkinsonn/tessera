@@ -364,6 +364,44 @@ func (d *transitionDriver) LabelSpace(ctx context.Context, id wm.SpaceID, label 
 	return d.Driver.LabelSpace(ctx, id, label)
 }
 
+func TestRunDisplayCascadeSpaceOrder(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		previous int
+		want     []string
+	}{
+		{name: "unchanged topology preserves user order", previous: 1, want: []string{"laptop", "lap-arc", "lap-spotify", "lap-arc-2"}},
+		{name: "changed topology resets profile order", previous: 2, want: []string{"laptop", "lap-arc", "lap-arc-2", "lap-spotify"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			driver := fake.New(fake.Seed{
+				Displays: []fake.SeedDisplay{{Idx: 3, Frame: displayFrame(1728, 1117)}},
+				Spaces: []fake.SeedSpace{{DisplayIdx: 3, Label: "laptop"}, {DisplayIdx: 3, Label: "lap-arc"},
+					{DisplayIdx: 3, Label: "lap-spotify"}, {DisplayIdx: 3, Label: "lap-arc-2"}},
+				Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 2}, {ID: 2, App: "Arc", SpaceIndex: 4},
+					{ID: 3, App: "Spotify", SpaceIndex: 3}},
+			})
+			env := commandEnv(t)
+			env.Topology = &TopologyState{}
+			env.Topology.RecordDisplays(test.previous)
+			if _, err := RunDisplayCascade(t.Context(), testProfile(t), driver, env); err != nil {
+				t.Fatal(err)
+			}
+			spaces, err := driver.QuerySpaces(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			labels := make([]string, 0, len(spaces))
+			for _, space := range spaces {
+				labels = append(labels, space.Label)
+			}
+			if !slices.Equal(labels, test.want) {
+				t.Fatalf("space order = %v, want %v", labels, test.want)
+			}
+		})
+	}
+}
+
 func TestRunDisplayCascadeHandoff(t *testing.T) {
 	profile := testProfile(t)
 	driver := &transitionDriver{Driver: fake.New(fake.Seed{
