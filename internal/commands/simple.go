@@ -32,8 +32,8 @@ func FocusSlot(ctx context.Context, profile *config.Profile, driver wm.Driver, n
 }
 
 // Snap reshapes the focused space into the selected column layout.
-func Snap(ctx context.Context, profile *config.Profile, driver wm.Driver, mode engine.SnapMode) error {
-	return PreserveFocus(ctx, driver, func(ctx context.Context) error {
+func Snap(ctx context.Context, profile *config.Profile, driver wm.Driver, mode engine.SnapMode, env Env) error {
+	return PreserveFocus(ctx, driver, env.Nudge, func(ctx context.Context) error {
 		return snap(ctx, profile, driver, mode)
 	})
 }

@@ -40,7 +40,7 @@ func testPreserveFocusCleanup(t *testing.T, scenario string) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	err := PreserveFocus(ctx, driver, func(ctx context.Context) error {
+	err := PreserveFocus(ctx, driver, commandEnv(t).Nudge, func(ctx context.Context) error {
 		cancel()
 		return errors.Join(rebuildErr, ctx.Err())
 	})
@@ -94,4 +94,59 @@ func (d *focusCleanupDriver) FocusWindow(ctx context.Context, id int) (bool, err
 	var err error
 	d.restored, err = d.Driver.FocusWindow(ctx, id)
 	return d.restored, err
+}
+
+func TestPreserveFocusBusyCleanup(t *testing.T) {
+	for _, scenario := range []string{"success", "error", "cancel", "nested"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			driver := fake.New(fake.Seed{})
+			states := []string{}
+			rebuildErr := errors.New("rebuild failed")
+			nudge := func(ctx context.Context, event string, variables ...string) error {
+				if event != "tess_busy" || len(variables) != 1 {
+					t.Fatalf("unexpected signal: %s %v", event, variables)
+				}
+				if ctx.Err() != nil {
+					t.Errorf("signal context canceled: %v", ctx.Err())
+				}
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > 2*time.Second {
+					t.Error("signal context has no short deadline")
+				}
+				states = append(states, variables[0])
+				return errors.New("sketchybar unavailable")
+			}
+			err := PreserveFocus(ctx, driver, nudge, func(ctx context.Context) error {
+				switch scenario {
+				case "error":
+					return rebuildErr
+				case "cancel":
+					cancel()
+					return ctx.Err()
+				case "nested":
+					return PreserveFocus(ctx, driver, nudge, func(context.Context) error { return nil })
+				}
+				return nil
+			})
+			if len(states) != 2 || states[0] != "STATE=on" || states[1] != "STATE=off" {
+				t.Fatalf("busy states = %v", states)
+			}
+			switch scenario {
+			case "error":
+				if !errors.Is(err, rebuildErr) {
+					t.Fatalf("rebuild error = %v", err)
+				}
+			case "cancel":
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation error = %v", err)
+				}
+			default:
+				if err != nil {
+					t.Fatalf("nudger changed rebuild result: %v", err)
+				}
+			}
+		})
+	}
 }

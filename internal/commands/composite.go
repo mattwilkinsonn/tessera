@@ -26,7 +26,7 @@ const (
 )
 
 func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
-	return PreserveFocus(ctx, driver, func(ctx context.Context) error {
+	return PreserveFocus(ctx, driver, env.Nudge, func(ctx context.Context) error {
 		return apply(ctx, profile, driver, env)
 	})
 }
@@ -141,7 +141,13 @@ func apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 
 // Laptop converges the laptop-only layout and returns the lock outcome.
 func Laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) (LaptopResult, error) {
-	return laptop(ctx, profile, driver, env, true)
+	var result LaptopResult
+	err := PreserveFocus(ctx, driver, env.Nudge, func(ctx context.Context) error {
+		var err error
+		result, err = laptop(ctx, profile, driver, env, true)
+		return err
+	})
+	return result, err
 }
 
 func handoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {

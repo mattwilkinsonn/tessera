@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/mattwilkinsonn/tessera/internal/effects"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 )
 
@@ -13,10 +15,15 @@ type focusRestoreKey struct{}
 
 // PreserveFocus restores the original surviving window after run, including on
 // failure. Nested rebuilds share the outer caller's snapshot and restoration.
-func PreserveFocus(ctx context.Context, driver wm.Driver, run func(context.Context) error) (err error) {
+func PreserveFocus(ctx context.Context, driver wm.Driver, nudge effects.Nudger, run func(context.Context) error) (err error) {
 	if ctx.Value(focusRestoreKey{}) != nil {
 		return run(ctx)
 	}
+	if nudge == nil {
+		nudge = effects.NudgeSketchybar
+	}
+	defer signalBusy(context.WithoutCancel(ctx), nudge, "off")
+	signalBusy(ctx, nudge, "on")
 	focused, found, err := driver.QueryFocusedWindow(ctx)
 	if err != nil {
 		return fmt.Errorf("saving focus before rebuild: %w", err)
@@ -31,6 +38,14 @@ func PreserveFocus(ctx context.Context, driver wm.Driver, run func(context.Conte
 		}()
 	}
 	return run(ctx)
+}
+
+func signalBusy(ctx context.Context, nudge effects.Nudger, state string) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := nudge(ctx, "tess_busy", "STATE="+state); err != nil {
+		slog.DebugContext(ctx, "signaling rebuild busy state", "state", state, "error", err)
+	}
 }
 
 func restoreFocus(ctx context.Context, driver wm.Driver, id int) error {

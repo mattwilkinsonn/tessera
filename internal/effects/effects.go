@@ -250,12 +250,13 @@ func WriteSlots(path string, memory engine.SlotMemory) error {
 }
 
 // Nudger triggers a status-bar event. It is deliberately outside wm.Driver.
-type Nudger func(ctx context.Context, event string) error
+type Nudger func(ctx context.Context, event string, variables ...string) error
 
 // NudgeSketchybar triggers an event when sketchybar is available. Its failure is best-effort.
-func NudgeSketchybar(ctx context.Context, event string) error {
-	//nolint:gosec // This executes the fixed sketchybar binary with one event argument.
-	if err := exec.CommandContext(ctx, SketchybarPath, "--trigger", event).Run(); err != nil {
+func NudgeSketchybar(ctx context.Context, event string, variables ...string) error {
+	args := append([]string{"--trigger", event}, variables...)
+	//nolint:gosec // This executes the fixed sketchybar binary with event arguments.
+	if err := exec.CommandContext(ctx, SketchybarPath, args...).Run(); err != nil {
 		slog.DebugContext(ctx, "sketchybar nudge failed", "event", event, "error", err)
 	}
 	return nil

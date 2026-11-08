@@ -158,7 +158,7 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 		return nil
 	}
 	return func(ctx context.Context) error {
-		return commands.PreserveFocus(ctx, driver, wake)
+		return commands.PreserveFocus(ctx, driver, env.Nudge, wake)
 	}
 }
 

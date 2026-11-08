@@ -179,7 +179,7 @@ func rebuildFocusFixture(t *testing.T, focused bool) (*config.Profile, *rebuildF
 			SignalGuard: filepath.Join(root, "guard"), WindowSlots: filepath.Join(root, "slots.json"),
 			FlexOrder: filepath.Join(root, "flex.json"), SpawnLedger: filepath.Join(root, "spawns.json"),
 		},
-		Nudge: func(context.Context, string) error { return nil }, Stderr: io.Discard,
+		Nudge: func(context.Context, string, ...string) error { return nil }, Stderr: io.Discard,
 	}
 	return profile, &rebuildFocusDriver{Driver: New(os.Getenv("TESS_YABAI"))}, env, log
 }

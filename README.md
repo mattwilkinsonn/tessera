@@ -103,6 +103,8 @@ Nested rebuilds do not restore focus between windows. If no window had focus,
 or the original window closed, Tessera does not restore focus. Restore failures
 are returned together with any rebuild error. New-window arrival placement
 keeps its focus-follows policy.
+The same outer scope sends best-effort `tess_busy STATE=on|off` sketchybar events
+while rebuilding, including laptop convergence; nested rebuilds share one pair.
 
 ### Exit codes
 

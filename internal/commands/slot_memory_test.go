@@ -122,8 +122,10 @@ func TestApplyAndLaptopShareSlotLock(t *testing.T) {
 			defer release()
 			firstWriteAttempted := make(chan struct{})
 			firstWriteOnce := sync.Once{}
-			env.Nudge = func(context.Context, string) error {
-				firstWriteOnce.Do(func() { close(firstWriteAttempted) })
+			env.Nudge = func(_ context.Context, event string, _ ...string) error {
+				if event == "yabai_spaces_changed" {
+					firstWriteOnce.Do(func() { close(firstWriteAttempted) })
+				}
 				return nil
 			}
 			operationEntered := make(chan struct{})
