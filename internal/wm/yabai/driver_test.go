@@ -305,7 +305,42 @@ func TestThreeDisplayWakePlan(t *testing.T) {
 	}
 }
 
+func TestUnfloatOneWaitsForFocusedSpace(t *testing.T) {
+	shortenUnfloatFocusWait(t)
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_FOCUS_DELAY", "1")
+	if err := driver.unfloatOne(t.Context(), 210); err != nil {
+		t.Fatalf("unfloatOne: %v", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(data), "-m\nquery\n--spaces\n--space\n\n"); count != 3 {
+		t.Errorf("focused-space queries = %d, want 3", count)
+	}
+	if !strings.Contains(string(data), "--toggle\nfloat") {
+		t.Errorf("missing unfloat toggle in argv:\n%s", data)
+	}
+}
+
+func TestUnfloatOneFocusedSpaceTimeout(t *testing.T) {
+	shortenUnfloatFocusWait(t)
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_FOCUS_STALE", "1")
+	start := time.Now()
+	err := driver.unfloatOne(t.Context(), 210)
+	if err == nil || !strings.Contains(err.Error(), "did not activate target space") {
+		t.Errorf("unfloatOne = %v, want target-space timeout", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Errorf("unfloatOne returned after %s, before the deadline", elapsed)
+	}
+	assertNoUnfloatToggle(t, log)
+}
+
 func TestUnfloatOneFocusSafety(t *testing.T) {
+	shortenUnfloatFocusWait(t)
 	for _, test := range []struct {
 		name string
 		env  string
@@ -358,6 +393,15 @@ func TestUnfloatOneFocusSafety(t *testing.T) {
 			t.Errorf("FocusWindow(999) = %t, %v; want false, nil", focused, err)
 		}
 		assertNoUnfloatToggle(t, log)
+	})
+}
+
+func shortenUnfloatFocusWait(t *testing.T) {
+	t.Helper()
+	timeout, poll := unfloatFocusTimeout, unfloatFocusPoll
+	unfloatFocusTimeout, unfloatFocusPoll = 150*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() {
+		unfloatFocusTimeout, unfloatFocusPoll = timeout, poll
 	})
 }
 

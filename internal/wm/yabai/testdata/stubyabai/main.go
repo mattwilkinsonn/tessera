@@ -75,6 +75,16 @@ func serve(args []string) error {
 			return err
 		}
 	}
+	if args[2] == "--spaces" && len(args) == 4 && args[3] == "--space" && os.Getenv("TESS_YABAI_FOCUS_DELAY") == "1" {
+		log, err := os.ReadFile(os.Getenv("TESS_YABAI_LOG"))
+		if err != nil {
+			return err
+		}
+		if strings.Count(string(log), "-m\nquery\n--spaces\n--space\n\n") <= 2 {
+			_, err := os.Stdout.WriteString(`{"id":25,"index":3,"display":3,"has-focus":true}`)
+			return err
+		}
+	}
 	if args[2] == "--spaces" {
 		data, err = filterSpaces(data, args[3:])
 		if err != nil {

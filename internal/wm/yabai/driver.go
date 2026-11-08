@@ -18,6 +18,11 @@ import (
 // spawnTimeout is how long SpawnWindow waits for a launcher before leaving it running.
 const spawnTimeout = 5 * time.Second
 
+var (
+	unfloatFocusTimeout = 2 * time.Second
+	unfloatFocusPoll    = 50 * time.Millisecond
+)
+
 type Driver struct {
 	path      string
 	spawnWait time.Duration
@@ -524,12 +529,29 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 	if !focused {
 		return fmt.Errorf("focusing window %d before unfloat", windowID)
 	}
-	active, found, err := d.QueryFocusedSpace(ctx)
-	if err != nil {
-		return err
-	}
-	if !found || active.ID != space {
-		return fmt.Errorf("window %d did not activate target space %s before unfloat", windowID, space)
+	// Focusing a window switches spaces asynchronously.
+	waitCtx, cancel := context.WithTimeout(ctx, unfloatFocusTimeout)
+	defer cancel()
+	for {
+		active, found, err := d.QueryFocusedSpace(waitCtx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if waitCtx.Err() == context.DeadlineExceeded {
+				return fmt.Errorf("window %d did not activate target space %s before unfloat", windowID, space)
+			}
+			return err
+		}
+		if found && active.ID == space {
+			break
+		}
+		if err := waitContext(waitCtx, unfloatFocusPoll); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("window %d did not activate target space %s before unfloat", windowID, space)
+		}
 	}
 	if _, _, err := d.run(ctx, ToggleFloatArgs(windowID)); err != nil {
 		return err
