@@ -8,6 +8,7 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -124,18 +125,18 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 		if !held || !retryPending.CompareAndSwap(false, true) {
 			return nil
 		}
-		retryCtx := ctx
-		if lifetime, ok := ctx.Value(wakeLifetimeKey{}).(context.Context); ok {
-			retryCtx = context.WithoutCancel(ctx)
-			var cancel context.CancelFunc
-			retryCtx, cancel = context.WithCancel(retryCtx)
-			stop := context.AfterFunc(lifetime, cancel) //nolint:contextcheck // The daemon lifetime is inherited through ctx.Value; bounded wake cancellation must not cancel retries.
-			context.AfterFunc(retryCtx, func() { stop() })
+		retryCtx, cancelRetry := context.WithCancel(context.WithoutCancel(ctx))
+		lifetime := ctx //nolint:contextcheck // The daemon lifetime comes from ctx.Value below; bounded wake cancellation must not cancel retries.
+		if daemonCtx, ok := ctx.Value(wakeLifetimeKey{}).(context.Context); ok {
+			lifetime = daemonCtx
 		}
+		stopLifetime := context.AfterFunc(lifetime, cancelRetry)
+		cleanup := sync.OnceFunc(func() { stopLifetime(); cancelRetry() })
 		var stopCancel func() bool
 		registered := make(chan struct{})
 		timer := time.AfterFunc(retryDelay, func() {
 			<-registered
+			defer cleanup()
 			retryPending.Store(false)
 			if stopCancel != nil {
 				stopCancel()
@@ -150,6 +151,7 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 		stopCancel = context.AfterFunc(retryCtx, func() {
 			if timer.Stop() {
 				retryPending.Store(false)
+				cleanup()
 			}
 		})
 		close(registered)

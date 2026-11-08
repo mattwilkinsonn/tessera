@@ -6,6 +6,7 @@ import (
 	"net"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,5 +141,71 @@ func assertNoSpawnRetry(t *testing.T, finished <-chan error, calls *atomic.Int32
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("wakes = %d", calls.Load())
+	}
+}
+
+type retryLifetimeContext struct {
+	context.Context
+	stopped chan struct{}
+	active  atomic.Int32
+}
+
+func (c *retryLifetimeContext) Value(any) any { return nil }
+
+func (c *retryLifetimeContext) AfterFunc(func()) func() bool {
+	c.active.Add(1)
+	var once sync.Once
+	return func() bool {
+		result := false
+		once.Do(func() { c.active.Add(-1); c.stopped <- struct{}{}; result = true })
+		return result
+	}
+}
+
+func TestCompletedSpawnRetriesCleanLifetime(t *testing.T) {
+	profile := testProfile(t)
+	profile.Windows["arc"] = config.WindowSpec{AppRE: regexp.MustCompile("Zen"), Spawn: []string{"open", "Zen"}}
+	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120, H: 2160}}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}})
+	driver.Uptime = 30*time.Second - 10*time.Millisecond
+	env := daemonEnv(t)
+	env.Nudge = func(context.Context, string) error { return nil }
+	sock := filepath.Join(shortDir(t), "cleanup.sock")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	lifetime := &retryLifetimeContext{Context: t.Context(), stopped: make(chan struct{}, 3)}
+	ctx := context.WithValue(t.Context(), wakeLifetimeKey{}, context.Context(lifetime))
+	wake := WakeRoutine(profile, driver, env, sock)
+	for range 3 {
+		if err := wake(ctx); err != nil {
+			t.Fatal(err)
+		}
+		acceptCleanupWake(t, listener)
+		select {
+		case <-lifetime.stopped:
+		case <-time.After(5 * time.Second):
+			t.Fatal("completed retry retained lifetime registration")
+		}
+		if lifetime.active.Load() != 0 {
+			t.Fatal("retry registration still active")
+		}
+	}
+}
+
+func acceptCleanupWake(t *testing.T, listener net.Listener) {
+	t.Helper()
+	if err := listener.(*net.UnixListener).SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil || line != "wake\n" {
+		t.Fatalf("retry = %q, %v", line, err)
 	}
 }
