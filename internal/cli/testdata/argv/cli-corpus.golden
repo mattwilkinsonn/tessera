@@ -50,11 +50,20 @@ query
 -m
 query
 --spaces
+
+-m
+query
+--spaces
 --space
 
 -m
 query
 --windows
+
+-m
+query
+--windows
+--window
 
 -m
 space
@@ -144,9 +153,24 @@ window
 
 -m
 query
+--spaces
+
+-m
+query
+--windows
+--window
+2383
+
+-m
+query
 --windows
 --window
 2501
+
+-m
+window
+--focus
+2383
 
 ## tess snap 50-50
 -m
@@ -173,11 +197,20 @@ query
 -m
 query
 --spaces
+
+-m
+query
+--spaces
 --space
 
 -m
 query
 --windows
+
+-m
+query
+--windows
+--window
 
 -m
 space
@@ -269,15 +302,34 @@ window
 
 -m
 query
+--spaces
+
+-m
+query
+--windows
+--window
+2383
+
+-m
+query
 --windows
 --window
 2501
+
+-m
+window
+--focus
+2383
 
 ## tess snap columns
 -m
 query
 --displays
 uuid,index,frame,spaces
+
+-m
+query
+--spaces
 
 -m
 query
@@ -305,9 +357,29 @@ query
 --windows
 
 -m
+query
+--windows
+--window
+
+-m
 space
 1
 --balance
+
+-m
+query
+--spaces
+
+-m
+query
+--windows
+--window
+2383
+
+-m
+window
+--focus
+2383
 
 ## tess stack-cycle next
 -m

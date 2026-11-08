@@ -126,11 +126,31 @@ func (d *Driver) QueryFocusedSpace(ctx context.Context) (wm.Space, bool, error) 
 	return NormalizeSpace(raw), true, nil
 }
 
-func (d *Driver) QueryFocusedWindow(ctx context.Context) (wm.Window, bool, error) {
-	var raw RawYabaiWindow
-	found, err := d.queryOrNull(ctx, QueryFocusedWindowArgs(), &raw)
-	if err != nil || !found {
+func (d *Driver) QueryFocusedWindow(ctx context.Context) (_ wm.Window, found bool, err error) {
+	defer func() {
+		if err != nil {
+			wm.MarkQueryFailed(ctx)
+		}
+	}()
+	stdout, stderr, exitCode, err := d.runOutput(ctx, QueryFocusedWindowArgs())
+	if err != nil {
 		return wm.Window{}, false, err
+	}
+	if exitCode != 0 {
+		if strings.Contains(stderr, "could not locate window") || strings.Contains(stderr, "could not retrieve window details") {
+			return wm.Window{}, false, nil
+		}
+		return wm.Window{}, false, fmt.Errorf("querying focused window (exit %d): %s", exitCode, strings.TrimSpace(stderr))
+	}
+	if len(bytes.TrimSpace(stdout)) == 0 || bytes.Equal(bytes.TrimSpace(stdout), []byte("null")) {
+		return wm.Window{}, false, nil
+	}
+	var raw RawYabaiWindow
+	if err := json.Unmarshal(stdout, &raw); err != nil {
+		return wm.Window{}, false, fmt.Errorf("decoding focused window: %w", err)
+	}
+	if raw.ID == 0 || !raw.HasAXReference {
+		return wm.Window{}, false, nil
 	}
 	var spaces []RawYabaiSpace
 	if err := d.query(ctx, QuerySpacesArgs(), &spaces); err != nil {

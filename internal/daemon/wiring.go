@@ -104,7 +104,7 @@ func FlexWork(profile *config.Profile, driver wm.Driver, env commands.Env) Work 
 // WakeRoutine registers signals, then runs the startup reclaim cascade and recovery.
 func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, sock string) func(context.Context) error {
 	var retryPending atomic.Bool
-	return func(ctx context.Context) error {
+	wake := func(ctx context.Context) error {
 		ctx = wm.TrackQueryFailures(ctx)
 		if src, ok := driver.(wm.EventSource); ok {
 			if err := RegisterSignals(ctx, src, sock); err != nil {
@@ -156,6 +156,9 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 		})
 		close(registered)
 		return nil
+	}
+	return func(ctx context.Context) error {
+		return commands.PreserveFocus(ctx, driver, wake)
 	}
 }
 

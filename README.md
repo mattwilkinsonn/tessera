@@ -97,6 +97,13 @@ space stops realization without toggling float. Yabai tiles an unfloated window 
 the active space; moving it to another display first is not enough. This keeps AW
 and laptop tracks from joining the G9 tree when G9 was focused at wake.
 
+The outer wake or layout rebuild saves the original focused window and restores
+it after all placement and recovery finish, including when the rebuild fails.
+Nested rebuilds do not restore focus between windows. If no window had focus,
+or the original window closed, Tessera does not restore focus. Restore failures
+are returned together with any rebuild error. New-window arrival placement
+keeps its focus-follows policy.
+
 ### Exit codes
 
 - `0` — success, help/version output, or bare `tess` displaying help.

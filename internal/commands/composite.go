@@ -26,6 +26,12 @@ const (
 )
 
 func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
+	return PreserveFocus(ctx, driver, func(ctx context.Context) error {
+		return apply(ctx, profile, driver, env)
+	})
+}
+
+func apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
 	ctx = wm.TrackQueryFailures(ctx)
 	paths, nudge, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
