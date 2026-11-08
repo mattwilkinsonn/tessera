@@ -76,6 +76,7 @@ func serve(args []string) error {
 		}
 	}
 	if args[2] == "--spaces" && len(args) == 4 && args[3] == "--space" {
+		// Notify the test, then block until it cancels the query.
 		if address := os.Getenv("TESS_YABAI_SPACE_NOTIFY"); address != "" {
 			conn, err := net.Dial("tcp", address)
 			if err != nil {
