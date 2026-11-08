@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/mattwilkinsonn/tessera/internal/config"
@@ -56,7 +57,7 @@ func TestHandleWindowCreatedHoldsFullLaptopSpace(t *testing.T) {
 		t.Fatalf("rejected arrival moved or tiled: %+v", window)
 	}
 	allowed, err := wm.CanStack(t.Context(), driver, 1, 90)
-	if err != nil || allowed {
+	if !errors.Is(err, wm.ErrSpaceFull) || allowed {
 		t.Fatalf("unequal-frame stack allowed = %v, error %v", allowed, err)
 	}
 }

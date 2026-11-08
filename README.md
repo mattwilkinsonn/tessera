@@ -43,6 +43,9 @@ timer that sends a fresh wake through the daemon socket without blocking the
 current wake. Insertions conservatively count all managed, non-minimized windows
 on the destination space, regardless of frame. At 24 windows, arrivals stay
 floating instead of moving or joining a stack.
+Driver rejections return a space-full error so layout execution cannot destroy a
+source space after a rejected move. A space above the cap cannot be converted to
+stack layout; laptop display setup keeps its existing layout and warns instead.
 
 ```text
 tess apply                      converge the active space onto its configured layout

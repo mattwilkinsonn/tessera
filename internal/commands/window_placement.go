@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -383,7 +384,7 @@ func placeArrivalWindowOutcome(ctx context.Context, driver wm.Driver, window wm.
 		return placeWindowOutcome(ctx, driver, window, target.space)
 	}
 	allowed, err := wm.CanStack(ctx, driver, leftSlotWindowID, window.ID)
-	if err != nil {
+	if err != nil && !errors.Is(err, wm.ErrSpaceFull) {
 		return false, err
 	}
 	if !allowed {
@@ -396,6 +397,9 @@ func placeArrivalWindowOutcome(ctx context.Context, driver wm.Driver, window wm.
 	}
 	if window.SpaceID != target.space {
 		if err := driver.MoveWindowToSpace(ctx, window.ID, target.space); err != nil {
+			if errors.Is(err, wm.ErrSpaceFull) {
+				return holdFullArrival(ctx, driver, window)
+			}
 			return false, fmt.Errorf("moving arrival to left desk slot: %w", err)
 		}
 	}
@@ -414,6 +418,9 @@ func placeArrivalWindowOutcome(ctx context.Context, driver wm.Driver, window wm.
 		return false, nil
 	}
 	if err := driver.StackOnto(ctx, leftSlotWindowID, window.ID); err != nil {
+		if errors.Is(err, wm.ErrSpaceFull) {
+			return holdFullArrival(ctx, driver, window)
+		}
 		return false, fmt.Errorf("stacking arriving window in left desk slot: %w", err)
 	}
 	return true, nil
@@ -426,7 +433,7 @@ func placeWindow(ctx context.Context, driver wm.Driver, window wm.Window, target
 
 func placeWindowOutcome(ctx context.Context, driver wm.Driver, window wm.Window, target wm.SpaceID) (bool, error) {
 	allowed, err := wm.CanAddToSpace(ctx, driver, target, window.ID)
-	if err != nil {
+	if err != nil && !errors.Is(err, wm.ErrSpaceFull) {
 		return false, err
 	}
 	if !allowed {
@@ -439,6 +446,9 @@ func placeWindowOutcome(ctx context.Context, driver wm.Driver, window wm.Window,
 	}
 	if window.SpaceID != target {
 		if err := driver.MoveWindowToSpace(ctx, window.ID, target); err != nil {
+			if errors.Is(err, wm.ErrSpaceFull) {
+				return holdFullArrival(ctx, driver, window)
+			}
 			return false, fmt.Errorf("moving window to arrival target: %w", err)
 		}
 	}
@@ -458,8 +468,20 @@ func placeWindowOutcome(ctx context.Context, driver wm.Driver, window wm.Window,
 	}
 	if window.Floating {
 		if err := driver.ToggleFloat(ctx, window.ID); err != nil {
+			if errors.Is(err, wm.ErrSpaceFull) {
+				return false, nil
+			}
 			return false, fmt.Errorf("unfloating arriving window: %w", err)
 		}
 	}
 	return true, nil
+}
+
+func holdFullArrival(ctx context.Context, driver wm.Driver, window wm.Window) (bool, error) {
+	if !window.Floating {
+		if err := driver.ToggleFloat(ctx, window.ID); err != nil {
+			return false, fmt.Errorf("floating rejected arrival: %w", err)
+		}
+	}
+	return false, nil
 }

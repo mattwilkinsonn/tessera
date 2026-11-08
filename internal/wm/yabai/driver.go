@@ -192,6 +192,11 @@ func (d *Driver) LabelSpace(ctx context.Context, id wm.SpaceID, label string) er
 }
 
 func (d *Driver) SetSpaceLayout(ctx context.Context, id wm.SpaceID, layout wm.Layout) error {
+	if layout == wm.LayoutStack {
+		if err := wm.CheckStackConversion(ctx, d, id); err != nil {
+			return err
+		}
+	}
 	index, found, err := d.resolveIndex(ctx, id)
 	if err != nil || !found {
 		return err
@@ -248,8 +253,7 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 				}
 			}
 		}
-		_, _, err := d.run(ctx, SetSpaceLayoutArgs(index, wm.LayoutStack))
-		return err
+		return d.SetSpaceLayout(ctx, id, wm.LayoutStack)
 	}
 	steps := BSPSteps(index, target, nil)
 	for i := 0; i < len(steps); i++ {

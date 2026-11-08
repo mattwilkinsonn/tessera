@@ -609,7 +609,15 @@ query
 -m
 query
 --spaces
+
+-m
+query
+--spaces
 --space
+
+-m
+query
+--windows
 
 -m
 space
