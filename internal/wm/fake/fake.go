@@ -75,6 +75,7 @@ type Driver struct {
 	spawnApp      string
 	settleUnit    time.Duration
 	SpawnCalls    [][]string
+	Uptime        time.Duration
 }
 
 const (
@@ -90,6 +91,7 @@ func New(seed Seed) *Driver {
 		spawnNoWindow: seed.SpawnNoWindow,
 		spawnApp:      seed.SpawnApp,
 		settleUnit:    seed.Settle,
+		Uptime:        time.Minute,
 	}
 	if d.spawnApp == "" {
 		d.spawnApp = "Ghostty"
@@ -152,6 +154,10 @@ func New(seed Seed) *Driver {
 		})
 	}
 	return d
+}
+
+func (d *Driver) ServiceUptime(ctx context.Context) (time.Duration, error) {
+	return d.Uptime, ctx.Err()
 }
 
 func defaultLayout(layout wm.Layout) wm.Layout {

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -149,7 +150,7 @@ func testRunPlanCoversEveryOp(t *testing.T) {
 		engine.MoveWindowAction{WindowID: 1, ToSpace: "1"}, engine.RehomeAndDestroyAction{StaleSpace: "1", HomeSpace: "1"},
 		engine.MoveSpaceAction{Space: "1", ToIndex: 1}, engine.SetLayoutAction{Space: "1", Layout: wm.LayoutBSP},
 		engine.DestroySpaceOp{Space: "1"}, engine.RealizeLayoutOp{Space: "1", Target: wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{1}}}},
-		engine.BalanceSpaceOp{Space: "1"},
+		engine.BalanceSpaceOp{Space: "1"}, engine.FloatWindowOp{WindowID: 1},
 	}
 	seen := make(map[string]bool, len(byKind))
 	for _, op := range byKind {
@@ -159,8 +160,8 @@ func testRunPlanCoversEveryOp(t *testing.T) {
 		}
 		seen[kind] = true
 	}
-	if len(seen) != 9 {
-		t.Fatalf("covered %d operation kinds; want 9", len(seen))
+	if len(seen) != 10 {
+		t.Fatalf("covered %d operation kinds; want 10", len(seen))
 	}
 }
 
@@ -269,5 +270,27 @@ func testRunConvergeIterationCap(t *testing.T) {
 	_, err := RunConverge(t.Context(), driver, step, 0)
 	if err == nil || !strings.Contains(err.Error(), "exceeded 200 iterations") {
 		t.Fatalf("RunConverge() error = %v; want cap error", err)
+	}
+}
+
+type rejectedEvacuationDriver struct{ *fake.Driver }
+
+func (d *rejectedEvacuationDriver) MoveWindowToSpace(context.Context, int, wm.SpaceID) error {
+	return wm.ErrSpaceFull
+}
+
+func TestEvacuationMoveFullFloatsAndContinues(t *testing.T) {
+	driver := &rejectedEvacuationDriver{Driver: fake.New(fake.Seed{Spaces: []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 1}}, Windows: []fake.SeedWindow{{ID: 90, SpaceIndex: 1}}})}
+	plan := []engine.Op{engine.MoveWindowAction{WindowID: 90, ToSpace: "2", Evacuation: true}, engine.RelabelHomeAction{HomeSpace: "1", Label: "continued"}}
+	if err := RunPlan(t.Context(), driver, plan, nil); err != nil {
+		t.Fatal(err)
+	}
+	window, found, err := driver.QueryWindow(t.Context(), 90)
+	if err != nil || !found || !window.Floating || window.SpaceID != "1" {
+		t.Fatalf("window = %+v, %v, %v", window, found, err)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil || spaces[0].Label != "continued" {
+		t.Fatalf("plan did not continue: %v %v", spaces, err)
 	}
 }

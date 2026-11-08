@@ -26,6 +26,7 @@ const (
 )
 
 func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) error {
+	ctx = wm.TrackQueryFailures(ctx)
 	paths, nudge, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
 		return err
@@ -61,8 +62,18 @@ func Apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 		}
 	}
 	spawnedNames := engine.SpawnsNeeded(profile, names, world.Windows)
-	if err := spawnMissingWindows(ctx, profile, driver, names, world.Windows, stderr); err != nil {
+	spawnsHeld := false
+	held := func(delay time.Duration) {
+		spawnsHeld = true
+		if env.SpawnsHeld != nil {
+			env.SpawnsHeld(delay)
+		}
+	}
+	if err := spawnMissingWindows(ctx, profile, driver, names, world.Windows, stderr, paths.SpawnLedger, held, env.Now); err != nil {
 		return err
+	}
+	if spawnsHeld {
+		spawnedNames = nil
 	}
 	beforeSpawn := world.Windows
 	deskTopology := len(world.Displays) > 1 || externalDeskOnly(profile, world.Displays)
@@ -141,6 +152,7 @@ func handoffDeskWindows(ctx context.Context, profile *config.Profile, driver wm.
 }
 
 func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env, explicit bool) (LaptopResult, error) {
+	ctx = wm.TrackQueryFailures(ctx)
 	paths, nudge, stderr, err := normalizedEnv(ctx, env)
 	if err != nil {
 		return "", err
@@ -189,7 +201,7 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 		if err != nil {
 			return "", err
 		}
-		if err := spawnMissingWindows(ctx, profile, driver, profile.LaptopPinned, windows, stderr); err != nil {
+		if err := spawnMissingWindows(ctx, profile, driver, profile.LaptopPinned, windows, stderr, paths.SpawnLedger, env.SpawnsHeld, env.Now); err != nil {
 			return "", err
 		}
 	}
@@ -483,26 +495,93 @@ func placeSpawnedArrivals(ctx context.Context, profile *config.Profile, driver w
 	return nil
 }
 
-func spawnMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer) error {
+func spawnMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer, ledgerPath string, held func(time.Duration), clock func() time.Time) error {
 	if profile == nil || driver == nil || stderr == nil {
 		return errors.New("spawning missing windows: profile, driver, and stderr are required")
 	}
-	targets, err := startMissingWindows(ctx, profile, driver, names, windows, stderr)
+	if clock == nil {
+		clock = time.Now
+	}
+	reason, delay := spawnHold(ctx, driver)
+	if reason != "" {
+		if held != nil {
+			held(delay)
+		}
+		_, err := fmt.Fprintf(stderr, "tess: holding spawns: %s\n", reason)
+		return err
+	}
+	targets, err := startMissingWindows(ctx, profile, driver, names, windows, stderr, ledgerPath, clock())
 	if err != nil || len(targets) == 0 {
 		return err
 	}
-	return waitForSpawnedWindows(ctx, driver, targets, stderr)
+	if err := waitForSpawnedWindows(ctx, driver, targets, stderr); err != nil {
+		return err
+	}
+	current, err := driver.QueryWindows(ctx)
+	if err != nil {
+		return fmt.Errorf("observing launch app counts: %w", err)
+	}
+	ledger, err := effects.ReadSpawns(ledgerPath)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		count := 0
+		newWindows := 0
+		for _, window := range current {
+			if target.app.MatchString(window.App) {
+				count++
+				if _, old := target.baseline[window.ID]; !old {
+					newWindows++
+				}
+			}
+		}
+		for _, name := range target.names {
+			if newWindows == 0 {
+				continue
+			}
+			newWindows--
+			record := ledger[name]
+			record.AppCount = count
+			record.Observed = true
+			ledger[name] = record
+		}
+	}
+	return effects.WriteSpawnsAt(ledgerPath, ledger, clock())
 }
 
 type spawnTarget struct {
 	app      *regexp.Regexp
 	baseline map[int]struct{}
 	count    int
+	names    []string
 }
 
-func startMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer) (map[string]*spawnTarget, error) {
+func startMissingWindows(ctx context.Context, profile *config.Profile, driver wm.Driver, names []string, windows []wm.Window, stderr io.Writer, ledgerPath string, now time.Time) (map[string]*spawnTarget, error) {
 	targets := make(map[string]*spawnTarget)
+	ledger, err := effects.ReadSpawns(ledgerPath)
+	if err != nil {
+		return nil, err
+	}
+	effects.PruneSpawns(ledger, now)
+	blocked := make(map[string]bool, len(ledger))
+	for name, record := range ledger {
+		spec, exists := profile.Windows[name]
+		if !exists {
+			continue
+		}
+		count := 0
+		for _, window := range windows {
+			if spec.AppRE.MatchString(window.App) {
+				count++
+			}
+		}
+		blocked[name] = now.Sub(record.At) < effects.SpawnCooldown || record.Observed && count >= record.AppCount
+	}
 	for _, name := range engine.SpawnsNeeded(profile, names, windows) {
+		if blocked[name] {
+			continue
+		}
 		spec, ok := profile.Windows[name]
 		if !ok {
 			continue
@@ -517,12 +596,17 @@ func startMissingWindows(ctx context.Context, profile *config.Profile, driver wm
 			}
 			targets[spec.App] = target
 		}
+		ledger[name] = effects.SpawnRecord{At: now}
+		if err := effects.WriteSpawnsAt(ledgerPath, ledger, now); err != nil {
+			return nil, err
+		}
 		if err := driver.SpawnWindow(ctx, spec.Spawn); err != nil {
 			if _, writeErr := fmt.Fprintf(stderr, "tess: spawn failed for %s: %v\n", name, err); writeErr != nil {
 				return nil, fmt.Errorf("writing spawn failure: %w", writeErr)
 			}
 			continue
 		}
+		target.names = append(target.names, name)
 		target.count++
 	}
 	return targets, nil

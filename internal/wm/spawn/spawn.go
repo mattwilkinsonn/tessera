@@ -40,11 +40,13 @@ func Run(ctx context.Context, argv []string, wait time.Duration) error {
 		if errors.Is(killErr, os.ErrProcessDone) {
 			killErr = nil
 		}
-		<-done
-		return errors.Join(fmt.Errorf("spawning window: %w", ctx.Err()), killErr, discardSpawnStderr(stderr))
+		waitErr := <-done
+		return errors.Join(fmt.Errorf("spawning window: %w", ctx.Err()), killErr, waitErr, discardSpawnStderr(stderr))
 	case <-timer.C:
 		go func() {
-			<-done
+			if waitErr := <-done; waitErr != nil {
+				slog.Debug("detached launcher exited", "error", waitErr)
+			}
 			if err := discardSpawnStderr(stderr); err != nil {
 				slog.Warn("cleaning up after a detached launcher", "error", err)
 			}

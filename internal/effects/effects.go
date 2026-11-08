@@ -34,6 +34,7 @@ type Paths struct {
 	SignalGuard  string
 	FlexOrder    string
 	WindowSlots  string
+	SpawnLedger  string
 	DaemonSocket string
 }
 
@@ -75,6 +76,7 @@ func DefaultPaths(ctx context.Context) (Paths, error) {
 		SignalGuard:  signalGuardPath(),
 		FlexOrder:    filepath.Join(cache, "yabai", "laptop-flex-order"),
 		WindowSlots:  filepath.Join(cache, "yabai", "window-slots.json"),
+		SpawnLedger:  filepath.Join(cache, "yabai", "spawn-ledger.json"),
 		DaemonSocket: filepath.Join(tmpDir, "tessera-daemon.sock"),
 	}, nil
 }

@@ -192,6 +192,11 @@ func (d *Driver) LabelSpace(ctx context.Context, id wm.SpaceID, label string) er
 }
 
 func (d *Driver) SetSpaceLayout(ctx context.Context, id wm.SpaceID, layout wm.Layout) error {
+	if layout == wm.LayoutStack {
+		if err := wm.CheckStackConversion(ctx, d, id); err != nil {
+			return err
+		}
+	}
 	index, found, err := d.resolveIndex(ctx, id)
 	if err != nil || !found {
 		return err
@@ -228,43 +233,18 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 		return err
 	}
 	if target.Kind == wm.TargetStack {
-		for _, track := range target.Tracks {
-			for _, windowID := range track {
-				if _, _, err := d.run(ctx, MoveWindowToSpaceArgs(windowID, index)); err != nil {
-					return err
-				}
-				if err := waitContext(ctx, 350*time.Millisecond); err != nil {
-					return err
-				}
-				if err := d.unfloatOne(ctx, windowID); err != nil {
-					return err
-				}
-			}
-		}
-		_, _, err := d.run(ctx, SetSpaceLayoutArgs(index, wm.LayoutStack))
-		return err
+		return d.realizeStack(ctx, id, index, target)
 	}
-	for _, step := range BSPSteps(index, target, nil) {
-		if _, _, err := d.run(ctx, step.Args); err != nil {
-			return err
-		}
-		if step.Settle > 0 {
-			if err := waitContext(ctx, time.Duration(step.Settle)*time.Millisecond); err != nil {
-				return err
-			}
-		}
-		if step.HasUnfloat {
-			if err := d.unfloatOne(ctx, step.Unfloat); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return d.realizeBSP(ctx, BSPSteps(index, target, nil))
 }
 
 func (d *Driver) MoveWindowToSpace(ctx context.Context, windowID int, id wm.SpaceID) error {
 	index, found, err := d.resolveIndex(ctx, id)
 	if err != nil || !found {
+		return err
+	}
+	allowed, err := wm.CanAddToSpace(ctx, d, id, windowID)
+	if err != nil || !allowed {
 		return err
 	}
 	if _, _, err := d.run(ctx, MoveWindowToSpaceArgs(windowID, index)); err != nil {
@@ -289,16 +269,36 @@ func (d *Driver) ToggleSplit(ctx context.Context, windowID int) error {
 }
 
 func (d *Driver) ToggleFloat(ctx context.Context, windowID int) error {
-	_, _, err := d.run(ctx, ToggleFloatArgs(windowID))
+	window, exists, err := d.QueryWindow(ctx, windowID)
+	if err != nil || !exists {
+		return err
+	}
+	if window.Floating {
+		allowed, err := wm.CanAddToSpace(ctx, d, window.SpaceID, windowID)
+		if err != nil || !allowed {
+			return err
+		}
+	}
+	_, _, err = d.run(ctx, ToggleFloatArgs(windowID))
 	return err
 }
 
 func (d *Driver) ArmInsert(ctx context.Context, windowID int, direction wm.Direction) error {
+	if string(direction) == "stack" {
+		allowed, err := wm.CanStack(ctx, d, windowID, 0)
+		if err != nil || !allowed {
+			return err
+		}
+	}
 	_, _, err := d.run(ctx, ArmInsertArgs(windowID, string(direction)))
 	return err
 }
 
 func (d *Driver) StackOnto(ctx context.Context, targetWindowID, windowID int) error {
+	allowed, err := wm.CanStack(ctx, d, targetWindowID, windowID)
+	if err != nil || !allowed {
+		return err
+	}
 	_, exitCode, err := d.run(ctx, StackWindowArgs(targetWindowID, windowID))
 	if err != nil {
 		return err
@@ -426,7 +426,12 @@ func (d *Driver) runOutput(ctx context.Context, args []string) ([]byte, string, 
 	return stdout.Bytes(), stderr.String(), -1, fmt.Errorf("running yabai %s: %w", strings.Join(args, " "), err)
 }
 
-func (d *Driver) query(ctx context.Context, args []string, target any) error {
+func (d *Driver) query(ctx context.Context, args []string, target any) (err error) {
+	defer func() {
+		if err != nil {
+			wm.MarkQueryFailed(ctx)
+		}
+	}()
 	stdout, exitCode, err := d.run(ctx, args)
 	if err != nil {
 		return err
@@ -440,12 +445,20 @@ func (d *Driver) query(ctx context.Context, args []string, target any) error {
 	return nil
 }
 
-func (d *Driver) queryOrNull(ctx context.Context, args []string, target any) (bool, error) {
+func (d *Driver) queryOrNull(ctx context.Context, args []string, target any) (found bool, err error) {
+	defer func() {
+		if err != nil {
+			wm.MarkQueryFailed(ctx)
+		}
+	}()
 	stdout, exitCode, err := d.run(ctx, args)
 	if err != nil {
 		return false, err
 	}
 	if exitCode != 0 || len(bytes.TrimSpace(stdout)) == 0 {
+		if exitCode != 0 {
+			wm.MarkQueryFailed(ctx)
+		}
 		return false, nil
 	}
 	if err := json.Unmarshal(stdout, target); err != nil {
@@ -473,8 +486,98 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 	if err != nil || !found || !raw.IsFloating {
 		return err
 	}
+	var spaces []RawYabaiSpace
+	if err := d.query(ctx, QuerySpacesArgs(), &spaces); err != nil {
+		return err
+	}
+	space := IndexToSpaceID(spaces)[raw.Space]
+	allowed, err := wm.CanAddToSpace(ctx, d, space, windowID)
+	if err != nil || !allowed {
+		return err
+	}
 	if _, _, err := d.run(ctx, ToggleFloatArgs(windowID)); err != nil {
 		return err
 	}
 	return waitContext(ctx, 150*time.Millisecond)
+}
+func (d *Driver) realizeStack(ctx context.Context, id wm.SpaceID, index int, target wm.SpaceLayoutTarget) error {
+	for _, track := range target.Tracks {
+		for _, windowID := range track {
+			allowed, err := wm.CanAddToSpace(ctx, d, id, windowID)
+			if errors.Is(err, wm.ErrSpaceFull) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				continue
+			}
+			if _, _, err := d.run(ctx, MoveWindowToSpaceArgs(windowID, index)); err != nil {
+				return err
+			}
+			if err := waitContext(ctx, 350*time.Millisecond); err != nil {
+				return err
+			}
+			if err := d.unfloatOne(ctx, windowID); err != nil {
+				if errors.Is(err, wm.ErrSpaceFull) {
+					continue
+				}
+				return err
+			}
+		}
+	}
+	if err := d.SetSpaceLayout(ctx, id, wm.LayoutStack); err != nil && !errors.Is(err, wm.ErrSpaceFull) {
+		return err
+	}
+	return nil
+}
+func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) error {
+	for i := 0; i < len(steps); i++ {
+		step := steps[i]
+		allowed, err := d.allowBSPStep(ctx, steps, i)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			i++
+			continue
+		}
+		if _, _, err := d.run(ctx, step.Args); err != nil {
+			return err
+		}
+		if step.Settle > 0 {
+			if err := waitContext(ctx, time.Duration(step.Settle)*time.Millisecond); err != nil {
+				return err
+			}
+		}
+		if step.HasUnfloat {
+			if err := d.unfloatOne(ctx, step.Unfloat); err != nil {
+				if errors.Is(err, wm.ErrSpaceFull) {
+					continue
+				}
+				return err
+			}
+		}
+	}
+	return nil
+}
+func (d *Driver) allowBSPStep(ctx context.Context, steps []BspStep, index int) (bool, error) {
+	step := steps[index]
+	if len(step.Args) < 5 || step.Args[3] != "--insert" || step.Args[4] != string(wm.LayoutStack) {
+		return true, nil
+	}
+	anchor, err := strconv.Atoi(step.Args[2])
+	if err != nil {
+		return false, err
+	}
+	windowID := 0
+	if index+1 < len(steps) {
+		windowID = steps[index+1].Unfloat
+	}
+	allowed, err := wm.CanStack(ctx, d, anchor, windowID)
+	if errors.Is(err, wm.ErrSpaceFull) {
+		return false, nil
+	}
+	return allowed, err
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/config"
@@ -95,6 +96,9 @@ func runPlacementCommand(ctx context.Context, env Env, run func(context.Context)
 
 func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger, io.Writer, error) {
 	paths := env.Paths
+	if paths.SpawnLedger == "" && paths.WindowSlots != "" {
+		paths.SpawnLedger = filepath.Join(filepath.Dir(paths.WindowSlots), "spawn-ledger.json")
+	}
 	missing := paths.ApplyLock == "" || paths.LaptopLock == "" || paths.SignalGuard == "" || paths.FlexOrder == "" || paths.WindowSlots == "" || paths.DaemonSocket == ""
 	if missing {
 		defaults, err := effects.DefaultPaths(ctx)
@@ -106,6 +110,7 @@ func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger,
 		paths.SignalGuard = cmp.Or(paths.SignalGuard, defaults.SignalGuard)
 		paths.FlexOrder = cmp.Or(paths.FlexOrder, defaults.FlexOrder)
 		paths.WindowSlots = cmp.Or(paths.WindowSlots, defaults.WindowSlots)
+		paths.SpawnLedger = cmp.Or(paths.SpawnLedger, defaults.SpawnLedger)
 		paths.DaemonSocket = cmp.Or(paths.DaemonSocket, defaults.DaemonSocket)
 	}
 	nudge := env.Nudge

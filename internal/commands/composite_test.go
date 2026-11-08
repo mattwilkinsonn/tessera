@@ -101,8 +101,8 @@ func TestApplyRestoredBrowserWindows(t *testing.T) {
 				for _, ref := range memory.Slots {
 					claimed[ref.ID] = true
 				}
-				if len(windows) != wantSlots+7 {
-					t.Fatalf("windows = %d; want %d including both restored batches", len(windows), wantSlots+7)
+				if len(windows) != wantSlots+6 {
+					t.Fatalf("windows = %d; want %d including both restored batches", len(windows), wantSlots+6)
 				}
 				assertRestoredBrowsers(t, windows, claimed, laptop)
 			})

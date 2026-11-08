@@ -662,6 +662,7 @@ func TestRecoverDeskWindows(t *testing.T) {
 	if _, err := RunDisplayCascade(t.Context(), profile, driver, env); err != nil {
 		t.Fatal(err)
 	}
+	driver.toggled = nil
 	// Make a reclaimed slot owner floating again: recovery must still respect ownership.
 	if err := driver.Driver.ToggleFloat(t.Context(), 1); err != nil {
 		t.Fatal(err)

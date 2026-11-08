@@ -86,7 +86,7 @@ func NormalizeWindows(rawWindows []RawYabaiWindow, rawSpaces []RawYabaiSpace) ([
 func NormalizeSpace(raw RawYabaiSpace) wm.Space {
 	layout := wm.LayoutBSP
 	switch raw.Type {
-	case "stack":
+	case string(wm.LayoutStack):
 		layout = wm.LayoutStack
 	case "float":
 		layout = wm.LayoutFloat

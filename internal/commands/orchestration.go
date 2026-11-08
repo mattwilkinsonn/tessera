@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -118,7 +119,12 @@ func DisplaySetup(ctx context.Context, profile *config.Profile, driver wm.Driver
 	}
 	for _, display := range displays {
 		if display.Idx == index && len(display.SpaceIDs) > 0 {
-			return driver.SetSpaceLayout(ctx, display.SpaceIDs[0], wm.LayoutStack)
+			err := driver.SetSpaceLayout(ctx, display.SpaceIDs[0], wm.LayoutStack)
+			if errors.Is(err, wm.ErrSpaceFull) {
+				slog.WarnContext(ctx, "keeping over-cap laptop space layout", "space", display.SpaceIDs[0], "error", err)
+				return nil
+			}
+			return err
 		}
 	}
 	return nil
