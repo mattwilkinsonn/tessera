@@ -495,6 +495,15 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 	if err != nil || !allowed {
 		return err
 	}
+	// yabai tiles an unfloated window on the active space, not necessarily
+	// the space assigned by --space. Focus it before rebuilding that tree.
+	focused, err := d.FocusWindow(ctx, windowID)
+	if err != nil {
+		return err
+	}
+	if !focused {
+		return fmt.Errorf("focusing window %d before unfloat", windowID)
+	}
 	if _, _, err := d.run(ctx, ToggleFloatArgs(windowID)); err != nil {
 		return err
 	}

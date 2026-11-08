@@ -33,6 +33,9 @@ func serve(args []string) error {
 		_, err := os.Stdout.WriteString("[]")
 		return err
 	}
+	if os.Getenv("TESS_YABAI_ACTIVE_UNFLOAT") == "1" && len(args) == 4 && args[0] == "-m" && args[1] == "window" && args[2] == "--focus" {
+		return focusWindow(args[3])
+	}
 	if os.Getenv("TESS_YABAI_MUTATE") == "1" && len(args) == 5 && args[0] == "-m" && args[1] == "window" {
 		return mutateWindow(args)
 	}
@@ -221,6 +224,15 @@ func mutateWindow(args []string) error {
 			if args[4] == "float" {
 				floating, _ := window["is-floating"].(bool)
 				window["is-floating"] = !floating
+				if floating && os.Getenv("TESS_YABAI_ACTIVE_UNFLOAT") == "1" {
+					for _, focused := range windows {
+						if focused["has-focus"] == true {
+							window["space"] = focused["space"]
+							window["display"] = focused["display"]
+							break
+						}
+					}
+				}
 			}
 		}
 	}
@@ -229,4 +241,28 @@ func mutateWindow(args []string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+func focusWindow(value string) error {
+	id, err := strconv.Atoi(value)
+	if err != nil {
+		return err
+	}
+	path := os.Getenv("TESS_YABAI_WINDOWS")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var windows []map[string]any
+	if err := json.Unmarshal(data, &windows); err != nil {
+		return err
+	}
+	for _, window := range windows {
+		window["has-focus"] = window["id"] == float64(id)
+	}
+	data, err = json.Marshal(windows)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
