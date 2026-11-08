@@ -454,7 +454,7 @@ func testRuleFloatedSpawns(t *testing.T, topology spawnTopology) {
 			profile.Windows[test.name] = spec
 			driver := &ruleAwareSpawnDriver{Driver: fake.New(fake.Seed{Displays: topology.displays, Spaces: spaces, SpawnApp: test.app})}
 			env := daemonEnv(t)
-			env.Nudge = func(context.Context, string) error { return nil }
+			env.Nudge = func(context.Context, string, ...string) error { return nil }
 			if err := WakeRoutine(profile, driver, env, "/tmp/tess-rule-spawn.sock")(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -521,7 +521,7 @@ func testWakeRecoveryObservation(t *testing.T, stage string) {
 	profile := testProfile(t)
 	env := daemonEnv(t)
 	env.Topology = &commands.TopologyState{}
-	env.Nudge = func(context.Context, string) error { return nil }
+	env.Nudge = func(context.Context, string, ...string) error { return nil }
 	driver := &wakeRecoveryDriver{Driver: fake.New(fake.Seed{
 		Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 1728}}, {Idx: 2, Frame: &wm.Frame{W: 3440}}},
 		Spaces:   []fake.SeedSpace{{DisplayIdx: 1, Label: "laptop"}, {DisplayIdx: 2}},
@@ -561,5 +561,26 @@ func testWakeRecoveryObservation(t *testing.T, stage string) {
 	}
 	if !slices.Equal(driver.stacked, []int{90}) {
 		t.Fatalf("startup arrival not recovered after lid close: %v", driver.stacked)
+	}
+}
+
+func TestWakeRoutineBusyScope(t *testing.T) {
+	driver := fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 1}},
+		Spaces:   []fake.SeedSpace{{DisplayIdx: 1}},
+	})
+	env := daemonEnv(t)
+	states := []string{}
+	env.Nudge = func(_ context.Context, event string, variables ...string) error {
+		if event == "tess_busy" {
+			states = append(states, variables...)
+		}
+		return nil
+	}
+	if err := WakeRoutine(testProfile(t), driver, env, "/tmp/tess-busy-test.sock")(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(states, []string{"STATE=on", "STATE=off"}) {
+		t.Fatalf("nested wake busy states = %v", states)
 	}
 }

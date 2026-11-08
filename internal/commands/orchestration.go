@@ -133,7 +133,7 @@ func DisplaySetup(ctx context.Context, profile *config.Profile, driver wm.Driver
 // RunDisplayCascade applies display defaults, rules, and the current layout reclaim.
 func RunDisplayCascade(ctx context.Context, profile *config.Profile, driver wm.Driver, env Env) (CascadeResult, error) {
 	var result CascadeResult
-	err := PreserveFocus(ctx, driver, func(ctx context.Context) error {
+	err := PreserveFocus(ctx, driver, env.Nudge, func(ctx context.Context) error {
 		var err error
 		result, err = runDisplayCascade(ctx, profile, driver, env)
 		return err

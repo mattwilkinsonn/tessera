@@ -22,7 +22,7 @@ func TestWakeRetriesHeldSpawns(t *testing.T) {
 	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120, H: 2160}}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}, SpawnNoWindow: true})
 	driver.Uptime = 30*time.Second - 500*time.Millisecond
 	env := daemonEnv(t)
-	env.Nudge = func(context.Context, string) error { return nil }
+	env.Nudge = func(context.Context, string, ...string) error { return nil }
 	sock := filepath.Join(shortDir(t), "retry.sock")
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestServeSpawnRetryLifetime(t *testing.T) {
 			driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120, H: 2160}}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}})
 			driver.Uptime = 29 * time.Second
 			env := daemonEnv(t)
-			env.Nudge = func(context.Context, string) error { return nil }
+			env.Nudge = func(context.Context, string, ...string) error { return nil }
 			sock := filepath.Join(shortDir(t), "serve.sock")
 			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
 			if err != nil {
@@ -168,7 +168,7 @@ func TestCompletedSpawnRetriesCleanLifetime(t *testing.T) {
 	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: &wm.Frame{W: 5120, H: 2160}}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}})
 	driver.Uptime = 30*time.Second - 10*time.Millisecond
 	env := daemonEnv(t)
-	env.Nudge = func(context.Context, string) error { return nil }
+	env.Nudge = func(context.Context, string, ...string) error { return nil }
 	sock := filepath.Join(shortDir(t), "cleanup.sock")
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
 	if err != nil {

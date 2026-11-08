@@ -364,7 +364,7 @@ func TestRun(t *testing.T) {
 					woke <- struct{}{}
 					return nil
 				},
-				Nudge: func(_ context.Context, event string) error {
+				Nudge: func(_ context.Context, event string, _ ...string) error {
 					nudged <- event
 					return nil
 				},

@@ -43,7 +43,7 @@ func commandEnv(t *testing.T) Env {
 			WindowSlots:  filepath.Join(root, "window-slots.json"),
 			DaemonSocket: filepath.Join(root, "daemon.sock"),
 		},
-		Nudge:  func(context.Context, string) error { return nil },
+		Nudge:  func(context.Context, string, ...string) error { return nil },
 		Stderr: io.Discard,
 	}
 }
@@ -117,7 +117,7 @@ func TestSnap(t *testing.T) {
 			},
 		})
 		_, _ = driver.FocusWindow(t.Context(), 1)
-		if err := Snap(t.Context(), testProfile(t), driver, engine.SnapHalf); err != nil {
+		if err := Snap(t.Context(), testProfile(t), driver, engine.SnapHalf, commandEnv(t)); err != nil {
 			t.Fatal(err)
 		}
 		spaces, err := driver.QuerySpaces(t.Context())
@@ -135,7 +135,7 @@ func TestSnap(t *testing.T) {
 			Windows:  []fake.SeedWindow{{ID: 1, App: "A", SpaceIndex: 1}, {ID: 2, App: "A", SpaceIndex: 1}},
 		})
 		_, _ = driver.FocusWindow(t.Context(), 1)
-		if err := Snap(t.Context(), profile, driver, engine.SnapHalf); err != nil {
+		if err := Snap(t.Context(), profile, driver, engine.SnapHalf, commandEnv(t)); err != nil {
 			t.Fatal(err)
 		}
 		windows, err := driver.QueryWindows(t.Context())
@@ -148,7 +148,7 @@ func TestSnap(t *testing.T) {
 	})
 	t.Run("no-op when no space is focused", func(t *testing.T) {
 		driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}, Windows: []fake.SeedWindow{{ID: 1, App: "A", SpaceIndex: 1}}})
-		if err := Snap(t.Context(), testProfile(t), driver, engine.SnapColumns); err != nil {
+		if err := Snap(t.Context(), testProfile(t), driver, engine.SnapColumns, commandEnv(t)); err != nil {
 			t.Fatal(err)
 		}
 		spaces, err := driver.QuerySpaces(t.Context())
@@ -353,8 +353,8 @@ func testApplyLabelsHomeSpacesAndNudges(t *testing.T) {
 	driver := deskWorld()
 	events := make([]string, 0)
 	env := commandEnv(t)
-	env.Nudge = func(_ context.Context, event string) error {
-		events = append(events, event)
+	env.Nudge = func(_ context.Context, event string, variables ...string) error {
+		events = append(events, strings.Join(append([]string{event}, variables...), " "))
 		return nil
 	}
 	if err := Apply(t.Context(), testProfile(t), driver, env); err != nil {
@@ -373,7 +373,7 @@ func testApplyLabelsHomeSpacesAndNudges(t *testing.T) {
 			t.Errorf("labels = %v; missing %q", labels, label)
 		}
 	}
-	if !slices.Equal(events, []string{"yabai_spaces_changed"}) {
+	if !slices.Equal(events, []string{"tess_busy STATE=on", "yabai_spaces_changed", "tess_busy STATE=off"}) {
 		t.Fatalf("nudges = %v", events)
 	}
 }
@@ -460,7 +460,7 @@ func testApplyStopsWaitingWithoutWindow(t *testing.T) {
 	profile.Windows["arc"] = arc
 	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(3440, 1440)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}, SpawnNoWindow: true})
 	env := commandEnv(t)
-	env.Nudge = func(context.Context, string) error { return nil }
+	env.Nudge = func(context.Context, string, ...string) error { return nil }
 	if err := Apply(t.Context(), profile, driver, env); err != nil {
 		t.Fatal(err)
 	}

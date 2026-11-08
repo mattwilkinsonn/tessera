@@ -40,7 +40,7 @@ func Run(ctx context.Context, profile *config.Profile, command Command, driver w
 	case FocusSlotCommand:
 		return 0, FocusSlot(ctx, profile, driver, command.Number)
 	case SnapCommand:
-		return 0, Snap(ctx, profile, driver, command.Mode)
+		return 0, Snap(ctx, profile, driver, command.Mode, env)
 	case StackCycleCommand:
 		return 0, StackCycle(ctx, driver, command.Direction)
 	case ResizeCommand:
