@@ -158,6 +158,7 @@ func TestDisplaySetupKeepsOverCapLayout(t *testing.T) {
 func TestRealizeStackSkipsOverflowMembers(t *testing.T) {
 	driver, _ := capacityDriver(t, 0)
 	t.Setenv("TESS_YABAI_MUTATE", "1")
+	t.Setenv("TESS_YABAI_ACTIVE_UNFLOAT", "1")
 	windows := make([]RawYabaiWindow, 0, 25)
 	first := make([]int, 0, 24)
 	for id := range 25 {

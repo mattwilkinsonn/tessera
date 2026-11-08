@@ -91,6 +91,12 @@ not the polling budget. Selected slot owners never become overflow. Existing
 floating windows are left alone. Owners must be tiled on the configured desk home
 space before their slots are recorded.
 
+Desk layout realization focuses each staged floating window on its assigned space
+and checks that space is active before unfloat. A focus failure or a different active
+space stops realization without toggling float. Yabai tiles an unfloated window on
+the active space; moving it to another display first is not enough. This keeps AW
+and laptop tracks from joining the G9 tree when G9 was focused at wake.
+
 ### Exit codes
 
 - `0` — success, help/version output, or bare `tess` displaying help.
