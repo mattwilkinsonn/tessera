@@ -7,9 +7,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"reflect"
 
 	"github.com/mattwilkinsonn/tessera/internal/commands"
 	"github.com/mattwilkinsonn/tessera/internal/config"
@@ -17,7 +20,6 @@ import (
 	"github.com/mattwilkinsonn/tessera/internal/engine"
 	"github.com/mattwilkinsonn/tessera/internal/executor"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
-	"reflect"
 )
 
 func TestQueryWindow(t *testing.T) {
@@ -305,6 +307,101 @@ func TestThreeDisplayWakePlan(t *testing.T) {
 	}
 }
 
+func TestUnfloatOneWaitsForFocusedSpace(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	const staleQueries = 2
+	t.Setenv("TESS_YABAI_FOCUS_DELAY", strconv.Itoa(staleQueries))
+	if err := driver.unfloatOne(t.Context(), 210); err != nil {
+		t.Fatalf("unfloatOne: %v", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(data), "-m\nquery\n--spaces\n--space\n\n"); count != staleQueries+1 {
+		t.Errorf("focused-space queries = %d, want %d", count, staleQueries+1)
+	}
+	if !strings.Contains(string(data), "--toggle\nfloat") {
+		t.Errorf("missing unfloat toggle in argv:\n%s", data)
+	}
+}
+
+func TestUnfloatOneTransientFocusedSpaceFailure(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_FOCUS_FAILURES", "1")
+	ctx := wm.TrackQueryFailures(t.Context())
+	if err := driver.unfloatOne(ctx, 210); err != nil {
+		t.Fatalf("unfloatOne: %v", err)
+	}
+	if wm.QueryFailed(ctx) {
+		t.Error("transient focused-space failure marked the apply context")
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "--toggle\nfloat") {
+		t.Errorf("missing unfloat toggle in argv:\n%s", data)
+	}
+}
+
+func TestUnfloatOneCancelDuringFocusedSpaceQuery(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	driver.unfloatFocusTimeout = 10 * time.Second
+	var config net.ListenConfig
+	listener, err := config.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TESS_YABAI_SPACE_NOTIFY", listener.Addr().String())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- driver.unfloatOne(ctx, 210) }()
+	conn, err := listener.Accept()
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Errorf("unfloatOne = %v, want context.Canceled", err)
+	}
+	assertNoUnfloatToggle(t, log)
+}
+
+func TestUnfloatOneFocusedSpaceFailuresMarkOnTimeout(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_FOCUS_FAILURES", "9999")
+	ctx := wm.TrackQueryFailures(t.Context())
+	err := driver.unfloatOne(ctx, 210)
+	if err == nil || !strings.Contains(err.Error(), "did not activate target space") {
+		t.Errorf("unfloatOne = %v, want target-space timeout", err)
+	}
+	if !wm.QueryFailed(ctx) {
+		t.Error("focused-space failures were not marked on timeout")
+	}
+	assertNoUnfloatToggle(t, log)
+}
+
+func TestUnfloatOneFocusedSpaceTimeout(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_FOCUS_STALE", "1")
+	start := time.Now()
+	err := driver.unfloatOne(t.Context(), 210)
+	if err == nil || !strings.Contains(err.Error(), "did not activate target space") {
+		t.Errorf("unfloatOne = %v, want target-space timeout", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Errorf("unfloatOne returned after %s, before the deadline", elapsed)
+	}
+	assertNoUnfloatToggle(t, log)
+}
+
 func TestUnfloatOneFocusSafety(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -382,7 +479,10 @@ func unfloatSafetyDriver(t *testing.T) (*Driver, string) {
 	t.Setenv("TESS_YABAI_EXIT_CODE", "")
 	t.Setenv("TESS_YABAI_MUTATE", "1")
 	t.Setenv("TESS_YABAI_ACTIVE_UNFLOAT", "1")
-	return New(os.Getenv("TESS_YABAI")), log
+	driver := New(os.Getenv("TESS_YABAI"))
+	driver.unfloatFocusTimeout = 150 * time.Millisecond
+	driver.unfloatFocusPoll = 5 * time.Millisecond
+	return driver, log
 }
 
 func assertNoUnfloatToggle(t *testing.T, path string) {
