@@ -44,6 +44,6 @@ func SuppressSignals(path string) (err error) {
 	return nil
 }
 
-func signalGuardPath() string {
-	return filepath.Join(os.TempDir(), "tessera-apply.guard")
+func signalGuardPath(tmpDir string) string {
+	return filepath.Join(tmpDir, "tessera-apply.guard")
 }

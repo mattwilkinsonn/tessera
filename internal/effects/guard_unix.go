@@ -48,6 +48,6 @@ func SuppressSignals(path string) (err error) {
 	return nil
 }
 
-func signalGuardPath() string {
-	return filepath.Join("/tmp", "yabai-apply.guard")
+func signalGuardPath(tmpDir string) string {
+	return filepath.Join(tmpDir, "yabai-apply.guard")
 }
