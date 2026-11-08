@@ -28,10 +28,11 @@ type Driver struct {
 	spawnWait           time.Duration
 	unfloatFocusTimeout time.Duration
 	unfloatFocusPoll    time.Duration
+	unfloatWait         func(context.Context, time.Duration) error
 }
 
 func New(yabaiPath string) *Driver {
-	return &Driver{path: yabaiPath, spawnWait: spawnTimeout, unfloatFocusTimeout: unfloatFocusTimeout, unfloatFocusPoll: unfloatFocusPoll}
+	return &Driver{path: yabaiPath, spawnWait: spawnTimeout}
 }
 
 func (d *Driver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
@@ -532,29 +533,43 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 		return fmt.Errorf("focusing window %d before unfloat", windowID)
 	}
 	// Focusing a window switches spaces asynchronously.
-	waitCtx, cancel := context.WithTimeout(ctx, d.unfloatFocusTimeout)
+	timeout, poll := d.unfloatFocusTimeout, d.unfloatFocusPoll
+	if timeout == 0 {
+		timeout = unfloatFocusTimeout
+	}
+	if poll == 0 {
+		poll = unfloatFocusPoll
+	}
+	wait := d.unfloatWait
+	if wait == nil {
+		wait = waitContext
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	queryFailed := false
+	// Only completed queries update lastFailed; a timed-out query leaves it unchanged.
+	// Parent cancellation never marks query health.
+	lastFailed := false
 	for {
 		var rawSpace RawYabaiSpace
 		found, failed, err := d.queryOrNullUntracked(waitCtx, QueryFocusedSpaceArgs(), &rawSpace)
-		queryFailed = queryFailed || failed
+		if err == nil {
+			lastFailed = failed
+		}
 		if err == nil && found && NormalizeSpace(rawSpace).ID == space {
 			break
 		}
 		if err == nil {
-			err = waitContext(waitCtx, d.unfloatFocusPoll)
-		} else if waitCtx.Err() == nil {
+			err = wait(waitCtx, poll)
+		} else if ctx.Err() == nil && waitCtx.Err() == nil {
 			wm.MarkQueryFailed(ctx)
 			return err
 		}
 		if err != nil {
-			// Mark health only when the wait gave up after a failed query.
-			if queryFailed {
-				wm.MarkQueryFailed(ctx)
-			}
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if lastFailed {
+				wm.MarkQueryFailed(ctx)
 			}
 			return fmt.Errorf("window %d did not activate target space %s before unfloat", windowID, space)
 		}

@@ -7,12 +7,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"reflect"
 
 	"github.com/mattwilkinsonn/tessera/internal/commands"
 	"github.com/mattwilkinsonn/tessera/internal/config"
@@ -326,6 +325,33 @@ func TestUnfloatOneWaitsForFocusedSpace(t *testing.T) {
 	}
 }
 
+func TestUnfloatOneZeroWaitSettingsUseDefaults(t *testing.T) {
+	driver, _ := unfloatSafetyDriver(t)
+	driver.unfloatFocusTimeout = 0
+	driver.unfloatFocusPoll = 0
+	var waits []time.Duration
+	driver.unfloatWait = func(ctx context.Context, duration time.Duration) error {
+		waits = append(waits, duration)
+		return waitContext(ctx, duration)
+	}
+	t.Setenv("TESS_YABAI_FOCUS_DELAY", "3")
+	start := time.Now()
+	if err := driver.unfloatOne(t.Context(), 210); err != nil {
+		t.Fatalf("unfloatOne with zero wait settings: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Errorf("unfloatOne returned after %s, want at least 100ms", elapsed)
+	}
+	if len(waits) != 3 {
+		t.Fatalf("poll waits = %d, want 3", len(waits))
+	}
+	for _, duration := range waits {
+		if duration != 50*time.Millisecond {
+			t.Errorf("poll duration = %s, want 50ms", duration)
+		}
+	}
+}
+
 func TestUnfloatOneTransientFocusedSpaceFailure(t *testing.T) {
 	driver, log := unfloatSafetyDriver(t)
 	t.Setenv("TESS_YABAI_FOCUS_FAILURES", "1")
@@ -384,6 +410,51 @@ func TestUnfloatOneFocusedSpaceFailuresMarkOnTimeout(t *testing.T) {
 	}
 	if !wm.QueryFailed(ctx) {
 		t.Error("focused-space failures were not marked on timeout")
+	}
+	assertNoUnfloatToggle(t, log)
+}
+
+func TestUnfloatOneRecoveredQueryBeforeTimeout(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_FOCUS_FAILURES", "1")
+	t.Setenv("TESS_YABAI_FOCUS_DELAY", "9999")
+	ctx := wm.TrackQueryFailures(t.Context())
+	err := driver.unfloatOne(ctx, 210)
+	if err == nil || !strings.Contains(err.Error(), "did not activate target space") {
+		t.Errorf("unfloatOne = %v, want target-space timeout", err)
+	}
+	if wm.QueryFailed(ctx) {
+		t.Error("recovered focused-space query marked the apply context")
+	}
+	assertNoUnfloatToggle(t, log)
+}
+
+func TestUnfloatOneCancelDuringPollWait(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_FOCUS_STALE", "1")
+	t.Setenv("TESS_YABAI_FOCUS_FAILURES", "1")
+	driver.unfloatFocusTimeout = 10 * time.Second
+	driver.unfloatFocusPoll = 10 * time.Second
+	waiting := make(chan struct{})
+	driver.unfloatWait = func(ctx context.Context, duration time.Duration) error {
+		close(waiting)
+		return waitContext(ctx, duration)
+	}
+	ctx, cancel := context.WithCancel(wm.TrackQueryFailures(t.Context()))
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- driver.unfloatOne(ctx, 210) }()
+	select {
+	case <-waiting:
+		cancel()
+	case err := <-result:
+		t.Fatalf("unfloatOne returned before poll wait: %v", err)
+	}
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Errorf("unfloatOne = %v, want context.Canceled", err)
+	}
+	if wm.QueryFailed(ctx) {
+		t.Error("canceled poll marked the apply context")
 	}
 	assertNoUnfloatToggle(t, log)
 }
