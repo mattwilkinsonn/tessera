@@ -58,12 +58,17 @@ func (CreateSpaceAction) op()             {}
 func (CreateSpaceAction) convergeAction() {}
 
 type MoveWindowAction struct {
-	WindowID int
-	ToSpace  wm.SpaceID
+	WindowID   int
+	ToSpace    wm.SpaceID
+	Evacuation bool
 }
 
 func (MoveWindowAction) op()             {}
 func (MoveWindowAction) convergeAction() {}
+
+type FloatWindowOp struct{ WindowID int }
+
+func (FloatWindowOp) op() {}
 
 type RehomeAndDestroyAction struct {
 	StaleSpace wm.SpaceID

@@ -3,7 +3,9 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/mattwilkinsonn/tessera/internal/engine"
 	"github.com/mattwilkinsonn/tessera/internal/wm"
@@ -43,7 +45,11 @@ func applyOp(ctx context.Context, driver wm.Driver, op engine.Op) error {
 		}
 		return driver.SetSpaceLayout(ctx, id, wm.LayoutBSP)
 	case engine.MoveWindowAction:
-		return driver.MoveWindowToSpace(ctx, op.WindowID, op.ToSpace)
+		err := driver.MoveWindowToSpace(ctx, op.WindowID, op.ToSpace)
+		if op.Evacuation && errors.Is(err, wm.ErrSpaceFull) {
+			return floatOverflow(ctx, driver, op.WindowID)
+		}
+		return err
 	case engine.RehomeAndDestroyAction:
 		windows, err := driver.QueryWindowsOnSpace(ctx, op.StaleSpace)
 		if err != nil {
@@ -67,9 +73,25 @@ func applyOp(ctx context.Context, driver wm.Driver, op engine.Op) error {
 		return driver.RealizeSpaceLayout(ctx, op.Space, op.Target)
 	case engine.BalanceSpaceOp:
 		return driver.BalanceSpace(ctx, &op.Space)
+	case engine.FloatWindowOp:
+		return floatOverflow(ctx, driver, op.WindowID)
 	default:
 		return fmt.Errorf("unhandled plan operation %T", op)
 	}
+}
+
+func floatOverflow(ctx context.Context, driver wm.Driver, id int) error {
+	window, found, err := driver.QueryWindow(ctx, id)
+	if err != nil || !found {
+		return err
+	}
+	if !window.Floating {
+		if err := driver.ToggleFloat(ctx, id); err != nil {
+			return fmt.Errorf("floating evacuation overflow %d: %w", id, err)
+		}
+	}
+	slog.WarnContext(ctx, "floating evacuation overflow", "window", id)
+	return nil
 }
 
 // RunConverge queries a fresh world for each step and realizes each corrective action.

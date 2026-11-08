@@ -169,13 +169,24 @@ func parkingSpace(builds []deskBuild) wm.SpaceID {
 
 func evacuateWindows(world World, builds []deskBuild, park wm.SpaceID) []Op {
 	ops := make([]Op, 0)
+	managed := 0
+	for _, window := range world.Windows {
+		if window.SpaceID == park && !window.Floating && !window.Minimized {
+			managed++
+		}
+	}
 	for _, build := range builds {
 		if build.homeSpace == park {
 			continue
 		}
 		for _, window := range world.Windows {
 			if window.SpaceID == build.homeSpace && !window.Floating && !window.Minimized {
-				ops = append(ops, MoveWindowAction{WindowID: window.ID, ToSpace: park})
+				if managed >= wm.StackWindowCap {
+					ops = append(ops, FloatWindowOp{WindowID: window.ID})
+					continue
+				}
+				ops = append(ops, MoveWindowAction{WindowID: window.ID, ToSpace: park, Evacuation: true})
+				managed++
 			}
 		}
 	}

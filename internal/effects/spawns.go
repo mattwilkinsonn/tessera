@@ -10,23 +10,32 @@ import (
 )
 
 // SpawnLedger is accessed only while holding the window-slots lock.
-type SpawnLedger map[string][]time.Time
+type SpawnLedger map[string]SpawnRecord
+
+type SpawnRecord struct {
+	At       time.Time `json:"at"`
+	AppCount int       `json:"appCount"`
+	Observed bool      `json:"observed"`
+}
+
+func (record *SpawnRecord) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '[' {
+		*record = SpawnRecord{}
+		return nil
+	}
+	type entry SpawnRecord
+	return json.Unmarshal(data, (*entry)(record))
+}
 
 const SpawnCooldown = 5 * time.Minute
 
+const SpawnRecordTTL = 24 * time.Hour
+
 func PruneSpawns(ledger SpawnLedger, now time.Time) {
-	for name, times := range ledger {
-		var latest time.Time
-		for _, at := range times {
-			if at.After(latest) {
-				latest = at
-			}
-		}
-		if latest.IsZero() || now.Sub(latest) >= SpawnCooldown {
+	for name, record := range ledger {
+		if record.At.IsZero() || now.Sub(record.At) >= SpawnRecordTTL {
 			delete(ledger, name)
-			continue
 		}
-		ledger[name] = []time.Time{latest}
 	}
 }
 
@@ -49,7 +58,11 @@ func ReadSpawns(path string) (SpawnLedger, error) {
 }
 
 func WriteSpawns(path string, ledger SpawnLedger) error {
-	PruneSpawns(ledger, time.Now())
+	return WriteSpawnsAt(path, ledger, time.Now())
+}
+
+func WriteSpawnsAt(path string, ledger SpawnLedger, now time.Time) error {
+	PruneSpawns(ledger, now)
 	data, err := json.Marshal(ledger)
 	if err != nil {
 		return fmt.Errorf("encoding spawn ledger: %w", err)

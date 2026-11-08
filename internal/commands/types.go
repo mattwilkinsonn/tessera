@@ -22,6 +22,7 @@ type Env struct {
 	Topology     *TopologyState
 	ArrivalReady func() bool
 	SpawnsHeld   func(time.Duration)
+	Now          func() time.Time
 	// ReclaimedDeskWindows contains only claims completed by this wake's desk plan.
 	ReclaimedDeskWindows map[int]struct{}
 }

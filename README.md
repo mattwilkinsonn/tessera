@@ -33,11 +33,13 @@ windows new ids, so the next layout relearns them. Delete the file to reset.
 
 Spawn demand counts matching app and title windows on every space, including
 floating and minimized windows. Title-specific slots claim before app-only slots.
-`spawn-ledger.json`, next to `window-slots.json`, records a
-JSON object from window-spec names to arrays containing the latest RFC 3339
-timestamp. Writes discard expired names and older timestamps. The shared slot
-lock protects it. Each name has a five-minute launch cooldown, including
-launches whose windows never appear. Spawns wait until yabai has been up for
+`spawn-ledger.json`, next to `window-slots.json`, maps each window-spec name to
+one `{at, appCount, observed}` record. The shared slot lock protects it. A launch
+has a five-minute cooldown. After the launch wait, tess records all windows of
+that app, regardless of title or state. That name cannot launch again while the
+app count remains at or above the recorded count. Closing windows below that
+count allows another launch after cooldown. Records expire after 24 hours;
+old timestamp-array entries load as expired. Spawns wait until yabai has been up for
 30 seconds and stop after a query failure. A held wake arms one cancellable
 timer that sends a fresh wake through the daemon socket without blocking the
 current wake. Insertions conservatively count all managed, non-minimized windows
@@ -46,6 +48,9 @@ floating instead of moving or joining a stack.
 Driver rejections return a space-full error so layout execution cannot destroy a
 source space after a rejected move. A space above the cap cannot be converted to
 stack layout; laptop display setup keeps its existing layout and warns instead.
+Desk evacuation budgets the parking space's remaining capacity. Overflow windows
+float in place with a warning instead of aborting Apply. A late capacity rejection
+uses the same fallback only for evacuation moves; stale-space rehoming stays fatal.
 
 ```text
 tess apply                      converge the active space onto its configured layout
