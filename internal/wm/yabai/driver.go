@@ -504,6 +504,13 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 	if !focused {
 		return fmt.Errorf("focusing window %d before unfloat", windowID)
 	}
+	active, found, err := d.QueryFocusedSpace(ctx)
+	if err != nil {
+		return err
+	}
+	if !found || active.ID != space {
+		return fmt.Errorf("window %d did not activate target space %s before unfloat", windowID, space)
+	}
 	if _, _, err := d.run(ctx, ToggleFloatArgs(windowID)); err != nil {
 		return err
 	}

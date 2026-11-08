@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -220,15 +222,31 @@ func mutateWindow(args []string) error {
 				return err
 			}
 			window["space"] = space
+			if os.Getenv("TESS_YABAI_ACTIVE_UNFLOAT") == "1" {
+				spaces, err := readSpaces()
+				if err != nil {
+					return err
+				}
+				for _, destination := range spaces {
+					if destination["index"] == float64(space) {
+						window["display"] = destination["display"]
+						break
+					}
+				}
+			}
 		case "--toggle":
 			if args[4] == "float" {
 				floating, _ := window["is-floating"].(bool)
 				window["is-floating"] = !floating
 				if floating && os.Getenv("TESS_YABAI_ACTIVE_UNFLOAT") == "1" {
-					for _, focused := range windows {
-						if focused["has-focus"] == true {
-							window["space"] = focused["space"]
-							window["display"] = focused["display"]
+					spaces, err := readSpaces()
+					if err != nil {
+						return err
+					}
+					for _, space := range spaces {
+						if space["has-focus"] == true {
+							window["space"] = space["index"]
+							window["display"] = space["display"]
 							break
 						}
 					}
@@ -244,6 +262,17 @@ func mutateWindow(args []string) error {
 }
 
 func focusWindow(value string) error {
+	if address := os.Getenv("TESS_YABAI_FOCUS_NOTIFY"); address != "" {
+		conn, err := net.Dial("tcp", address)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(io.Discard, conn)
+		return errors.Join(copyErr, conn.Close())
+	}
+	if os.Getenv("TESS_YABAI_FOCUS_FAIL") == "1" {
+		return errors.New("focus rejected")
+	}
 	id, err := strconv.Atoi(value)
 	if err != nil {
 		return err
@@ -257,12 +286,49 @@ func focusWindow(value string) error {
 	if err := json.Unmarshal(data, &windows); err != nil {
 		return err
 	}
+	var focusedSpace any
+	found := false
 	for _, window := range windows {
 		window["has-focus"] = window["id"] == float64(id)
+		if window["has-focus"] == true {
+			found = true
+			focusedSpace = window["space"]
+		}
+	}
+	if !found {
+		return errors.New("could not locate window")
+	}
+	if os.Getenv("TESS_YABAI_FOCUS_STALE") != "1" {
+		spaces, err := readSpaces()
+		if err != nil {
+			return err
+		}
+		for _, space := range spaces {
+			space["has-focus"] = space["index"] == focusedSpace
+		}
+		data, err := json.Marshal(spaces)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(os.Getenv("TESS_YABAI_SPACES"), data, 0o600); err != nil {
+			return err
+		}
 	}
 	data, err = json.Marshal(windows)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+func readSpaces() ([]map[string]any, error) {
+	data, err := os.ReadFile(os.Getenv("TESS_YABAI_SPACES"))
+	if err != nil {
+		return nil, err
+	}
+	var spaces []map[string]any
+	if err := json.Unmarshal(data, &spaces); err != nil {
+		return nil, err
+	}
+	return spaces, nil
 }

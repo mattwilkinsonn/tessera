@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/commands"
 	"github.com/mattwilkinsonn/tessera/internal/config"
@@ -192,8 +194,9 @@ func TestRealizeSpaceLayoutKeepsUnfloatedWindowsOnTargetDisplay(t *testing.T) {
 				if err != nil || !found {
 					t.Fatalf("QueryWindow(%d) = %t, %v", id, found, err)
 				}
-				if window.Floating || window.SpaceID != test.space {
-					t.Errorf("window %d: floating=%t, space=%s; want tiled on %s", id, window.Floating, window.SpaceID, test.space)
+				if window.Floating || window.SpaceID != test.space || window.DisplayIdx != test.index {
+					t.Errorf("window %d: floating=%t, space=%s, display=%d; want tiled on %s, display %d",
+						id, window.Floating, window.SpaceID, window.DisplayIdx, test.space, test.index)
 				}
 			}
 		})
@@ -269,13 +272,106 @@ func TestThreeDisplayWakePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	for space, tracks := range wantTracks {
+		display := map[wm.SpaceID]int{"3": 1, "22": 2, "25": 3}[space]
 		for _, track := range tracks {
 			for _, id := range track {
 				window, found, err := driver.QueryWindow(t.Context(), id)
-				if err != nil || !found || window.Floating || window.SpaceID != space {
-					t.Errorf("window %d = %+v, found=%t, err=%v; want tiled on %s", id, window, found, err, space)
+				if err != nil || !found || window.Floating || window.SpaceID != space || window.DisplayIdx != display {
+					t.Errorf("window %d = %+v, found=%t, err=%v; want tiled on %s, display %d",
+						id, window, found, err, space, display)
 				}
 			}
 		}
+	}
+}
+
+func TestUnfloatOneFocusSafety(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		env  string
+		want string
+	}{
+		{name: "successful focus leaves old space active", env: "TESS_YABAI_FOCUS_STALE", want: "target space"},
+		{name: "focus exits nonzero", env: "TESS_YABAI_FOCUS_FAIL", want: "focusing window 210"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			driver, log := unfloatSafetyDriver(t)
+			t.Setenv(test.env, "1")
+			err := driver.unfloatOne(t.Context(), 210)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("unfloatOne = %v, want error containing %q", err, test.want)
+			}
+			assertNoUnfloatToggle(t, log)
+		})
+	}
+	t.Run("context canceled during focus subprocess", func(t *testing.T) {
+		driver, log := unfloatSafetyDriver(t)
+		var config net.ListenConfig
+		listener, err := config.Listen(t.Context(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TESS_YABAI_FOCUS_NOTIFY", listener.Addr().String())
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { result <- driver.unfloatOne(ctx, 210) }()
+		conn, err := listener.Accept()
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Errorf("unfloatOne = %v, want context.Canceled", err)
+		}
+		assertNoUnfloatToggle(t, log)
+	})
+	t.Run("unknown focus ID fails", func(t *testing.T) {
+		driver, log := unfloatSafetyDriver(t)
+		focused, err := driver.FocusWindow(t.Context(), 999)
+		if err != nil || focused {
+			t.Errorf("FocusWindow(999) = %t, %v; want false, nil", focused, err)
+		}
+		assertNoUnfloatToggle(t, log)
+	})
+}
+
+func unfloatSafetyDriver(t *testing.T) (*Driver, string) {
+	t.Helper()
+	root := t.TempDir()
+	windows := filepath.Join(root, "windows.json")
+	spaces := filepath.Join(root, "spaces.json")
+	for path, data := range map[string]string{
+		windows: `[{"id":210,"app":"Zen","display":2,"space":2,"has-ax-reference":true,"is-floating":true}]`,
+		spaces: `[{"id":22,"index":2,"display":2,"has-focus":false},
+			{"id":25,"index":3,"display":3,"has-focus":true}]`,
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log := filepath.Join(root, "argv.log")
+	t.Setenv("TESS_YABAI_WINDOWS", windows)
+	t.Setenv("TESS_YABAI_SPACES", spaces)
+	t.Setenv("TESS_YABAI_LOG", log)
+	t.Setenv("TESS_YABAI_EXIT_CODE", "")
+	t.Setenv("TESS_YABAI_MUTATE", "1")
+	t.Setenv("TESS_YABAI_ACTIVE_UNFLOAT", "1")
+	return New(os.Getenv("TESS_YABAI")), log
+}
+
+func assertNoUnfloatToggle(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "--toggle\nfloat") {
+		t.Errorf("unexpected unfloat toggle in argv:\n%s", data)
 	}
 }
