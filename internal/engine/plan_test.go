@@ -35,8 +35,8 @@ func TestDeskPlan(t *testing.T) {
 			},
 		}
 		want := []Op{
-			MoveWindowAction{WindowID: 10, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 11, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 12, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 13, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 14, ToSpace: "s3", Evacuation: true},
-			MoveWindowAction{WindowID: 20, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 21, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 22, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 23, ToSpace: "s3", Evacuation: true},
+			FloatWindowOp{WindowID: 10, Staging: true}, FloatWindowOp{WindowID: 11, Staging: true}, FloatWindowOp{WindowID: 12, Staging: true}, FloatWindowOp{WindowID: 13, Staging: true}, FloatWindowOp{WindowID: 14, Staging: true},
+			FloatWindowOp{WindowID: 20, Staging: true}, FloatWindowOp{WindowID: 21, Staging: true}, FloatWindowOp{WindowID: 22, Staging: true}, FloatWindowOp{WindowID: 23, Staging: true},
 			RelabelHomeAction{HomeSpace: "s1", Label: "main"}, RealizeLayoutOp{Space: "s1", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{10, 11}, {12}, {13, 14}}, Weights: []float64{3, 4, 3}}},
 			RelabelHomeAction{HomeSpace: "s2", Label: "plan"}, RealizeLayoutOp{Space: "s2", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{20, 21}, {22, 23}}, Weights: []float64{1, 1}}},
 			RelabelHomeAction{HomeSpace: "s3", Label: "laptop"}, RealizeLayoutOp{Space: "s3", Target: wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{30, 31, 32, 33}}, Weights: []float64{}}},
@@ -60,7 +60,7 @@ func TestDeskPlan(t *testing.T) {
 		p := engineTestProfile(t)
 		p.Topologies = []config.Topology{{Name: "aw-laptop", Displays: []config.DisplayName{config.DisplayAW, config.DisplayLaptop}, Desk: []config.DeskLayout{{Display: config.DisplayAW, Label: "solo", Kind: config.LayoutColumns, Tracks: [][]string{{"arc"}, {"linear"}, {"akiflow"}}}, {Display: config.DisplayLaptop, Label: "laptop", Kind: config.LayoutStack, Tracks: [][]string{{"akiflow"}}}}}}
 		w := World{Displays: []wm.Display{display(2, deskAW, "s2"), display(3, deskLaptop, "s3")}, Spaces: []wm.Space{space("s2", "plan", 2), space("s3", "laptop", 3)}, Windows: []wm.Window{window(21, "Arc", 2, "s2", ""), window(20, "Linear", 2, "s2", ""), window(23, "Akiflow", 2, "s2", ""), window(30, "Akiflow", 3, "s3", "")}}
-		want := []Op{MoveWindowAction{WindowID: 21, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 20, ToSpace: "s3", Evacuation: true}, MoveWindowAction{WindowID: 23, ToSpace: "s3", Evacuation: true}, RelabelHomeAction{HomeSpace: "s2", Label: "solo"}, RealizeLayoutOp{Space: "s2", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{21}, {20}, {23}}, Weights: []float64{3, 4, 3}}}, RelabelHomeAction{HomeSpace: "s3", Label: "laptop"}, RealizeLayoutOp{Space: "s3", Target: wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{30}}, Weights: []float64{}}}}
+		want := []Op{FloatWindowOp{WindowID: 21, Staging: true}, FloatWindowOp{WindowID: 20, Staging: true}, FloatWindowOp{WindowID: 23, Staging: true}, RelabelHomeAction{HomeSpace: "s2", Label: "solo"}, RealizeLayoutOp{Space: "s2", Target: wm.SpaceLayoutTarget{Kind: wm.LayoutColumns, Tracks: [][]int{{21}, {20}, {23}}, Weights: []float64{3, 4, 3}}}, RelabelHomeAction{HomeSpace: "s3", Label: "laptop"}, RealizeLayoutOp{Space: "s3", Target: wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{{30}}, Weights: []float64{}}}}
 		expectOps(t, deskOps(p, w), want)
 	})
 	t.Run("a non-matching topology leaves the default desk in force", func(t *testing.T) {
@@ -162,7 +162,7 @@ func TestDeskPlanEvacuatesRebuildWindows(t *testing.T) {
 			firstRealize = index
 		}
 	}
-	want := []MoveWindowAction{{WindowID: 10, ToSpace: "s3", Evacuation: true}, {WindowID: 40, ToSpace: "s3", Evacuation: true}, {WindowID: 12, ToSpace: "s3", Evacuation: true}, {WindowID: 41, ToSpace: "s3", Evacuation: true}, {WindowID: 14, ToSpace: "s3", Evacuation: true}, {WindowID: 20, ToSpace: "s3", Evacuation: true}, {WindowID: 21, ToSpace: "s3", Evacuation: true}, {WindowID: 42, ToSpace: "s3", Evacuation: true}, {WindowID: 23, ToSpace: "s3", Evacuation: true}}
+	want := []MoveWindowAction{{WindowID: 40, ToSpace: "s3", Evacuation: true}, {WindowID: 41, ToSpace: "s3", Evacuation: true}, {WindowID: 42, ToSpace: "s3", Evacuation: true}}
 	if diff := cmp.Diff(want, moves); diff != "" {
 		t.Fatalf("evacuation moves mismatch (-want +got):\n%s", diff)
 	}
@@ -206,16 +206,16 @@ func TestDeskPlanParkingVariants(t *testing.T) {
 				got = append(got, move)
 			}
 		}
-		want := []MoveWindowAction{{WindowID: 10, ToSpace: "s2", Evacuation: true}, {WindowID: 40, ToSpace: "s2", Evacuation: true}, {WindowID: 14, ToSpace: "s2", Evacuation: true}}
+		want := []MoveWindowAction{{WindowID: 40, ToSpace: "s2", Evacuation: true}}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Fatalf("evacuation moves mismatch (-want +got):\n%s", diff)
 		}
 	})
-	t.Run("g9 window claimed as AW target evacuates to park", func(t *testing.T) {
+	t.Run("g9 window claimed as AW target stages in place", func(t *testing.T) {
 		w := World{Displays: []wm.Display{display(1, deskG9, "s1"), display(2, deskAW, "s2"), display(3, deskLaptop, "s3")}, Spaces: []wm.Space{space("s1", "main", 1), space("s2", "plan", 2), space("s3", "laptop", 3)}, Windows: []wm.Window{window(10, "Arc", 1, "s1", ""), window(14, "Code", 1, "s1", ""), window(50, "Linear", 1, "s1", ""), window(21, "Arc", 2, "s2", ""), window(30, "Arc", 3, "s3", ""), window(31, "Spotify", 3, "s3", "")}}
 		got := deskOps(profile, w)
-		if !containsOp(got, MoveWindowAction{WindowID: 50, ToSpace: "s3", Evacuation: true}) {
-			t.Fatal("AW-claimed Linear did not evacuate to park")
+		if !containsOp(got, FloatWindowOp{WindowID: 50, Staging: true}) {
+			t.Fatal("AW-claimed Linear did not stage in place")
 		}
 		for _, op := range got {
 			if realized, ok := op.(RealizeLayoutOp); ok && realized.Space == "s2" && realized.Target.Tracks[0][0] != 50 {

@@ -30,8 +30,16 @@ func DeskPlan(profile *config.Profile, world World) ([]Op, map[SlotKey]int) {
 	doomed, ops := teardownSpaces(world)
 	builds, filled := buildDesks(profile, world, doomed)
 	park := parkingSpace(builds)
+	selected := make(map[int]struct{})
+	for _, build := range builds {
+		for _, track := range build.tracks {
+			for _, id := range track {
+				selected[id] = struct{}{}
+			}
+		}
+	}
 	if park != "" {
-		ops = append(ops, evacuateWindows(world, builds, park)...)
+		ops = append(ops, evacuateWindows(world, builds, park, selected)...)
 	}
 	return append(ops, realizeDesks(builds)...), filled
 }
@@ -167,10 +175,13 @@ func parkingSpace(builds []deskBuild) wm.SpaceID {
 	return builds[len(builds)-1].homeSpace
 }
 
-func evacuateWindows(world World, builds []deskBuild, park wm.SpaceID) []Op {
+func evacuateWindows(world World, builds []deskBuild, park wm.SpaceID, selected map[int]struct{}) []Op {
 	ops := make([]Op, 0)
 	managed := 0
 	for _, window := range world.Windows {
+		if _, owner := selected[window.ID]; owner {
+			continue
+		}
 		if window.SpaceID == park && !window.Floating && !window.Minimized {
 			managed++
 		}
@@ -181,6 +192,10 @@ func evacuateWindows(world World, builds []deskBuild, park wm.SpaceID) []Op {
 		}
 		for _, window := range world.Windows {
 			if window.SpaceID == build.homeSpace && !window.Floating && !window.Minimized {
+				if _, owner := selected[window.ID]; owner {
+					ops = append(ops, FloatWindowOp{WindowID: window.ID, Staging: true})
+					continue
+				}
 				if managed >= wm.StackWindowCap {
 					ops = append(ops, FloatWindowOp{WindowID: window.ID})
 					continue

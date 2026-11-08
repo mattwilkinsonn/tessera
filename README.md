@@ -35,8 +35,9 @@ Spawn demand counts matching app and title windows on every space, including
 floating and minimized windows. Title-specific slots claim before app-only slots.
 `spawn-ledger.json`, next to `window-slots.json`, maps each window-spec name to
 one `{at, appCount, observed}` record. The shared slot lock protects it. A launch
-has a five-minute cooldown. After the launch wait, tess records all windows of
-that app, regardless of title or state. That name cannot launch again while the
+has a five-minute cooldown. After a successful launch produces a new app window,
+tess records all windows of that app, regardless of title or state. Failed or
+windowless launches retain only the cooldown. That name cannot launch again while the
 app count remains at or above the recorded count. Closing windows below that
 count allows another launch after cooldown. Records expire after 24 hours;
 old timestamp-array entries load as expired. Spawns wait until yabai has been up for
@@ -51,6 +52,8 @@ stack layout; laptop display setup keeps its existing layout and warns instead.
 Desk evacuation budgets the parking space's remaining capacity. Overflow windows
 float in place with a warning instead of aborting Apply. A late capacity rejection
 uses the same fallback only for evacuation moves; stale-space rehoming stays fatal.
+Claimed slot owners stage floating in place at debug level and never use parking
+capacity. Layout realization skips full members and continues with other tracks.
 
 ```text
 tess apply                      converge the active space onto its configured layout

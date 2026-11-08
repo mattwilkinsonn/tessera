@@ -33,6 +33,9 @@ func serve(args []string) error {
 		_, err := os.Stdout.WriteString("[]")
 		return err
 	}
+	if os.Getenv("TESS_YABAI_MUTATE") == "1" && len(args) == 5 && args[0] == "-m" && args[1] == "window" {
+		return mutateWindow(args)
+	}
 	if len(args) < 3 || args[0] != "-m" || args[1] != "query" {
 		return nil
 	}
@@ -187,4 +190,43 @@ func record(args []string) error {
 		return fmt.Errorf("closing argv log: %w", err)
 	}
 	return nil
+}
+
+func mutateWindow(args []string) error {
+	path := os.Getenv("TESS_YABAI_WINDOWS")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var windows []map[string]any
+	if err := json.Unmarshal(data, &windows); err != nil {
+		return err
+	}
+	id, err := strconv.Atoi(args[2])
+	if err != nil {
+		return err
+	}
+	for _, window := range windows {
+		if window["id"] != float64(id) {
+			continue
+		}
+		switch args[3] {
+		case "--space":
+			space, err := strconv.Atoi(args[4])
+			if err != nil {
+				return err
+			}
+			window["space"] = space
+		case "--toggle":
+			if args[4] == "float" {
+				floating, _ := window["is-floating"].(bool)
+				window["is-floating"] = !floating
+			}
+		}
+	}
+	data, err = json.Marshal(windows)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
 }

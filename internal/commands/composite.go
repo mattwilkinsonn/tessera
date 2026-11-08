@@ -527,12 +527,20 @@ func spawnMissingWindows(ctx context.Context, profile *config.Profile, driver wm
 	}
 	for _, target := range targets {
 		count := 0
+		newWindows := 0
 		for _, window := range current {
 			if target.app.MatchString(window.App) {
 				count++
+				if _, old := target.baseline[window.ID]; !old {
+					newWindows++
+				}
 			}
 		}
 		for _, name := range target.names {
+			if newWindows == 0 {
+				continue
+			}
+			newWindows--
 			record := ledger[name]
 			record.AppCount = count
 			record.Observed = true
@@ -592,13 +600,13 @@ func startMissingWindows(ctx context.Context, profile *config.Profile, driver wm
 		if err := effects.WriteSpawnsAt(ledgerPath, ledger, now); err != nil {
 			return nil, err
 		}
-		target.names = append(target.names, name)
 		if err := driver.SpawnWindow(ctx, spec.Spawn); err != nil {
 			if _, writeErr := fmt.Fprintf(stderr, "tess: spawn failed for %s: %v\n", name, err); writeErr != nil {
 				return nil, fmt.Errorf("writing spawn failure: %w", writeErr)
 			}
 			continue
 		}
+		target.names = append(target.names, name)
 		target.count++
 	}
 	return targets, nil

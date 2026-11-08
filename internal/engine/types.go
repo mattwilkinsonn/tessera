@@ -66,7 +66,10 @@ type MoveWindowAction struct {
 func (MoveWindowAction) op()             {}
 func (MoveWindowAction) convergeAction() {}
 
-type FloatWindowOp struct{ WindowID int }
+type FloatWindowOp struct {
+	WindowID int
+	Staging  bool
+}
 
 func (FloatWindowOp) op() {}
 

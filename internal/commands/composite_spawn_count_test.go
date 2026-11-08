@@ -66,3 +66,33 @@ func TestApplyLaunchCountPreventsTitleStorm(t *testing.T) {
 		}
 	})
 }
+
+func TestApplyUnobservedLaunchRetries(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fails    int
+		noWindow bool
+	}{{name: "failed", fails: 1}, {name: "windowless", noWindow: true}} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				profile := testProfile(t)
+				profile.Windows["arc"] = config.WindowSpec{App: "Zen", AppRE: regexp.MustCompile("Zen"), Spawn: []string{"open", "Zen"}}
+				driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1, Frame: displayFrame(5120, 2160)}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}, SpawnApp: "Zen", SpawnFails: test.fails, SpawnNoWindow: test.noWindow})
+				now := time.Now()
+				env := commandEnv(t)
+				env.Now = func() time.Time { return now }
+				if err := Apply(t.Context(), profile, driver, env); err != nil {
+					t.Fatal(err)
+				}
+				first := len(driver.SpawnCalls)
+				now = now.Add(6 * time.Minute)
+				if err := Apply(t.Context(), profile, driver, env); err != nil {
+					t.Fatal(err)
+				}
+				if len(driver.SpawnCalls) != first+1 {
+					t.Fatalf("attempts = %d, want %d", len(driver.SpawnCalls), first+1)
+				}
+			})
+		})
+	}
+}

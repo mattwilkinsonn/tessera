@@ -236,6 +236,9 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 		for _, track := range target.Tracks {
 			for _, windowID := range track {
 				allowed, err := wm.CanAddToSpace(ctx, d, id, windowID)
+				if errors.Is(err, wm.ErrSpaceFull) {
+					continue
+				}
 				if err != nil {
 					return err
 				}
@@ -249,11 +252,17 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 					return err
 				}
 				if err := d.unfloatOne(ctx, windowID); err != nil {
+					if errors.Is(err, wm.ErrSpaceFull) {
+						continue
+					}
 					return err
 				}
 			}
 		}
-		return d.SetSpaceLayout(ctx, id, wm.LayoutStack)
+		if err := d.SetSpaceLayout(ctx, id, wm.LayoutStack); err != nil && !errors.Is(err, wm.ErrSpaceFull) {
+			return err
+		}
+		return nil
 	}
 	steps := BSPSteps(index, target, nil)
 	for i := 0; i < len(steps); i++ {
@@ -268,6 +277,10 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 				windowID = steps[i+1].Unfloat
 			}
 			allowed, err := wm.CanStack(ctx, d, anchor, windowID)
+			if errors.Is(err, wm.ErrSpaceFull) {
+				i++
+				continue
+			}
 			if err != nil {
 				return err
 			}
@@ -286,6 +299,9 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 		}
 		if step.HasUnfloat {
 			if err := d.unfloatOne(ctx, step.Unfloat); err != nil {
+				if errors.Is(err, wm.ErrSpaceFull) {
+					continue
+				}
 				return err
 			}
 		}

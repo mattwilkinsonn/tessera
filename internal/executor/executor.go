@@ -47,7 +47,7 @@ func applyOp(ctx context.Context, driver wm.Driver, op engine.Op) error {
 	case engine.MoveWindowAction:
 		err := driver.MoveWindowToSpace(ctx, op.WindowID, op.ToSpace)
 		if op.Evacuation && errors.Is(err, wm.ErrSpaceFull) {
-			return floatOverflow(ctx, driver, op.WindowID)
+			return floatOverflow(ctx, driver, op.WindowID, false)
 		}
 		return err
 	case engine.RehomeAndDestroyAction:
@@ -74,13 +74,13 @@ func applyOp(ctx context.Context, driver wm.Driver, op engine.Op) error {
 	case engine.BalanceSpaceOp:
 		return driver.BalanceSpace(ctx, &op.Space)
 	case engine.FloatWindowOp:
-		return floatOverflow(ctx, driver, op.WindowID)
+		return floatOverflow(ctx, driver, op.WindowID, op.Staging)
 	default:
 		return fmt.Errorf("unhandled plan operation %T", op)
 	}
 }
 
-func floatOverflow(ctx context.Context, driver wm.Driver, id int) error {
+func floatOverflow(ctx context.Context, driver wm.Driver, id int, staging bool) error {
 	window, found, err := driver.QueryWindow(ctx, id)
 	if err != nil || !found {
 		return err
@@ -90,7 +90,11 @@ func floatOverflow(ctx context.Context, driver wm.Driver, id int) error {
 			return fmt.Errorf("floating evacuation overflow %d: %w", id, err)
 		}
 	}
-	slog.WarnContext(ctx, "floating evacuation overflow", "window", id)
+	if staging {
+		slog.DebugContext(ctx, "staging desk slot owner", "window", id)
+	} else {
+		slog.WarnContext(ctx, "floating evacuation overflow", "window", id)
+	}
 	return nil
 }
 

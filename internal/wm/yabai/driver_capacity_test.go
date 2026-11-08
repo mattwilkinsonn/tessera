@@ -118,7 +118,7 @@ func TestOverCapSpaceIsNotConverted(t *testing.T) {
 			} else {
 				err = driver.SetSpaceLayout(t.Context(), "47", wm.LayoutStack)
 			}
-			if !errors.Is(err, wm.ErrSpaceFull) {
+			if realize && err != nil || !realize && !errors.Is(err, wm.ErrSpaceFull) {
 				t.Fatalf("error = %v", err)
 			}
 			data, err := os.ReadFile(log)
@@ -152,5 +152,47 @@ func TestDisplaySetupKeepsOverCapLayout(t *testing.T) {
 	}
 	if strings.Contains(string(data), "--layout") {
 		t.Fatalf("converted over-cap laptop space: %s", data)
+	}
+}
+
+func TestRealizeStackSkipsOverflowMembers(t *testing.T) {
+	driver, _ := capacityDriver(t, 0)
+	t.Setenv("TESS_YABAI_MUTATE", "1")
+	windows := make([]RawYabaiWindow, 0, 25)
+	first := make([]int, 0, 24)
+	for id := range 25 {
+		windows = append(windows, RawYabaiWindow{ID: id + 1, Space: 2, HasAXReference: true, IsFloating: true})
+		if id < 24 {
+			first = append(first, id+1)
+		}
+	}
+	data, err := json.Marshal(windows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.RealizeSpaceLayout(t.Context(), "47", wm.SpaceLayoutTarget{Kind: wm.TargetStack, Tracks: [][]int{first, {25}}}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := driver.QueryWindows(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tiled, floating := 0, 0
+	for _, window := range current {
+		if window.Floating {
+			floating++
+		} else if window.SpaceID == "47" {
+			tiled++
+		}
+	}
+	if tiled != 24 || floating != 1 {
+		t.Fatalf("tiled %d, floating %d; want 24, 1", tiled, floating)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil || len(spaces) != 2 {
+		t.Fatalf("spaces = %v, %v", spaces, err)
 	}
 }
