@@ -18,18 +18,20 @@ import (
 // spawnTimeout is how long SpawnWindow waits for a launcher before leaving it running.
 const spawnTimeout = 5 * time.Second
 
-var (
+const (
 	unfloatFocusTimeout = 2 * time.Second
 	unfloatFocusPoll    = 50 * time.Millisecond
 )
 
 type Driver struct {
-	path      string
-	spawnWait time.Duration
+	path                string
+	spawnWait           time.Duration
+	unfloatFocusTimeout time.Duration
+	unfloatFocusPoll    time.Duration
 }
 
 func New(yabaiPath string) *Driver {
-	return &Driver{path: yabaiPath, spawnWait: spawnTimeout}
+	return &Driver{path: yabaiPath, spawnWait: spawnTimeout, unfloatFocusTimeout: unfloatFocusTimeout, unfloatFocusPoll: unfloatFocusPoll}
 }
 
 func (d *Driver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
@@ -471,25 +473,25 @@ func (d *Driver) query(ctx context.Context, args []string, target any) (err erro
 }
 
 func (d *Driver) queryOrNull(ctx context.Context, args []string, target any) (found bool, err error) {
-	defer func() {
-		if err != nil {
-			wm.MarkQueryFailed(ctx)
-		}
-	}()
+	found, failed, err := d.queryOrNullUntracked(ctx, args, target)
+	if failed || err != nil {
+		wm.MarkQueryFailed(ctx)
+	}
+	return found, err
+}
+
+func (d *Driver) queryOrNullUntracked(ctx context.Context, args []string, target any) (found, failed bool, err error) {
 	stdout, exitCode, err := d.run(ctx, args)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if exitCode != 0 || len(bytes.TrimSpace(stdout)) == 0 {
-		if exitCode != 0 {
-			wm.MarkQueryFailed(ctx)
-		}
-		return false, nil
+		return false, exitCode != 0, nil
 	}
 	if err := json.Unmarshal(stdout, target); err != nil {
-		return false, fmt.Errorf("decoding yabai query %s: %w", strings.Join(args, " "), err)
+		return false, false, fmt.Errorf("decoding yabai query %s: %w", strings.Join(args, " "), err)
 	}
-	return true, nil
+	return true, false, nil
 }
 
 func (d *Driver) resolveIndex(ctx context.Context, id wm.SpaceID) (int, bool, error) {
@@ -530,23 +532,27 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 		return fmt.Errorf("focusing window %d before unfloat", windowID)
 	}
 	// Focusing a window switches spaces asynchronously.
-	waitCtx, cancel := context.WithTimeout(ctx, unfloatFocusTimeout)
+	waitCtx, cancel := context.WithTimeout(ctx, d.unfloatFocusTimeout)
 	defer cancel()
+	queryFailed := false
 	for {
-		active, found, err := d.QueryFocusedSpace(waitCtx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if waitCtx.Err() == context.DeadlineExceeded {
-				return fmt.Errorf("window %d did not activate target space %s before unfloat", windowID, space)
-			}
-			return err
-		}
-		if found && active.ID == space {
+		var rawSpace RawYabaiSpace
+		found, failed, err := d.queryOrNullUntracked(waitCtx, QueryFocusedSpaceArgs(), &rawSpace)
+		queryFailed = queryFailed || failed
+		if err == nil && found && NormalizeSpace(rawSpace).ID == space {
 			break
 		}
-		if err := waitContext(waitCtx, unfloatFocusPoll); err != nil {
+		if err == nil {
+			err = waitContext(waitCtx, d.unfloatFocusPoll)
+		} else if waitCtx.Err() == nil {
+			wm.MarkQueryFailed(ctx)
+			return err
+		}
+		if err != nil {
+			// Mark health only when the wait gave up after a failed query.
+			if queryFailed {
+				wm.MarkQueryFailed(ctx)
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
