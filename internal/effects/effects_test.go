@@ -43,6 +43,21 @@ func TestResolveTempDir(t *testing.T) {
 	})
 }
 
+func TestDefaultPathsSignalGuardSharesLockDirectory(t *testing.T) {
+	// A non-/tmp TMPDIR lets Linux CI tell this apart from the old fixed /tmp guard.
+	t.Setenv("TMPDIR", t.TempDir())
+	paths, err := DefaultPaths(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := filepath.Dir(paths.SignalGuard), filepath.Dir(paths.ApplyLock); got != want {
+		t.Fatalf("signal guard directory = %q, want lock directory %q", got, want)
+	}
+	if got, want := filepath.Dir(paths.SignalGuard), filepath.Dir(paths.LaptopLock); got != want {
+		t.Fatalf("signal guard directory = %q, want laptop lock directory %q", got, want)
+	}
+}
+
 func TestIsQuiet(t *testing.T) {
 	t.Run("age exactly equal to the window counts as quiet", func(t *testing.T) {
 		if !IsQuiet(time.Unix(103, 0), time.Unix(100, 0), 3*time.Second) {

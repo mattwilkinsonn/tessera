@@ -73,7 +73,7 @@ func DefaultPaths(ctx context.Context) (Paths, error) {
 	return Paths{
 		ApplyLock:    filepath.Join(tmpDir, "tessera-apply.lock"),
 		LaptopLock:   filepath.Join(tmpDir, "tessera-laptop.lock"),
-		SignalGuard:  signalGuardPath(),
+		SignalGuard:  signalGuardPath(tmpDir),
 		FlexOrder:    filepath.Join(cache, "yabai", "laptop-flex-order"),
 		WindowSlots:  filepath.Join(cache, "yabai", "window-slots.json"),
 		SpawnLedger:  filepath.Join(cache, "yabai", "spawn-ledger.json"),

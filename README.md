@@ -109,10 +109,11 @@ The Go implementation splits into packages, each with a single responsibility:
 - `internal/daemon/` — the resident daemon: socket, event debounce, signal wiring, and launchd bootstrap.
 - `internal/cli/` — argument parsing and dispatch to commands or the daemon.
 
-The daemon socket and apply/laptop locks use the per-user Darwin temp directory,
-resolved with `/usr/bin/getconf DARWIN_USER_TEMP_DIR`. This keeps launchd and
-shell processes on the same paths regardless of `TMPDIR`. On other platforms,
-or when the lookup fails, Tessera uses the process temp directory.
+The daemon socket, apply/laptop locks, and signal guard use the per-user Darwin
+temp directory, resolved with `/usr/bin/getconf DARWIN_USER_TEMP_DIR`. This keeps
+launchd and shell processes on the same paths regardless of `TMPDIR` and avoids
+sharing the guard with other users or Nix builders. On other platforms, or when
+the lookup fails, Tessera uses the process temp directory.
 
 At daemon startup, Tessera waits up to 60 seconds for yabai to answer a display
 query before running the initial wake cascade. If yabai is still unavailable,

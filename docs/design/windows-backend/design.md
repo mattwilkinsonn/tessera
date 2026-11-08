@@ -84,9 +84,9 @@ Windows). The work is a driver, a push-event seam and small splits.
   `guard_windows.go` rejects a non-regular file and writes the stamp with
   `0o600`. The Windows temp dir is per user *[INFERENCE]*, and NTFS has no
   FIFOs, so the unix link and owner checks are not needed.
-- **Guard path.** `signalGuardPath()` keeps `/tmp/yabai-apply.guard` on
-  unix and uses `os.TempDir()\tessera-apply.guard` on Windows. No other
-  path changes.
+- **Guard path.** `signalGuardPath(tmpDir)` uses `yabai-apply.guard` on
+  unix and `tessera-apply.guard` on Windows, beside the apply/laptop locks in
+  the resolved temp directory. No other path changes.
 - **Composition root.** `cmd/tess/backend_other.go` holds yabai,
   sketchybar and launchd. `backend_windows.go` holds komorebi.
 - **Tests.** FIFO and SIGTERM cases move to `//go:build unix` files.
@@ -307,8 +307,8 @@ Interfaces:
 
 - `func SuppressSignals(path string) error` keeps its signature. Its
   bodies are in `internal/effects/guard_unix.go` and `guard_windows.go`.
-- The unexported `func signalGuardPath() string`, in both guard files,
-  feeds `DefaultPaths`.
+- The unexported `func signalGuardPath(tmpDir string) string`, in both guard
+  files, feeds `DefaultPaths` using its resolved temp directory.
 - `effects_unix_test.go`, `yabai/args_unix_test.go` and
   `cli/cli_unix_test.go` carry `//go:build unix`.
 - `cmd/tess`:
