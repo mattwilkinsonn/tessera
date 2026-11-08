@@ -74,6 +74,26 @@ func TestQueryWindow(t *testing.T) {
 	})
 }
 
+func TestQueryFocusedWindowForRebuild(t *testing.T) {
+	t.Run("no focus is not a failed query", func(t *testing.T) {
+		driver, _ := unfloatSafetyDriver(t)
+		ctx := wm.TrackQueryFailures(t.Context())
+		_, found, err := driver.QueryFocusedWindow(ctx)
+		if err != nil || found || wm.QueryFailed(ctx) {
+			t.Fatalf("no focus = found %t, error %v, query failed %t", found, err, wm.QueryFailed(ctx))
+		}
+	})
+	t.Run("query failure is not missing focus", func(t *testing.T) {
+		driver, _ := unfloatSafetyDriver(t)
+		t.Setenv("TESS_YABAI_WINDOWS_EXIT_CODE", "1")
+		ctx := wm.TrackQueryFailures(t.Context())
+		_, found, err := driver.QueryFocusedWindow(ctx)
+		if err == nil || found || !wm.QueryFailed(ctx) {
+			t.Fatalf("query failure = found %t, error %v, query failed %t", found, err, wm.QueryFailed(ctx))
+		}
+	})
+}
+
 func TestRulesAddOnly(t *testing.T) {
 	root := t.TempDir()
 	windows := filepath.Join(root, "windows.json")
