@@ -32,7 +32,7 @@ type Driver struct {
 }
 
 func New(yabaiPath string) *Driver {
-	return &Driver{path: yabaiPath, spawnWait: spawnTimeout, unfloatFocusTimeout: unfloatFocusTimeout, unfloatFocusPoll: unfloatFocusPoll}
+	return &Driver{path: yabaiPath, spawnWait: spawnTimeout}
 }
 
 func (d *Driver) QueryWindows(ctx context.Context) ([]wm.Window, error) {
@@ -546,6 +546,8 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// Only completed queries update lastFailed; a timed-out query leaves it unchanged.
+	// Parent cancellation never marks query health.
 	lastFailed := false
 	for {
 		var rawSpace RawYabaiSpace
@@ -558,7 +560,7 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 		}
 		if err == nil {
 			err = wait(waitCtx, poll)
-		} else if waitCtx.Err() == nil {
+		} else if ctx.Err() == nil && waitCtx.Err() == nil {
 			wm.MarkQueryFailed(ctx)
 			return err
 		}

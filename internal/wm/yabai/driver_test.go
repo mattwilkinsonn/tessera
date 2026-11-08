@@ -329,9 +329,26 @@ func TestUnfloatOneZeroWaitSettingsUseDefaults(t *testing.T) {
 	driver, _ := unfloatSafetyDriver(t)
 	driver.unfloatFocusTimeout = 0
 	driver.unfloatFocusPoll = 0
-	t.Setenv("TESS_YABAI_FOCUS_DELAY", "1")
+	var waits []time.Duration
+	driver.unfloatWait = func(ctx context.Context, duration time.Duration) error {
+		waits = append(waits, duration)
+		return waitContext(ctx, duration)
+	}
+	t.Setenv("TESS_YABAI_FOCUS_DELAY", "3")
+	start := time.Now()
 	if err := driver.unfloatOne(t.Context(), 210); err != nil {
 		t.Fatalf("unfloatOne with zero wait settings: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Errorf("unfloatOne returned after %s, want at least 100ms", elapsed)
+	}
+	if len(waits) != 3 {
+		t.Fatalf("poll waits = %d, want 3", len(waits))
+	}
+	for _, duration := range waits {
+		if duration != 50*time.Millisecond {
+			t.Errorf("poll duration = %s, want 50ms", duration)
+		}
 	}
 }
 
@@ -415,6 +432,7 @@ func TestUnfloatOneRecoveredQueryBeforeTimeout(t *testing.T) {
 func TestUnfloatOneCancelDuringPollWait(t *testing.T) {
 	driver, log := unfloatSafetyDriver(t)
 	t.Setenv("TESS_YABAI_FOCUS_STALE", "1")
+	t.Setenv("TESS_YABAI_FOCUS_FAILURES", "1")
 	driver.unfloatFocusTimeout = 10 * time.Second
 	driver.unfloatFocusPoll = 10 * time.Second
 	waiting := make(chan struct{})
