@@ -160,20 +160,25 @@ func runDisplayCascade(ctx context.Context, profile *config.Profile, driver wm.D
 			return "", err
 		}
 	}
-	env.Topology.RecordDisplays(len(displays))
 	if len(displays) > 1 || externalDeskOnly(profile, displays) {
 		if err := Apply(ctx, profile, driver, env); err != nil {
 			return "", err
 		}
+		env.Topology.RecordDisplays(len(displays))
 		return CascadeApplied, nil
 	}
 	result, err := laptop(ctx, profile, driver, env, true, !known || previous != len(displays))
+	if err != nil {
+		return "", err
+	}
 	switch result {
 	case LaptopContended:
 		return CascadeContended, err
 	case LaptopSkipped:
+		env.Topology.RecordDisplays(len(displays))
 		return CascadeSkipped, err
 	default:
+		env.Topology.RecordDisplays(len(displays))
 		return CascadeRan, err
 	}
 }

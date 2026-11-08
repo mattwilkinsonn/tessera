@@ -243,7 +243,7 @@ func stepOrderCreated(world World, state ConvergeState, homePos int) (ConvergeAc
 			}
 		} else {
 			for _, other := range world.Spaces {
-				if other.ID == space.ID || !strings.HasPrefix(other.Label, "lap-") {
+				if other.DisplayIdx != s.LaptopIdx || other.ID == space.ID || !strings.HasPrefix(other.Label, "lap-") {
 					continue
 				}
 				if hasSpace(s.InitialLapSpaces, other.ID) || slices.Contains(s.DesiredOrder[:cursor], other.Label) {
@@ -252,10 +252,7 @@ func stepOrderCreated(world World, state ConvergeState, homePos int) (ConvergeAc
 			}
 		}
 		target := anchor + 1
-		if current < target {
-			target--
-		}
-		if current != target {
+		if target < current {
 			return MoveSpaceAction{Space: space.ID, ToIndex: target}, s, true
 		}
 	}

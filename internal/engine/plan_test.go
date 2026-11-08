@@ -483,6 +483,29 @@ func (world *laptopTestWorld) destroy(id wm.SpaceID) {
 	}
 }
 
+func TestStepOrderCreatedMoveBoundaries(t *testing.T) {
+	world := World{
+		Displays: []wm.Display{{Idx: 3, SpaceIDs: []wm.SpaceID{"home", "new", "existing"}}, {Idx: 4, SpaceIDs: []wm.SpaceID{"remote"}}},
+		Spaces: []wm.Space{{ID: "home", DisplayIdx: 3}, {ID: "new", Label: "lap-new", DisplayIdx: 3},
+			{ID: "existing", Label: "lap-existing", DisplayIdx: 3}, {ID: "remote", Label: "lap-remote", DisplayIdx: 4}},
+	}
+	t.Run("rightward placement is skipped", func(t *testing.T) {
+		state := ConvergeState{HomeSpace: "home", LaptopIdx: 3, DesiredOrder: []string{"lap-existing", "lap-new"}, PinnedCount: 2,
+			InitialLapSpaces: map[wm.SpaceID]struct{}{"existing": {}}}
+		if action, _, emitted := stepOrder(world, state); emitted {
+			t.Fatalf("unexpected rightward move: %v", action)
+		}
+	})
+	t.Run("flex ignores another display", func(t *testing.T) {
+		state := ConvergeState{HomeSpace: "home", LaptopIdx: 3, DesiredOrder: []string{"lap-new"},
+			InitialLapSpaces: map[wm.SpaceID]struct{}{"remote": {}}}
+		action, _, emitted := stepOrder(world, state)
+		if emitted {
+			t.Fatalf("remote space influenced flex placement: %v", action)
+		}
+	})
+}
+
 func runLaptopConverge(t *testing.T, profile *config.Profile, world *laptopTestWorld, reap bool) []ConvergeAction {
 	t.Helper()
 	state := InitialConvergeState("home", nil, reap, reap)
