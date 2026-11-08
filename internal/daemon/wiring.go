@@ -126,7 +126,11 @@ func WakeRoutine(profile *config.Profile, driver wm.Driver, env commands.Env, so
 		}
 		retryCtx := ctx
 		if lifetime, ok := ctx.Value(wakeLifetimeKey{}).(context.Context); ok {
-			retryCtx = lifetime
+			retryCtx = context.WithoutCancel(ctx)
+			var cancel context.CancelFunc
+			retryCtx, cancel = context.WithCancel(retryCtx)
+			stop := context.AfterFunc(lifetime, cancel) //nolint:contextcheck // The daemon lifetime is inherited through ctx.Value; bounded wake cancellation must not cancel retries.
+			context.AfterFunc(retryCtx, func() { stop() })
 		}
 		var stopCancel func() bool
 		registered := make(chan struct{})

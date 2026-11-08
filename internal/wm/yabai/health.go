@@ -2,6 +2,7 @@ package yabai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec" //nolint:depguard // Process metadata establishes yabai readiness.
 	"strconv"
@@ -16,11 +17,18 @@ func (d *Driver) ServiceUptime(ctx context.Context) (time.Duration, error) {
 	}
 	pids := strings.Fields(string(output))
 	if len(pids) == 0 {
-		return 0, fmt.Errorf("yabai process is absent")
+		return 0, errors.New("yabai process is absent")
 	}
 	uptime := time.Duration(1<<63 - 1)
 	for _, pid := range pids {
-		output, err := exec.CommandContext(ctx, "/bin/ps", "-o", "etime=", "-p", pid).Output()
+		processID, err := strconv.Atoi(pid)
+		if err != nil {
+			return 0, fmt.Errorf("parsing yabai pid: %w", err)
+		}
+		if processID <= 0 {
+			return 0, errors.New("yabai pid must be positive")
+		}
+		output, err := exec.CommandContext(ctx, "/bin/ps", "-o", "etime=", "-p", strconv.Itoa(processID)).Output() //nolint:gosec // Fixed executable and options; the only variable argument is a validated positive integer PID.
 		if err != nil {
 			return 0, fmt.Errorf("reading yabai uptime: %w", err)
 		}

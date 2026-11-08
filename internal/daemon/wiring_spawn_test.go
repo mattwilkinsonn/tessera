@@ -23,7 +23,7 @@ func TestWakeRetriesHeldSpawns(t *testing.T) {
 	env := daemonEnv(t)
 	env.Nudge = func(context.Context, string) error { return nil }
 	sock := filepath.Join(shortDir(t), "retry.sock")
-	listener, err := net.Listen("unix", sock)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestServeSpawnRetryLifetime(t *testing.T) {
 			env := daemonEnv(t)
 			env.Nudge = func(context.Context, string) error { return nil }
 			sock := filepath.Join(shortDir(t), "serve.sock")
-			listener, err := net.Listen("unix", sock)
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sock)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -95,44 +95,50 @@ func TestServeSpawnRetryLifetime(t *testing.T) {
 			wake := func(ctx context.Context) error { calls.Add(1); err := routine(ctx); finished <- err; return err }
 			done := make(chan error, 1)
 			go func() { done <- Serve(ctx, listener, NewHub(idle, idle), Wakes{Run: wake}) }()
-			select {
-			case err := <-finished:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("held wake blocked")
-			}
+			awaitSpawnWake(t, finished, "held wake blocked")
 			if cancelEarly {
 				cancel()
-				if err := <-done; err != nil {
-					t.Fatal(err)
-				}
-				select {
-				case <-finished:
-					t.Fatal("retry ran after shutdown")
-				case <-time.After(1200 * time.Millisecond):
-				}
-				if calls.Load() != 1 {
-					t.Fatalf("wakes = %d", calls.Load())
-				}
+				awaitSpawnShutdown(t, done)
+				assertNoSpawnRetry(t, finished, &calls)
 				return
 			}
-			select {
-			case err := <-finished:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("deferred wake was lost after bounded context ended")
-			}
+			awaitSpawnWake(t, finished, "deferred wake was lost after bounded context ended")
 			cancel()
-			if err := <-done; err != nil {
-				t.Fatal(err)
-			}
+			awaitSpawnShutdown(t, done)
 			if calls.Load() != 2 {
 				t.Fatalf("wakes = %d, want two", calls.Load())
 			}
 		})
+	}
+}
+
+func awaitSpawnWake(t *testing.T, finished <-chan error, message string) {
+	t.Helper()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal(message)
+	}
+}
+
+func awaitSpawnShutdown(t *testing.T, done <-chan error) {
+	t.Helper()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertNoSpawnRetry(t *testing.T, finished <-chan error, calls *atomic.Int32) {
+	t.Helper()
+	select {
+	case <-finished:
+		t.Fatal("retry ran after shutdown")
+	case <-time.After(1200 * time.Millisecond):
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("wakes = %d", calls.Load())
 	}
 }

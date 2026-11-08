@@ -233,80 +233,9 @@ func (d *Driver) RealizeSpaceLayout(ctx context.Context, id wm.SpaceID, target w
 		return err
 	}
 	if target.Kind == wm.TargetStack {
-		for _, track := range target.Tracks {
-			for _, windowID := range track {
-				allowed, err := wm.CanAddToSpace(ctx, d, id, windowID)
-				if errors.Is(err, wm.ErrSpaceFull) {
-					continue
-				}
-				if err != nil {
-					return err
-				}
-				if !allowed {
-					continue
-				}
-				if _, _, err := d.run(ctx, MoveWindowToSpaceArgs(windowID, index)); err != nil {
-					return err
-				}
-				if err := waitContext(ctx, 350*time.Millisecond); err != nil {
-					return err
-				}
-				if err := d.unfloatOne(ctx, windowID); err != nil {
-					if errors.Is(err, wm.ErrSpaceFull) {
-						continue
-					}
-					return err
-				}
-			}
-		}
-		if err := d.SetSpaceLayout(ctx, id, wm.LayoutStack); err != nil && !errors.Is(err, wm.ErrSpaceFull) {
-			return err
-		}
-		return nil
+		return d.realizeStack(ctx, id, index, target)
 	}
-	steps := BSPSteps(index, target, nil)
-	for i := 0; i < len(steps); i++ {
-		step := steps[i]
-		if len(step.Args) >= 5 && step.Args[3] == "--insert" && step.Args[4] == "stack" {
-			anchor, err := strconv.Atoi(step.Args[2])
-			if err != nil {
-				return err
-			}
-			windowID := 0
-			if i+1 < len(steps) {
-				windowID = steps[i+1].Unfloat
-			}
-			allowed, err := wm.CanStack(ctx, d, anchor, windowID)
-			if errors.Is(err, wm.ErrSpaceFull) {
-				i++
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if !allowed {
-				i++
-				continue
-			}
-		}
-		if _, _, err := d.run(ctx, step.Args); err != nil {
-			return err
-		}
-		if step.Settle > 0 {
-			if err := waitContext(ctx, time.Duration(step.Settle)*time.Millisecond); err != nil {
-				return err
-			}
-		}
-		if step.HasUnfloat {
-			if err := d.unfloatOne(ctx, step.Unfloat); err != nil {
-				if errors.Is(err, wm.ErrSpaceFull) {
-					continue
-				}
-				return err
-			}
-		}
-	}
-	return nil
+	return d.realizeBSP(ctx, BSPSteps(index, target, nil))
 }
 
 func (d *Driver) MoveWindowToSpace(ctx context.Context, windowID int, id wm.SpaceID) error {
@@ -570,4 +499,85 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 		return err
 	}
 	return waitContext(ctx, 150*time.Millisecond)
+}
+func (d *Driver) realizeStack(ctx context.Context, id wm.SpaceID, index int, target wm.SpaceLayoutTarget) error {
+	for _, track := range target.Tracks {
+		for _, windowID := range track {
+			allowed, err := wm.CanAddToSpace(ctx, d, id, windowID)
+			if errors.Is(err, wm.ErrSpaceFull) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				continue
+			}
+			if _, _, err := d.run(ctx, MoveWindowToSpaceArgs(windowID, index)); err != nil {
+				return err
+			}
+			if err := waitContext(ctx, 350*time.Millisecond); err != nil {
+				return err
+			}
+			if err := d.unfloatOne(ctx, windowID); err != nil {
+				if errors.Is(err, wm.ErrSpaceFull) {
+					continue
+				}
+				return err
+			}
+		}
+	}
+	if err := d.SetSpaceLayout(ctx, id, wm.LayoutStack); err != nil && !errors.Is(err, wm.ErrSpaceFull) {
+		return err
+	}
+	return nil
+}
+func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) error {
+	for i := 0; i < len(steps); i++ {
+		step := steps[i]
+		allowed, err := d.allowBSPStep(ctx, steps, i)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			i++
+			continue
+		}
+		if _, _, err := d.run(ctx, step.Args); err != nil {
+			return err
+		}
+		if step.Settle > 0 {
+			if err := waitContext(ctx, time.Duration(step.Settle)*time.Millisecond); err != nil {
+				return err
+			}
+		}
+		if step.HasUnfloat {
+			if err := d.unfloatOne(ctx, step.Unfloat); err != nil {
+				if errors.Is(err, wm.ErrSpaceFull) {
+					continue
+				}
+				return err
+			}
+		}
+	}
+	return nil
+}
+func (d *Driver) allowBSPStep(ctx context.Context, steps []BspStep, index int) (bool, error) {
+	step := steps[index]
+	if len(step.Args) < 5 || step.Args[3] != "--insert" || step.Args[4] != string(wm.LayoutStack) {
+		return true, nil
+	}
+	anchor, err := strconv.Atoi(step.Args[2])
+	if err != nil {
+		return false, err
+	}
+	windowID := 0
+	if index+1 < len(steps) {
+		windowID = steps[index+1].Unfloat
+	}
+	allowed, err := wm.CanStack(ctx, d, anchor, windowID)
+	if errors.Is(err, wm.ErrSpaceFull) {
+		return false, nil
+	}
+	return allowed, err
 }

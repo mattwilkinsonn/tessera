@@ -9,7 +9,7 @@ import (
 const SpawnReadyUptime = 30 * time.Second
 
 type SpawnHealth interface {
-	ServiceUptime(context.Context) (time.Duration, error)
+	ServiceUptime(ctx context.Context) (time.Duration, error)
 }
 
 type queryFailureKey struct{}
