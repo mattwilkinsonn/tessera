@@ -44,6 +44,8 @@ func TestResolveTempDir(t *testing.T) {
 }
 
 func TestDefaultPathsSignalGuardSharesLockDirectory(t *testing.T) {
+	// A non-/tmp TMPDIR lets Linux CI tell this apart from the old fixed /tmp guard.
+	t.Setenv("TMPDIR", t.TempDir())
 	paths, err := DefaultPaths(t.Context())
 	if err != nil {
 		t.Fatal(err)
