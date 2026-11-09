@@ -122,6 +122,10 @@ func TestCask(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readTestFile(t, out)
+	guard := `system_command("/usr/bin/xattr", args: ["-p", "com.apple.quarantine", path], print_stderr: false).success?`
+	if !bytes.Contains(got, []byte(guard)) {
+		t.Fatal("cask quarantine guard must check success?")
+	}
 	golden := filepath.Join("testdata", "tessera.rb.golden")
 	if *update {
 		if err := os.WriteFile(golden, got, 0o600); err != nil {
@@ -141,6 +145,12 @@ func TestCask(t *testing.T) {
 			}
 		})
 	}
+	t.Run("invalid version without existing cask", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "cask.rb")
+		if err := cask(tar, "not-a-version", "owner/repo", out); err == nil {
+			t.Fatal("expected invalid version error")
+		}
+	})
 }
 
 func TestProvenance(t *testing.T) {

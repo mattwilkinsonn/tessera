@@ -13,6 +13,8 @@ import (
 	"testing"
 )
 
+const recordedCommit = "0123456789abcdef0123456789abcdef01234567"
+
 type fakeSelectAPI struct {
 	replies  map[string][]byte
 	failures map[string]error
@@ -29,11 +31,11 @@ func (f fakeSelectAPI) call(_ context.Context, args ...string) ([]byte, error) {
 	return b, nil
 }
 
-func selectZIP(t *testing.T, sha string) []byte {
+func selectZIP(t *testing.T, sha, commit string) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	z := zip.NewWriter(&b)
-	for name, content := range map[string]string{assetName: "tarball", "provenance.json": fmt.Sprintf(`{"commit":"recorded","sha256":%q}`, sha)} {
+	for name, content := range map[string]string{assetName: "tarball", "provenance.json": fmt.Sprintf(`{"commit":%q,"sha256":%q}`, commit, sha)} {
 		w, err := z.Create(name)
 		if err != nil {
 			t.Fatal(err)
@@ -58,7 +60,7 @@ func TestSelectArtifact(t *testing.T) {
 		{name: "hit", hit: true, artifact: 1},
 		{name: "push hit", hit: true, artifact: 1, change: func(r map[string][]byte, _ map[string]error) {
 			r["run1"] = bytes.Replace(r["run1"], []byte("pull_request"), []byte("push"), 1)
-			r["run1"] = bytes.Replace(r["run1"], []byte(`"head_sha":"head"`), []byte(`"head_sha":"recorded"`), 1)
+			r["run1"] = bytes.Replace(r["run1"], []byte(`"head_sha":"head"`), []byte(`"head_sha":"`+recordedCommit+`"`), 1)
 		}},
 		{name: "no artifacts", change: func(r map[string][]byte, _ map[string]error) { r["list"] = []byte(`{"artifacts":[]}`) }},
 		{name: "failed conclusion", change: func(r map[string][]byte, _ map[string]error) {
@@ -80,6 +82,9 @@ func TestSelectArtifact(t *testing.T) {
 			r["run1"] = bytes.Replace(r["run1"], []byte("pull_request"), []byte("workflow_dispatch"), 1)
 		}},
 		{name: "digest mismatch", change: func(r map[string][]byte, _ map[string]error) { r["badDigest"] = []byte("yes") }},
+		{name: "malformed provenance commit", change: func(r map[string][]byte, _ map[string]error) {
+			r["provenanceCommit"] = []byte("../../x")
+		}},
 		{name: "tree mismatch", change: func(r map[string][]byte, _ map[string]error) {
 			r["commit"] = []byte(`{"tree":{"sha":"other"},"parents":[{"sha":"head"}]}`)
 		}},
@@ -110,9 +115,13 @@ func TestSelectArtifact(t *testing.T) {
 			if _, ok := r["badDigest"]; ok {
 				sha = "bad"
 			}
-			z := selectZIP(t, sha)
+			commit := recordedCommit
+			if malformed, ok := r["provenanceCommit"]; ok {
+				commit = string(malformed)
+			}
+			z := selectZIP(t, sha, commit)
 			base := "repos/owner/repo"
-			f := fakeSelectAPI{replies: map[string][]byte{base: []byte(`{"id":7}`), base + "/actions/artifacts?name=tess-darwin-arm64-tree&per_page=100&page=1": r["list"], base + "/actions/runs/1": r["run1"], base + "/actions/runs/2": r["run1"], base + "/actions/artifacts/1/zip": z, base + "/actions/artifacts/2/zip": z, base + "/git/commits/recorded": r["commit"]}, failures: map[string]error{}}
+			f := fakeSelectAPI{replies: map[string][]byte{base: []byte(`{"id":7}`), base + "/actions/artifacts?name=tess-darwin-arm64-tree&per_page=100&page=1": r["list"], base + "/actions/runs/1": r["run1"], base + "/actions/runs/2": r["run1"], base + "/actions/artifacts/1/zip": z, base + "/actions/artifacts/2/zip": z, base + "/git/commits/" + recordedCommit: r["commit"]}, failures: map[string]error{}}
 			if err := e["zip1"]; err != nil {
 				f.failures[base+"/actions/artifacts/1/zip"] = err
 			}

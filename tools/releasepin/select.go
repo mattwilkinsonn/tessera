@@ -9,10 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
+
+var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type artifact struct {
 	ID      int64     `json:"id"`
@@ -195,7 +198,7 @@ func artifactContents(ctx context.Context, gh api, base, dest string, id int64) 
 			provenance = b
 		}
 	}
-	if tar == nil || json.Unmarshal(provenance, &p) != nil || p.Commit == "" || !strings.EqualFold(p.SHA256, digest(tar)) {
+	if tar == nil || json.Unmarshal(provenance, &p) != nil || !commitSHA.MatchString(p.Commit) || !strings.EqualFold(p.SHA256, digest(tar)) {
 		return nil, p, false
 	}
 	return tar, p, true

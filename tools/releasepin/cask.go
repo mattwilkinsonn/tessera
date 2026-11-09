@@ -94,6 +94,9 @@ func cask(tar, version, repo, dest string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if _, err := compareVersion(version, "0.0.0"); err != nil {
+		return err
+	}
 	if len(old) > 0 {
 		m := versionLine.FindSubmatch(old)
 		if len(m) != 2 {
@@ -106,9 +109,6 @@ func cask(tar, version, repo, dest string) error {
 		if cmp >= 0 {
 			return errNoChange
 		}
-	}
-	if _, err := compareVersion(version, version); err != nil {
-		return err
 	}
 	b, err := os.ReadFile(tar) //nolint:gosec // The tarball path is supplied by the CLI caller.
 	if err != nil {
@@ -128,8 +128,9 @@ func cask(tar, version, repo, dest string) error {
 
   postflight do
     path = "#{staged_path}/bin/tess"
+    # A Result object is always truthy, so the guard must test success?.
     system_command! "/usr/bin/xattr", args: ["-d", "com.apple.quarantine", path] if
-      system_command "/usr/bin/xattr", args: ["-p", "com.apple.quarantine", path], print_stderr: false
+      system_command("/usr/bin/xattr", args: ["-p", "com.apple.quarantine", path], print_stderr: false).success?
   end
 
   caveats "This binary is ad-hoc signed, not notarized. Removing quarantine bypasses macOS security protections."
