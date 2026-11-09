@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec" //nolint:depguard // yabai requires subprocess execution.
 	"strconv"
 	"strings"
@@ -509,28 +510,33 @@ func (d *Driver) resolveIndex(ctx context.Context, id wm.SpaceID) (int, bool, er
 }
 
 func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
+	_, err := d.unfloatOneConsumed(ctx, windowID)
+	return err
+}
+
+func (d *Driver) unfloatOneConsumed(ctx context.Context, windowID int) (bool, error) {
 	var raw RawYabaiWindow
 	found, err := d.queryOrNull(ctx, QueryWindowArgs(windowID), &raw)
 	if err != nil || !found || !raw.IsFloating {
-		return err
+		return false, err
 	}
 	var spaces []RawYabaiSpace
 	if err := d.query(ctx, QuerySpacesArgs(), &spaces); err != nil {
-		return err
+		return false, err
 	}
 	space := IndexToSpaceID(spaces)[raw.Space]
 	allowed, err := wm.CanAddToSpace(ctx, d, space, windowID)
 	if err != nil || !allowed {
-		return err
+		return false, err
 	}
 	// yabai tiles an unfloated window on the active space, not necessarily
 	// the space assigned by --space. Focus it before rebuilding that tree.
 	focused, err := d.FocusWindow(ctx, windowID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !focused {
-		return fmt.Errorf("focusing window %d before unfloat", windowID)
+		return false, fmt.Errorf("focusing window %d before unfloat", windowID)
 	}
 	// Focusing a window switches spaces asynchronously.
 	timeout, poll := d.unfloatFocusTimeout, d.unfloatFocusPoll
@@ -562,22 +568,26 @@ func (d *Driver) unfloatOne(ctx context.Context, windowID int) error {
 			err = wait(waitCtx, poll)
 		} else if ctx.Err() == nil && waitCtx.Err() == nil {
 			wm.MarkQueryFailed(ctx)
-			return err
+			return false, err
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return false, ctx.Err()
 			}
 			if lastFailed {
 				wm.MarkQueryFailed(ctx)
 			}
-			return fmt.Errorf("window %d did not activate target space %s before unfloat", windowID, space)
+			return false, fmt.Errorf("window %d did not activate target space %s before unfloat", windowID, space)
 		}
 	}
-	if _, _, err := d.run(ctx, ToggleFloatArgs(windowID)); err != nil {
-		return err
+	_, code, err := d.run(ctx, ToggleFloatArgs(windowID))
+	if err != nil {
+		return false, err
 	}
-	return waitContext(ctx, 150*time.Millisecond)
+	if code != 0 {
+		return false, fmt.Errorf("unfloating window %d: yabai exited %d", windowID, code)
+	}
+	return true, waitContext(ctx, 150*time.Millisecond)
 }
 func (d *Driver) realizeStack(ctx context.Context, id wm.SpaceID, index int, target wm.SpaceLayoutTarget) error {
 	for _, track := range target.Tracks {
@@ -611,7 +621,25 @@ func (d *Driver) realizeStack(ctx context.Context, id wm.SpaceID, index int, tar
 	}
 	return nil
 }
-func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) error {
+func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error) {
+	var pending []string
+	clearPending := func() {
+		if pending == nil {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		_, code, err := d.run(cleanupCtx, pending)
+		if err != nil || code != 0 {
+			slog.Warn("clearing pending yabai insert", "anchor", pending[2], "direction", pending[4], "exit_code", code, "error", err)
+		}
+		pending = nil
+	}
+	defer func() {
+		if result != nil {
+			clearPending()
+		}
+	}()
 	for i := 0; i < len(steps); i++ {
 		step := steps[i]
 		allowed, err := d.allowBSPStep(ctx, steps, i)
@@ -622,8 +650,15 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) error {
 			i++
 			continue
 		}
-		if _, _, err := d.run(ctx, step.Args); err != nil {
+		_, code, err := d.run(ctx, step.Args)
+		if err != nil {
 			return err
+		}
+		if code != 0 {
+			return fmt.Errorf("running yabai %s: exit %d", strings.Join(step.Args, " "), code)
+		}
+		if len(step.Args) >= 5 && step.Args[3] == insertArg {
+			pending = step.Args
 		}
 		if step.Settle > 0 {
 			if err := waitContext(ctx, time.Duration(step.Settle)*time.Millisecond); err != nil {
@@ -631,19 +666,25 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) error {
 			}
 		}
 		if step.HasUnfloat {
-			if err := d.unfloatOne(ctx, step.Unfloat); err != nil {
+			consumed, err := d.unfloatOneConsumed(ctx, step.Unfloat)
+			if consumed {
+				pending = nil
+			}
+			if err != nil {
 				if errors.Is(err, wm.ErrSpaceFull) {
+					clearPending()
 					continue
 				}
 				return err
 			}
+			pending = nil
 		}
 	}
 	return nil
 }
 func (d *Driver) allowBSPStep(ctx context.Context, steps []BspStep, index int) (bool, error) {
 	step := steps[index]
-	if len(step.Args) < 5 || step.Args[3] != "--insert" || step.Args[4] != string(wm.LayoutStack) {
+	if len(step.Args) < 5 || step.Args[3] != insertArg || step.Args[4] != string(wm.LayoutStack) {
 		return true, nil
 	}
 	anchor, err := strconv.Atoi(step.Args[2])
