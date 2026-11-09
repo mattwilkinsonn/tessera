@@ -23,7 +23,10 @@ func ReadStagedWindows(path string) (map[int]engine.StagedWindow, error) {
 		return nil, fmt.Errorf("reading staged windows: %w", err)
 	}
 	if err := json.Unmarshal(data, &staged); err != nil {
-		slog.Warn("ignoring corrupt staged windows", "path", path, "error", err)
+		if renameErr := os.Rename(path, path+".corrupt"); renameErr != nil {
+			return nil, fmt.Errorf("preserving corrupt staged windows: %w", renameErr)
+		}
+		slog.Error("preserved corrupt staged windows", "path", path, "error", err)
 		return make(map[int]engine.StagedWindow), nil
 	}
 	return staged, nil

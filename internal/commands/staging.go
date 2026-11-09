@@ -105,7 +105,7 @@ func (s *stagingPlan) before(ctx context.Context, driver wm.Driver, op engine.Op
 	if err != nil {
 		return fmt.Errorf("querying staged window %d: %w", float.WindowID, err)
 	}
-	if !found {
+	if !found || window.Floating {
 		return nil
 	}
 	s.staged[float.WindowID] = engine.StagedWindow{App: window.App, Title: window.Title}
@@ -124,6 +124,7 @@ func (s *stagingPlan) prune(windows []wm.Window) error {
 		}
 	}
 	changed := false
+	// macOS window IDs are not reused within a login session; app matching guards the rare case.
 	for id, ref := range s.staged {
 		if app, exists := floating[id]; !exists || app != ref.App {
 			delete(s.staged, id)

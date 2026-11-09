@@ -242,3 +242,58 @@ func TestReusedStagedIDRemainsUserFloating(t *testing.T) {
 		t.Fatalf("reused ID retained: %v, %v", ledger, err)
 	}
 }
+
+func TestBeforeSkipsAlreadyFloating(t *testing.T) {
+	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}, Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 1, Floating: true}}})
+	path := filepath.Join(t.TempDir(), "staged.json")
+	plan := stagingPlan{path: path, staged: make(map[int]engine.StagedWindow), attempted: make(map[int]struct{})}
+	if err := plan.before(t.Context(), driver, engine.FloatWindowOp{WindowID: 1, Staging: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.staged) != 0 || len(plan.attempted) != 0 {
+		t.Fatal("preexisting float was staged")
+	}
+	plan.rollback(t.Context(), driver)
+	window, found, err := driver.QueryWindow(t.Context(), 1)
+	if err != nil || !found || !window.Floating {
+		t.Fatalf("preexisting float changed: %+v %v", window, err)
+	}
+}
+
+func TestRecoverStagedWindowWithChangedTitle(t *testing.T) {
+	driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}}, Windows: []fake.SeedWindow{{ID: 1, App: "Arc", Title: "new", SpaceIndex: 1, Floating: true}}})
+	windows, err := driver.QueryWindows(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := stagingPlan{staged: map[int]engine.StagedWindow{1: {App: "Arc", Title: "old"}}}
+	if err := plan.recoverLaptop(t.Context(), driver, windows); err != nil {
+		t.Fatal(err)
+	}
+	window, found, err := driver.QueryWindow(t.Context(), 1)
+	if err != nil || !found || window.Floating {
+		t.Fatalf("window not recovered: %+v %v", window, err)
+	}
+}
+
+func TestStagedRecoveryUsesCurrentSpace(t *testing.T) {
+	for _, rollback := range []bool{false, true} {
+		t.Run(map[bool]string{false: "recovery", true: "rollback"}[rollback], func(t *testing.T) {
+			driver := fake.New(fake.Seed{Displays: []fake.SeedDisplay{{Idx: 1}}, Spaces: []fake.SeedSpace{{DisplayIdx: 1}, {DisplayIdx: 1}}, Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 2, Floating: true}}})
+			plan := stagingPlan{path: filepath.Join(t.TempDir(), "staged.json"), staged: map[int]engine.StagedWindow{1: {App: "Arc"}}, attempted: map[int]struct{}{1: {}}}
+			windows, err := driver.QueryWindows(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rollback {
+				plan.rollback(t.Context(), driver)
+			} else if err := plan.recoverLaptop(t.Context(), driver, windows); err != nil {
+				t.Fatal(err)
+			}
+			window, found, err := driver.QueryWindow(t.Context(), 1)
+			if err != nil || !found || window.Floating || window.SpaceID != "2" {
+				t.Fatalf("window moved or not tiled: %+v %v", window, err)
+			}
+		})
+	}
+}
