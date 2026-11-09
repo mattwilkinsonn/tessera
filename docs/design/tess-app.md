@@ -5,124 +5,30 @@
 [`windows-backend/design.md`](windows-backend/design.md) and the in-flight
 `release-binaries.md` (tessera PR #69). It edits no frozen record.*
 
-## Open Questions
+## Decisions
 
-Each question stands alone. Q1 depends on Q5. The others are independent.
-Q5 and Q6 are load-bearing: a different answer changes the plan.
+Matt ruled on PR #71 on 2026-11-08 and took the recommended option for
+each question. The plan below states the chosen path.
 
-1. **UI framework, and the adoption rule** (depends on Q5). The app needs
-   a grid window per display, a menu-bar or tray icon, and a path to
-   Windows and Linux. § *Framework* has the evidence. The rule in
-   `go-port/design.md` § Global Constraints is "pkg.go.dev lists at least
-   1,000 known importers". The counts below are pkg.go.dev "known importing
-   packages" for the named package, measured 2026-11-08.
-   - (a) **Wails v3.1.0.** It has every macOS feature the overlay needs,
-     including `CollectionBehavior: CanJoinAllSpaces`, `WindowLevel` and
-     non-activating panels. It fails the rule: `v3/pkg/application` has
-     189 importers. v3.0.0 shipped on 2026-10-26, after nearly four years
-     of alpha and beta.
-   - (b) **Wails v2.17.1.** It also fails the rule: the module root has
-     571 importers. It has one window per app, no tray, no global shortcuts
-     and no macOS collection behaviour, so a per-display grid is not
-     possible.
-   - (c) **Fyne v2.8.2.** It passes the rule: `fyne.io/fyne/v2` has 3,707
-     importers, and fyne-io/terminal and rymdport pin it. It has a tray and
-     `RequestAlwaysOnTop`, but no Spaces behaviour, no transparency and no
-     global shortcuts.
-
-   **Recommendation: (a), with a recorded waiver of the importer rule.**
-   Fyne is the only option that passes, and it cannot show a window on
-   every Space. The Wails maintainers have shipped since 2018, and v3 has a
-   weekly release cadence. The app is a separate module (§ *Module
-   boundary*), so a later framework swap touches only `app/`. If Q5 is (b),
-   this choice also needs the Linux feasibility gate in Q5.
-
-2. **Grid shape for hotkey navigation.** GridLion lays Spaces out as a 2D
-   grid. tess must pick one shape for both the app and `tess space-focus`.
-   - (a) **One row per display.** East and west move along a display's
-     Spaces. North and south move to the display above or below, by frame
-     position. Simple, but the laptop can hold 10 or more `lap-*` Spaces,
-     so a row gets long.
-   - (b) **A per-display grid that wraps at `grid.columns`.** East and west
-     move within a row. North and south move between rows. At an edge, the
-     move crosses to the physically adjacent display and lands on its
-     visible Space. Without `grid.columns`, a display uses one row, so (b)
-     degrades to (a).
-   - (c) **A grid declared cell by cell in the profile.** Full control, but
-     every new flex Space needs a profile edit, which defeats flex.
-
-   **Recommendation: (b).** It keeps desk displays as one short row and
-   wraps the long laptop row, with one optional profile field.
-
-3. **Where the editor writes.** Matt's `~/.config/tessera/profile.cue` is
-   a home-manager symlink into the read-only nix store, so the app cannot
-   write it.
-   - (a) **Make the deployed file a live link to the repo copy.** Matt's
-     home-manager config uses `mkOutOfStoreSymlink` to point the profile at
-     the working-copy file. The app edits that file in place, tess reloads
-     it at once, and Matt commits the diff. One downstream line.
-   - (b) **The app writes to a separate source path** set in the app's
-     settings. tess still reads the store copy, so an edit takes effect
-     only after a commit and `nix-switch`.
-   - (c) **The app exports a patch** to the clipboard. No write path at all,
-     and no live preview.
-
-   **Recommendation: (a).** It is the only option where "edit, see the
-   layout change, commit" works without a rebuild.
-
-4. **Show the grid briefly on every hotkey move.** GridLion flashes the
-   grid when you switch. (a) Yes: `tess space-focus` asks the app to show a
-   0.6 s passive HUD on the target display. The HUD never takes keyboard
-   focus (§ *App shape*). (b) No: the grid shows only on its own hotkey or
-   tray click. **Recommendation: (a).** It shows where you landed in the
-   grid, which is the point of grid navigation.
-
-5. **What the app promises on each platform.** *Load-bearing.* Wails gives
-   a portable window API, but "shown on every workspace, above fullscreen,
-   without taking focus" is a per-OS property. macOS has it through
-   `CollectionBehavior` and non-activating `NSPanel`. Windows has
-   `HWND_TOPMOST`, and komorebi workspaces are not Windows virtual desktops:
-   komorebi hides the windows of an unfocused workspace, so a topmost window
-   it does not manage stays visible on every komorebi workspace
-   [INFERENCE: W8-style live check needed]. On Linux Wayland an app cannot
-   place its own window; per-display overlays need the
-   `wlr-layer-shell` protocol, which Wails does not expose.
-   § *Platform capabilities* has the matrix.
-   - (a) **Portable core, per-OS overlay.** Every platform gets the grid,
-     click-to-switch and the editor in a normal window per display. The
-     passive HUD and the "visible over every workspace" picker are
-     per-platform capabilities: macOS in P1, Windows when its backend
-     ships, Linux only where the compositor allows it. Where a capability
-     is missing, the grid opens as a normal window.
-   - (b) **Overlay parity everywhere.** Every target OS must have the
-     per-display, all-workspace, non-activating overlay. Before the
-     framework freezes, a Linux feasibility gate must pick a compositor
-     scope (for example wlroots and KDE with layer-shell) and prove it,
-     which may rule out Wails on Linux.
-
-   **Recommendation: (a).** Navigation already works with no app
-   (`tess space-focus`), so the overlay is a convenience, and Linux has no
-   backend yet. (a) ships macOS now and keeps every promise checkable.
-
-6. **Which arrangement the editor edits.** *Load-bearing.* The engine lays
-   out `topologies[i].desk` when the connected displays match a topology,
-   and the root `desk` otherwise (`ResolveDesk` in
-   `internal/engine/matcher.go`). An edit to the root `desk` while a
-   topology is active is valid CUE but changes nothing on screen.
-   - (a) **The active arrangement only.** The editor opens what the engine
-     applies now, names it ("topology g9-laptop" or "default desk"), and
-     edits only that. Simple, but you cannot edit the desk layout from the
-     laptop.
-   - (b) **A selector over every arrangement**, defaulting to the active
-     one. Every topology and the root desk are editable. An edit to an
-     inactive arrangement saves, and the editor says it is not on screen
-     now.
-   - (c) **The root desk only.** Matches the first draft. Topology layouts
-     stay hand-edited.
-
-   **Recommendation: (b).** Matt's profile has four topologies plus the
-   root desk, and he edits the desk layout while away from the desk. The
-   default keeps the common case one click.
+- **UI framework: Wails v3.1.0, with a recorded waiver of the
+  1,000-importer rule.** Matt, 2026-11-08, PR #71. Fyne is the only option
+  that passes the rule, and it cannot show a window on every Space.
+- **Grid shape: a per-display grid that wraps at optional `grid.columns`.**
+  Matt, 2026-11-08, PR #71. Desk displays stay one short row, and the long
+  laptop row wraps. Without `grid.columns`, a display uses one row.
+- **Profile writes: `mkOutOfStoreSymlink` the deployed profile to the repo
+  working copy.** Matt, 2026-11-08, PR #71. It is the only option where
+  "edit, see the layout change, commit" works without a rebuild.
+- **Hotkey HUD: every `tess space-focus` shows a 0.6 s passive HUD on the
+  target display.** Matt, 2026-11-08, PR #71. It shows where you landed in
+  the grid, which is the point of grid navigation.
+- **Platform overlay: portable core, per-OS overlay.** Matt, 2026-11-08,
+  PR #71. Navigation already works with no app, so the overlay is a
+  convenience. No Linux feasibility gate is needed; Linux gets the
+  normal-window fallback.
+- **Editor arrangement: a selector over every arrangement, defaulting to
+  the active one.** Matt, 2026-11-08, PR #71. Matt edits the desk layout
+  away from the desk, and the default keeps the common case one click.
 
 ## Direction
 
@@ -137,7 +43,7 @@ Q5 and Q6 are load-bearing: a different answer changes the plan.
 - **Scope across repos.** tessera: a new `app/` module, a state stream in
   the daemon, a `space-focus` command, a profile editor package, and a
   flake output. Matt's nix config: the app package, a launchd agent, skhd
-  binds, and the profile link from Q3. These are downstream only.
+  binds, and the `mkOutOfStoreSymlink` profile link. These are downstream only.
 - **Prior art.**
   - [GridLion](https://gridlion.hopefullyuseful.com/): a menu-bar app with
     a hotkey grid over Spaces. Borrow: the 2D grid, arrow-key moves, and
@@ -168,7 +74,7 @@ icons, and switch Space on click or hotkey. Later, edit desk tracks,
 `laptopPinned` and `deskSlots` in the app and write them back to the CUE
 profile. The grid must reflect every change that tess or the WM reports
 (§ *Freshness*), and the grid, switching and editor must run on macOS,
-Windows and Linux (overlay behaviour per Q5).
+Windows and Linux (overlay behaviour per platform, § *Platform capabilities*).
 
 ## Approach
 
@@ -298,7 +204,7 @@ daemon too old" and disables actions.
 ### Grid navigation lives in the engine and the CLI
 
 Grid layout is pure: `engine.SpaceGrid(profile, world) Grid` assigns each
-Space a display, row and column (Q2 (b)). `engine.GridNeighbor(world,
+Space a display, row and column. `engine.GridNeighbor(world,
 grid, from, dir)` returns the target Space. The daemon puts the same grid
 positions into each `state` frame, so the app draws exactly the grid the
 hotkeys move through.
@@ -359,8 +265,7 @@ Sources: [Wails v3.0.0 release](https://github.com/wailsapp/wails/releases/tag/v
 [Gio `app`](https://pkg.go.dev/gioui.org/app), and the module proxy for
 release dates.
 
-- **Wails v3 (recommended, Q1).** The release notes list "multiple
-  windows", "System tray", "global shortcuts" and "Windows … macOS … and
+- **Wails v3 (chosen).** The release notes list "multiple windows", "System tray", "global shortcuts" and "Windows … macOS … and
   Linux". On macOS the window options cover the overlay: `WindowLevel`,
   `CollectionBehavior: CanJoinAllSpaces | FullScreenAuxiliary`, and
   `WindowClass: MacWindowClassPanel` with `PanelPreferences.NonActivating`
@@ -389,7 +294,7 @@ release dates.
 ### Platform capabilities
 
 A portable window API does not make overlay behaviour portable. P1 ships
-macOS only. The Windows and Linux columns are what Q5 (a) would promise.
+macOS only. The Windows and Linux columns are what the per-OS overlay promises.
 
 | Capability | macOS (yabai) | Windows (komorebi) | Linux X11 | Linux Wayland |
 | --- | --- | --- | --- | --- |
@@ -479,8 +384,7 @@ the editor needs one.
 
 ### Profile editing (P2)
 
-`internal/config/edit` edits the CUE source and keeps comments. The
-edited arrangement follows Q6; the text below assumes Q6 (b).
+`internal/config/edit` edits the CUE source and keeps comments.
 
 1. **One AST.** Parse with `parser.ParseFile(path, src,
    parser.ParseComments)`, then evaluate that same `*ast.File` with
@@ -598,7 +502,7 @@ tested, no release job compiles, and signing stays ad-hoc.
 - **Commands.** The app runs `tess` subcommands. It never mutates the WM
   any other way.
 - **Platform.** P1 ships `aarch64-darwin` only. Overlay behaviour is per
-  platform (§ *Platform capabilities*, Q5). Platform code sits behind
+  platform (§ *Platform capabilities*). Platform code sits behind
   `//go:build darwin` files with a letter-tile icon and a normal-window
   fallback elsewhere.
 - **No TCC prompts.** The app needs no Accessibility, Screen Recording or
@@ -615,7 +519,7 @@ tested, no release job compiles, and signing stays ad-hoc.
 
 Each task is one commit with its tests. A1–A3 are pure tess changes and
 ship value with no app. A4 needs A3. A5 needs A4 and PR #69. P2 (B1–B3)
-needs P1 and the answer to Q6.
+needs P1.
 
 ### A1 — wm: focus and visibility fields, `FocusSpace`
 
@@ -664,8 +568,7 @@ Interfaces:
   …)`; the CLI kind `space-focus` with choices `north|south|east|west` or a
   Space ID. It snapshots, computes the grid, calls `FocusSpace`, maps the
   result to the exit codes in § *Grid navigation*, and on `FocusChanged`
-  or `FocusAlready` sends `ui flash <space-id>` to the daemon when Q4 is
-  (a), ignoring a missing daemon.
+  or `FocusAlready` sends `ui flash <space-id>` to the daemon, ignoring a missing daemon.
 
 Gate: table tests over the three-display fixture
 (`profile.three-displays.cue`, `displays.three-displays.json`) cover every
@@ -873,7 +776,7 @@ changes the layout that the next wake applies (fake driver).
 ### B3 — editor UI
 
 Interfaces: an `Edit layout` window with an arrangement selector
-(per Q6), defaulting to `State.Arrangement`; one column per display
+covering every arrangement, defaulting to `State.Arrangement`; one column per display
 listing that arrangement's desk tracks, plus lists for `deskSlots` and
 `laptopPinned`; drag to reorder; a window-name picker from
 `profile.windows`; an "also changes: …" note from `Shared`; read-only
@@ -885,8 +788,7 @@ now"; `jj diff` of the profile shows only the edited lines.
 
 ## Not taken
 
-Every critic finding was applied. Two are forks left to Matt: F1 is Q5
-and F6 is Q6. One part of F3 is accepted as a known race instead of
+Every critic finding was applied. Matt ruled on the two open forks, overlay scope and editor arrangement (§ *Decisions*). One part of F3 is accepted as a known race instead of
 fixed: a hotkey `space-focus` during a rebuild can be undone by the
 rebuild's focus restore (§ *Snapshot consistency*). Blocking the hotkey on
 busy would make a hotkey wait up to `CascadeTimeout`.
@@ -900,5 +802,5 @@ busy would make a hotkey wait up to `CascadeTimeout`.
 - [ ] A5 — tested app artifact, no-nix smoke job, release zip, pin, `app` and `app-prebuilt` outputs, `tessera-app` cask
 - [ ] B1 — `internal/config/edit`: one AST, AST ownership and reverse uses, comment-preserving edits, validation, atomic save
 - [ ] B2 — daemon reloads the profile on wake
-- [ ] B3 — layout editor UI with arrangement selector (per Q6)
-- [ ] Downstream (Matt's config) — skhd binds for `space-focus` and `grid`, the app agent, the profile link per Q3, and removing GridLion
+- [ ] B3 — layout editor UI with arrangement selector over every arrangement
+- [ ] Downstream (Matt's config) — skhd binds for `space-focus` and `grid`, the app agent, the `mkOutOfStoreSymlink` profile link, and removing GridLion
