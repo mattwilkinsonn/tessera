@@ -281,8 +281,8 @@ func mutateWindow(args []string) error {
 			if err != nil {
 				return err
 			}
-			if armPath != "" && window["is-floating"] == false && window["space"] != float64(space) {
-				if err := os.WriteFile(armPath, nil, 0600); err != nil {
+			if armPath != "" && manageable(window) && window["space"] != float64(space) {
+				if err := consumeArm(armPath, windows, float64(space)); err != nil {
 					return err
 				}
 			}
@@ -312,6 +312,11 @@ func mutateWindow(args []string) error {
 						if space["has-focus"] == true {
 							window["space"] = space["index"]
 							window["display"] = space["display"]
+							if armPath != "" {
+								if err := consumeArm(armPath, windows, space["index"]); err != nil {
+									return err
+								}
+							}
 							break
 						}
 					}
@@ -324,6 +329,37 @@ func mutateWindow(args []string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+func manageable(window map[string]any) bool {
+	return window["root-window"] == true && window["is-floating"] == false &&
+		window["is-sticky"] == false && window["is-minimized"] == false && window["is-hidden"] == false &&
+		window["role"] == "AXWindow" && window["subrole"] == "AXStandardWindow" &&
+		window["level"] == float64(0) && window["can-move"] == true
+}
+
+func consumeArm(path string, windows []map[string]any, space any) error {
+	arm, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	parts := strings.SplitN(string(arm), ":", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	id, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return err
+	}
+	for _, window := range windows {
+		if window["id"] == float64(id) && window["space"] == space {
+			return os.WriteFile(path, nil, 0600)
+		}
+	}
+	return nil
 }
 
 func focusWindow(value string) error {

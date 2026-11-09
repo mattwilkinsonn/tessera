@@ -686,7 +686,7 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error)
 			if err != nil {
 				return err
 			}
-			pending = nil
+			clearPending()
 		}
 	}
 	return nil
@@ -704,10 +704,14 @@ func pendingAfterStep(pending *insertArm, args []string) (*insertArm, error) {
 }
 
 func (d *Driver) moveConsumesPending(ctx context.Context, step BspStep, pending *insertArm) (bool, error) {
-	if pending == nil || !step.HasUnfloat || len(step.Args) < 5 || step.Args[3] != "--space" {
+	if pending == nil || !step.HasUnfloat {
 		return false, nil
 	}
-	return d.moveConsumesInsert(ctx, step)
+	destination, ok, err := moveSpaceDestination(step.Args)
+	if err != nil || !ok {
+		return false, err
+	}
+	return d.moveConsumesInsert(ctx, step.Unfloat, destination)
 }
 
 func (d *Driver) clearInsert(ctx context.Context, arm *insertArm) {
@@ -730,16 +734,34 @@ func nextArmsWindow(steps []BspStep, index, windowID int) bool {
 	return len(args) >= 5 && args[3] == insertArg && args[2] == strconv.Itoa(windowID)
 }
 
-func (d *Driver) moveConsumesInsert(ctx context.Context, step BspStep) (bool, error) {
-	var moving RawYabaiWindow
-	if err := d.query(ctx, QueryWindowArgs(step.Unfloat), &moving); err != nil {
+func moveSpaceDestination(args []string) (int, bool, error) {
+	if len(args) != 5 || args[0] != "-m" || args[1] != windowMode || args[3] != "--space" {
+		return 0, false, nil
+	}
+	destination, err := strconv.Atoi(args[4])
+	return destination, true, err
+}
+
+func (d *Driver) moveConsumesInsert(ctx context.Context, windowID, destination int) (bool, error) {
+	var moving struct {
+		Space     int    `json:"space"`
+		Root      *bool  `json:"root-window"`
+		Floating  *bool  `json:"is-floating"`
+		Sticky    *bool  `json:"is-sticky"`
+		Minimized *bool  `json:"is-minimized"`
+		Hidden    *bool  `json:"is-hidden"`
+		Role      string `json:"role"`
+		Subrole   string `json:"subrole"`
+		Level     *int   `json:"level"`
+		CanMove   *bool  `json:"can-move"`
+	}
+	if err := d.query(ctx, QueryWindowArgs(windowID), &moving); err != nil {
 		return false, err
 	}
-	destination, err := strconv.Atoi(step.Args[4])
-	if err != nil {
-		return false, err
+	if moving.Root == nil || moving.Floating == nil || moving.Sticky == nil || moving.Minimized == nil || moving.Hidden == nil || moving.Level == nil || moving.CanMove == nil {
+		return false, nil
 	}
-	return !moving.IsFloating && moving.Space != destination, nil
+	return moving.Space != destination && *moving.Root && !*moving.Floating && !*moving.Sticky && !*moving.Minimized && !*moving.Hidden && moving.Role == "AXWindow" && moving.Subrole == "AXStandardWindow" && *moving.Level == 0 && *moving.CanMove, nil
 }
 func (d *Driver) allowBSPStep(ctx context.Context, steps []BspStep, index int) (bool, error) {
 	step := steps[index]
