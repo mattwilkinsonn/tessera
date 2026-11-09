@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mattwilkinsonn/tessera/internal/config"
@@ -31,15 +32,25 @@ func TestWakeRetriesHeldSpawns(t *testing.T) {
 	defer listener.Close()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		wake := WakeRoutine(profile, driver, env, sock)
+		start := time.Now()
+		for range 3 {
+			if err := wake(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if time.Now() != start {
+			t.Fatal("held wakes waited for the retry delay")
+		}
+	})
 	wake := WakeRoutine(profile, driver, env, sock)
-	start := time.Now()
 	for range 3 {
 		if err := wake(ctx); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if elapsed := time.Since(start); elapsed > 400*time.Millisecond {
-		t.Fatalf("held wakes blocked for %s", elapsed)
 	}
 	if len(driver.SpawnCalls) != 0 {
 		t.Fatal("spawned before yabai was stable")
