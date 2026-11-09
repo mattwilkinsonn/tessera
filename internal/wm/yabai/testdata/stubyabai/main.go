@@ -288,7 +288,7 @@ func mutateWindow(args []string) error {
 			}
 			if window["space"] != float64(space) {
 				window["split-child"] = "none"
-				if window["is-floating"] == false && window["is-sticky"] != true && window["is-minimized"] != true && window["is-hidden"] != true && (window["manage"] == true || window["root-window"] == true && window["role"] == "AXWindow" && window["subrole"] == "AXStandardWindow" && window["level"] == float64(0) && window["can-move"] == true) {
+				if window["is-floating"] == false && window["is-sticky"] != true && window["is-minimized"] != true && window["is-hidden"] != true && (os.Getenv("TESS_YABAI_RULE_MANAGED") == args[2] || window["root-window"] == true && window["role"] == "AXWindow" && window["subrole"] == "AXStandardWindow" && window["level"] == float64(0) && window["can-move"] == true) {
 					window["split-child"] = "first_child"
 					if armPath != "" {
 						if err := consumeArm(armPath, windows, float64(space)); err != nil {

@@ -744,6 +744,8 @@ func (d *Driver) moveAfter(ctx context.Context, id int, moved bool) (bool, error
 func (d *Driver) pendingAfterMove(ctx context.Context, id int, moved bool, pending **insertArm) error {
 	consumed, err := d.moveAfter(ctx, id, moved)
 	if err != nil {
+		// No query exposes insert_dir: toggling may re-arm a consumed node.
+		// A live overlay left behind is consumed by the next apply's arm/unfloat.
 		slog.Warn("unknown yabai insert state after move", "error", err)
 		*pending = nil
 		return err

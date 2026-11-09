@@ -670,7 +670,8 @@ func TestRealizeBSPUnmanageableMoveClearsArm(t *testing.T) {
 
 func TestRealizeBSPRuleManagedMoveConsumesArm(t *testing.T) {
 	driver, log := unfloatSafetyDriver(t)
-	windows := `[{"id":210,"space":2,"is-floating":false},{"id":211,"space":3,"root-window":true,"is-floating":false,"role":"AXDialog","manage":true}]`
+	t.Setenv("TESS_YABAI_RULE_MANAGED", "211")
+	windows := `[{"id":210,"space":2,"is-floating":false},{"id":211,"space":3,"root-window":true,"is-floating":false,"role":"AXDialog"}]`
 	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), []byte(windows), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -684,6 +685,32 @@ func TestRealizeBSPRuleManagedMoveConsumesArm(t *testing.T) {
 	}
 	if got := strings.Count(string(data), "--insert\n"); got != 1 {
 		t.Errorf("insert count = %d, want 1", got)
+	}
+}
+
+func TestRealizeBSPStackMoveConsumesArm(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	windows := `[{"id":210,"space":2,"has-ax-reference":true,"is-floating":false},{"id":211,"space":3,"has-ax-reference":true,"root-window":true,"is-floating":false,"role":"AXWindow","subrole":"AXStandardWindow","level":0,"can-move":true}]`
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), []byte(windows), 0600); err != nil {
+		t.Fatal(err)
+	}
+	steps := []BspStep{{Args: ArmInsertArgs(210, "stack")}, {Args: MoveWindowToSpaceArgs(211, 2), Unfloat: 211, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 1 {
+		t.Errorf("insert count = %d, want 1", got)
+	}
+	state, err := os.ReadFile(os.Getenv("TESS_YABAI_ARM"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state) != 0 {
+		t.Errorf("arm remains set: %s", state)
 	}
 }
 
