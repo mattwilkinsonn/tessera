@@ -1,0 +1,20 @@
+cask "tessera" do
+  version "1.2.3"
+  sha256 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+  url "https://github.com/owner/repo/releases/download/v#{version}/tess-darwin-arm64.tar.gz"
+  name "Tessera"
+  desc "Portable window manager configuration"
+  homepage "https://github.com/owner/repo"
+
+  depends_on arch: :arm64
+  binary "bin/tess"
+
+  postflight do
+    path = "#{staged_path}/bin/tess"
+    system_command! "/usr/bin/xattr", args: ["-d", "com.apple.quarantine", path] if
+      system_command "/usr/bin/xattr", args: ["-p", "com.apple.quarantine", path], print_stderr: false
+  end
+
+  caveats "This binary is ad-hoc signed, not notarized. Removing quarantine bypasses macOS security protections."
+end
