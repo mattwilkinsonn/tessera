@@ -8,7 +8,7 @@ name: ci
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -106,20 +106,74 @@ jobs:
     # the Go quality gate.
     runs-on: macos-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      tree: ${{ steps.key.outputs.tree }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Compute tree key
+        id: key
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.3"
+
+      - name: Build releasepin
+        run: go build -o "$RUNNER_TEMP/releasepin" ./tools/releasepin
+
+      - name: Reuse artifact
+        id: reuse
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          TREE: ${{ steps.key.outputs.tree }}
+        run: '"$RUNNER_TEMP/releasepin" select -repo "$GITHUB_REPOSITORY" -tree "$TREE" -commit "$GITHUB_SHA" -out "$RUNNER_TEMP/out" >> "$GITHUB_OUTPUT"'
+
+      - name: Verify reused artifact
+        if: steps.reuse.outputs.hit == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/check"
+          tar -xzf "$RUNNER_TEMP/out/tess-darwin-arm64.tar.gz" -C "$RUNNER_TEMP/check"
+          codesign --verify --strict "$RUNNER_TEMP/check/bin/tess"
+          test "$("$RUNNER_TEMP/check/bin/tess" --version)" = "tess v$(tr -d '[:space:]' < VERSION)"
+
       - name: Install Nix
+        if: steps.reuse.outputs.hit != 'true'
         uses: DeterminateSystems/nix-installer-action@v22
         with:
           extra-conf: |
             experimental-features = nix-command flakes
 
       - name: Flake check
+        if: steps.reuse.outputs.hit != 'true'
         run: nix flake check
 
       - name: Build tess
+        if: steps.reuse.outputs.hit != 'true'
         run: nix build .#default
 
       - name: Verify tess version
+        if: steps.reuse.outputs.hit != 'true'
         run: test "$(./result/bin/tess --version)" = "tess v$(tr -d '[:space:]' < VERSION)"
+
+      - name: Verify signature and pack
+        if: steps.reuse.outputs.hit != 'true'
+        run: |
+          codesign --verify --strict result/bin/tess
+          mkdir -p "$RUNNER_TEMP/out"
+          tar -czf "$RUNNER_TEMP/out/tess-darwin-arm64.tar.gz" -C "$(readlink -f result)" bin share
+          "$RUNNER_TEMP/releasepin" provenance -tarball "$RUNNER_TEMP/out/tess-darwin-arm64.tar.gz" -commit "$GITHUB_SHA" -out "$RUNNER_TEMP/out/provenance.json"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ runner.temp }}/out
+          name: tess-darwin-arm64-${{ steps.key.outputs.tree }}
+          retention-days: ${{ github.event_name == 'push' && 90 || 30 }}
+          if-no-files-found: error

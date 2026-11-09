@@ -82,7 +82,10 @@
         tess = (pkgs.buildGoModule.override { go = goToolchain; }) {
           pname = "tess";
           inherit version;
-          src = ./.;
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.difference ./. (pkgs.lib.fileset.maybeMissing ./nix/prebuilt.json);
+          };
           vendorHash = "sha256-TmPzS/Ap/LZN6TBUI708NHCoFm3kzFBD/TOVdj8hhyk=";
           env.CGO_ENABLED = "0";
           ldflags = [ "-X main.version=${version}" ];
@@ -117,7 +120,27 @@
         };
       in
       {
-        packages.default = tess;
+        packages = { default = tess; } // pkgs.lib.optionalAttrs (system == "aarch64-darwin" && builtins.pathExists ./nix/prebuilt.json) {
+          prebuilt =
+            let
+              pin = builtins.fromJSON (builtins.readFile ./nix/prebuilt.json);
+            in
+            pkgs.stdenvNoCC.mkDerivation {
+              pname = "tess";
+              inherit (pin) version;
+              src = pkgs.fetchurl { inherit (pin) url hash; };
+              sourceRoot = ".";
+              dontConfigure = true;
+              dontBuild = true;
+              dontFixup = true;
+              installPhase = "mkdir -p $out && cp -R bin share $out/";
+              meta = {
+                mainProgram = "tess";
+                platforms = [ "aarch64-darwin" ];
+                sourceProvenance = [ pkgs.lib.sourceTypes.binaryNativeCode ];
+              };
+            };
+        };
 
         checks.default =
           let
