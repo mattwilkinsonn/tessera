@@ -99,6 +99,26 @@ func testClaimSetIgnoresUnavailableWindows(t *testing.T) {
 	}
 }
 
+func TestClaimSkipsUserFloatingWindow(t *testing.T) {
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
+	claims.staged = map[int]StagedWindow{2: {App: "Arc"}}
+	windows := []wm.Window{claimWindow(1, "Arc", "", 1, false, true), claimWindow(2, "Arc", "", 1, false, true)}
+	if id, ok := claims.Claim(windows, "arc", mo.None[int]()); !ok || id != 2 {
+		t.Fatalf("Claim() = %d, %t; want staged window 2", id, ok)
+	}
+	if id, ok := claims.Claim(windows, "arc", mo.None[int]()); ok {
+		t.Fatalf("claimed user-floating window %d", id)
+	}
+}
+
+func TestClaimRejectsReusedStagedID(t *testing.T) {
+	claims := NewClaimSet(engineTestProfile(t), SlotMemory{}, nil)
+	claims.staged = map[int]StagedWindow{1: {App: "Other", Title: "old"}}
+	if id, ok := claims.Claim([]wm.Window{claimWindow(1, "Arc", "new", 1, false, true)}, "arc", mo.None[int]()); ok {
+		t.Fatalf("claimed reused ID %d", id)
+	}
+}
+
 func testClaimSetSpawnFallbackSkipsClassified(t *testing.T) {
 	profile := engineTestProfile(t)
 	spec := profile.Windows["ghostty-wave"]

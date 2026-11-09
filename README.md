@@ -54,6 +54,10 @@ float in place with a warning instead of aborting Apply. A late capacity rejecti
 uses the same fallback only for evacuation moves; stale-space rehoming stays fatal.
 Claimed slot owners stage floating in place at debug level and never use parking
 capacity. Layout realization skips full members and continues with other tracks.
+Tessera records staged window IDs in `staged-windows.json` beside slot memory
+before floating them. If a layout fails, it attempts to tile those windows again.
+Any that remain floating can be reclaimed on the next layout; windows floated by
+the user are still left alone.
 
 ```text
 tess apply                      converge the active space onto its configured layout

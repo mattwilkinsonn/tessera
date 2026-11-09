@@ -93,20 +93,19 @@ func apply(ctx context.Context, profile *config.Profile, driver wm.Driver, env E
 		return err
 	}
 	world.Slots = engine.PruneSlots(profile, memory, world.Windows)
-	ops, filled := engine.DeskPlan(profile, world)
-	if deskTopology && len(spawnedNames) > 0 {
-		world, filled, err = reconcileSpawnedWindows(ctx, profile, driver, spawnedNames, beforeSpawn, world, filled)
-	} else {
-		err = executor.RunPlan(ctx, driver, ops, func(engine.Op) error {
-			return effects.SuppressSignals(paths.SignalGuard)
-		})
-	}
+	staging, err := loadStaging(paths.StagedWindows, world.Windows)
 	if err != nil {
 		return err
 	}
-	fresh, err := driver.QueryWindows(ctx)
+	world.Staged = staging.staged
+	world, filled, err := runDeskPlan(ctx, profile, driver, world, deskTopology, spawnedNames, beforeSpawn, paths.SignalGuard, staging)
 	if err != nil {
-		return fmt.Errorf("querying windows after desk plan: %w", err)
+		staging.rollback(ctx, driver)
+		return err
+	}
+	fresh, err := staging.snapshot(ctx, driver)
+	if err != nil {
+		return err
 	}
 	target, hasTarget := arrivalTargetFor(profile, world.Displays)
 	if hasTarget && target.display != config.DisplayLaptop && len(laptopWindows) > 0 {
@@ -226,6 +225,10 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 		return "", err
 	}
 	memory := engine.PruneSlots(profile, persistedSlots, initialWorld.Windows)
+	staging, err := loadLaptopStaging(ctx, paths.StagedWindows, driver, initialWorld.Windows)
+	if err != nil {
+		return "", err
+	}
 	persisted, err := effects.ReadFlexOrder(paths.FlexOrder)
 	if err != nil {
 		return "", err
@@ -235,19 +238,11 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 	var guardErr error
 	final, err := executor.RunConverge(ctx, driver, func(world engine.World, state engine.ConvergeState) (engine.ConvergeAction, engine.ConvergeState, bool) {
 		world.Slots = memory
+		world.Staged = staging.staged
 		if guardErr = effects.SuppressSignals(paths.SignalGuard); guardErr != nil {
 			return nil, state, true
 		}
-		for {
-			action, next, emitted := engine.LaptopConvergeStep(profile, world, state)
-			if emitted {
-				return action, next, false
-			}
-			if next.Phase == state.Phase {
-				return nil, next, true
-			}
-			state = next
-		}
+		return laptopStep(profile, world, state)
 	}, initial)
 	if err != nil {
 		return "", err
@@ -261,9 +256,9 @@ func laptop(ctx context.Context, profile *config.Profile, driver wm.Driver, env 
 	if err := driver.SetSpaceLayout(ctx, home, wm.LayoutStack); err != nil {
 		return "", err
 	}
-	fresh, err := driver.QueryWindows(ctx)
+	fresh, err := staging.snapshot(ctx, driver)
 	if err != nil {
-		return "", fmt.Errorf("querying windows after laptop converge: %w", err)
+		return "", err
 	}
 	updated := engine.PruneSlots(profile, engine.RecordSlots(memory, final.Filled, engine.DisplaySet(profile, displays), fresh), fresh)
 	recordLaptopHomeWindows(profile, env.Topology, engine.World{Windows: fresh, Spaces: initialWorld.Spaces, Displays: initialWorld.Displays})
@@ -332,6 +327,7 @@ func reconcileSpawnedWindows(
 	before []wm.Window,
 	world engine.World,
 	filled map[engine.SlotKey]int,
+	onOp func(engine.Op) error,
 ) (engine.World, map[engine.SlotKey]int, error) {
 	if len(names) == 0 {
 		return world, filled, nil
@@ -351,6 +347,7 @@ func reconcileSpawnedWindows(
 			return world, filled, err
 		}
 		fresh.Slots = world.Slots
+		fresh.Staged = world.Staged
 		projected := fresh
 		projected.Windows = slices.Clone(fresh.Windows)
 		projectSpawnedFloats(profile, names, projected.Windows, baseline, protected)
@@ -391,13 +388,14 @@ func reconcileSpawnedWindows(
 		for _, id := range planned {
 			protected[id] = struct{}{}
 		}
-		if err := executor.RunPlan(ctx, driver, ops, nil); err != nil {
+		if err := executor.RunPlan(ctx, driver, ops, onOp); err != nil {
 			return world, filled, err
 		}
 		world, err = worldSnapshot(ctx, driver)
 		if err != nil {
 			return world, filled, err
 		}
+		world.Staged = projected.Staged
 		filled = placedDeskSlots(profile, world, planned)
 		world.Slots = engine.RecordSlots(projected.Slots, filled, engine.DisplaySet(profile, world.Displays), world.Windows)
 		previousSelection = planned

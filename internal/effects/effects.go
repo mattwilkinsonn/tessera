@@ -29,13 +29,14 @@ const (
 
 // Paths contains the on-disk locations used by Tessera.
 type Paths struct {
-	ApplyLock    string
-	LaptopLock   string
-	SignalGuard  string
-	FlexOrder    string
-	WindowSlots  string
-	SpawnLedger  string
-	DaemonSocket string
+	ApplyLock     string
+	LaptopLock    string
+	SignalGuard   string
+	FlexOrder     string
+	WindowSlots   string
+	StagedWindows string
+	SpawnLedger   string
+	DaemonSocket  string
 }
 
 func darwinUserTempDir(ctx context.Context) (string, error) {
@@ -71,13 +72,14 @@ func DefaultPaths(ctx context.Context) (Paths, error) {
 	}
 	tmpDir := resolveTempDir(runtime.GOOS, os.TempDir(), func() (string, error) { return darwinUserTempDir(ctx) })
 	return Paths{
-		ApplyLock:    filepath.Join(tmpDir, "tessera-apply.lock"),
-		LaptopLock:   filepath.Join(tmpDir, "tessera-laptop.lock"),
-		SignalGuard:  signalGuardPath(tmpDir),
-		FlexOrder:    filepath.Join(cache, "yabai", "laptop-flex-order"),
-		WindowSlots:  filepath.Join(cache, "yabai", "window-slots.json"),
-		SpawnLedger:  filepath.Join(cache, "yabai", "spawn-ledger.json"),
-		DaemonSocket: filepath.Join(tmpDir, "tessera-daemon.sock"),
+		ApplyLock:     filepath.Join(tmpDir, "tessera-apply.lock"),
+		LaptopLock:    filepath.Join(tmpDir, "tessera-laptop.lock"),
+		SignalGuard:   signalGuardPath(tmpDir),
+		FlexOrder:     filepath.Join(cache, "yabai", "laptop-flex-order"),
+		WindowSlots:   filepath.Join(cache, "yabai", "window-slots.json"),
+		StagedWindows: filepath.Join(cache, "yabai", "staged-windows.json"),
+		SpawnLedger:   filepath.Join(cache, "yabai", "spawn-ledger.json"),
+		DaemonSocket:  filepath.Join(tmpDir, "tessera-daemon.sock"),
 	}, nil
 }
 

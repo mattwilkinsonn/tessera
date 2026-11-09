@@ -99,6 +99,9 @@ func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger,
 	if paths.SpawnLedger == "" && paths.WindowSlots != "" {
 		paths.SpawnLedger = filepath.Join(filepath.Dir(paths.WindowSlots), "spawn-ledger.json")
 	}
+	if paths.StagedWindows == "" && paths.WindowSlots != "" {
+		paths.StagedWindows = filepath.Join(filepath.Dir(paths.WindowSlots), "staged-windows.json")
+	}
 	missing := paths.ApplyLock == "" || paths.LaptopLock == "" || paths.SignalGuard == "" || paths.FlexOrder == "" || paths.WindowSlots == "" || paths.DaemonSocket == ""
 	if missing {
 		defaults, err := effects.DefaultPaths(ctx)
@@ -110,6 +113,7 @@ func normalizedEnv(ctx context.Context, env Env) (effects.Paths, effects.Nudger,
 		paths.SignalGuard = cmp.Or(paths.SignalGuard, defaults.SignalGuard)
 		paths.FlexOrder = cmp.Or(paths.FlexOrder, defaults.FlexOrder)
 		paths.WindowSlots = cmp.Or(paths.WindowSlots, defaults.WindowSlots)
+		paths.StagedWindows = cmp.Or(paths.StagedWindows, defaults.StagedWindows)
 		paths.SpawnLedger = cmp.Or(paths.SpawnLedger, defaults.SpawnLedger)
 		paths.DaemonSocket = cmp.Or(paths.DaemonSocket, defaults.DaemonSocket)
 	}

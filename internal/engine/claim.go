@@ -25,7 +25,7 @@ func (claims *ClaimSet) ClaimSlot(windows []wm.Window, key SlotKey, name string,
 			for _, window := range windows {
 				sameID := window.ID == ref.ID
 				sameApp := window.App == ref.App
-				available := !window.Minimized && !window.Floating
+				available := claims.available(window)
 				matchesName := matchesSpec(spec, window.App, window.Title)
 				if !sameID || !sameApp || !available || !matchesName {
 					continue
@@ -47,7 +47,7 @@ func (claims *ClaimSet) claim(windows []wm.Window, key SlotKey, name string, pre
 	}
 	candidates := make([]wm.Window, 0)
 	for _, window := range windows {
-		if !window.Minimized && !window.Floating && matchesSpec(spec, window.App, window.Title) {
+		if claims.available(window) && matchesSpec(spec, window.App, window.Title) {
 			candidates = append(candidates, window)
 		}
 	}
@@ -72,7 +72,7 @@ func (claims *ClaimSet) claim(windows []wm.Window, key SlotKey, name string, pre
 	}
 	fallback := make([]wm.Window, 0)
 	for _, window := range windows {
-		if window.Minimized || window.Floating || !matchesSpec(config.WindowSpec{App: spec.App, AppRE: spec.AppRE}, window.App, window.Title) {
+		if !claims.available(window) || !matchesSpec(config.WindowSpec{App: spec.App, AppRE: spec.AppRE}, window.App, window.Title) {
 			continue
 		}
 		if !claims.canClaim(window.ID, key) {
@@ -100,6 +100,11 @@ func (claims *ClaimSet) claim(windows []wm.Window, key SlotKey, name string, pre
 		}
 	}
 	return 0, false
+}
+
+func (claims *ClaimSet) available(window wm.Window) bool {
+	ref, staged := claims.staged[window.ID]
+	return !window.Minimized && (!window.Floating || (staged && ref.App == window.App))
 }
 
 func (claims *ClaimSet) canClaim(id int, key SlotKey) bool {

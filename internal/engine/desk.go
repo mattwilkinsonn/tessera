@@ -85,6 +85,7 @@ func buildDesks(profile *config.Profile, world World, doomed map[wm.SpaceID]stru
 		allSlotKeys = append(allSlotKeys, keys...)
 	}
 	claims := NewClaimSet(profile, world.Slots, Reserve(profile, world.Slots, allSlotKeys, DisplaySet(profile, world.Displays), world.Windows))
+	claims.staged = world.Staged
 	filled := make(map[SlotKey]int)
 	states := make(map[config.DisplayName]*deskSlotState, len(keysByDisplay))
 	for display, keys := range keysByDisplay {

@@ -5,11 +5,17 @@ import (
 	"github.com/mattwilkinsonn/tessera/internal/wm"
 )
 
+type StagedWindow struct {
+	App   string `json:"app"`
+	Title string `json:"title"`
+}
+
 type World struct {
 	Windows  []wm.Window
 	Spaces   []wm.Space
 	Displays []wm.Display
 	Slots    SlotMemory
+	Staged   map[int]StagedWindow
 }
 
 func matchesSpec(spec config.WindowSpec, app, title string) bool {
