@@ -688,6 +688,8 @@ func TestRealizeBSPRuleManagedMoveConsumesArm(t *testing.T) {
 	}
 }
 
+// Pins that a stacked extra counts as consumed and sends no clearing toggle;
+// yabai's stack branch zeroes insert_dir before view_stack_window_node.
 func TestRealizeBSPStackMoveConsumesArm(t *testing.T) {
 	driver, log := unfloatSafetyDriver(t)
 	windows := `[{"id":210,"space":2,"has-ax-reference":true,"is-floating":false},{"id":211,"space":3,"has-ax-reference":true,"root-window":true,"is-floating":false,"role":"AXWindow","subrole":"AXStandardWindow","level":0,"can-move":true}]`
