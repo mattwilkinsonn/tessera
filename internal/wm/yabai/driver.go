@@ -660,7 +660,7 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error)
 			return fmt.Errorf("running yabai %s: exit %d", strings.Join(step.Args, " "), code)
 		}
 		if inspect {
-			err = d.pendingAfterMove(ctx, step.Unfloat, moved, &pending)
+			pending, err = d.pendingAfterMove(ctx, step.Unfloat, moved, pending)
 			if err != nil {
 				return err
 			}
@@ -741,19 +741,18 @@ func (d *Driver) moveAfter(ctx context.Context, id int, moved bool) (bool, error
 	return moved && *window.SplitChild != "none", nil
 }
 
-func (d *Driver) pendingAfterMove(ctx context.Context, id int, moved bool, pending **insertArm) error {
+func (d *Driver) pendingAfterMove(ctx context.Context, id int, moved bool, pending *insertArm) (*insertArm, error) {
 	consumed, err := d.moveAfter(ctx, id, moved)
 	if err != nil {
 		// No query exposes insert_dir: toggling may re-arm a consumed node.
 		// A stale live arm can survive, and a same-direction re-arm toggles it off.
 		slog.Warn("unknown yabai insert state after move", "error", err)
-		*pending = nil
-		return err
+		return nil, err
 	}
 	if consumed {
-		*pending = nil
+		pending = nil
 	}
-	return nil
+	return pending, nil
 }
 
 func (d *Driver) clearInsert(ctx context.Context, arm *insertArm) {
