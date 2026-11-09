@@ -385,7 +385,7 @@ func TestReconciliationRecordsValidatedSelections(t *testing.T) {
 					t.Fatal(err)
 				}
 				world.Slots = engine.SlotMemory{Slots: make(map[engine.SlotKey]engine.WindowRef)}
-				world, filled, err := reconcileSpawnedWindows(t.Context(), profile, driver, []string{"arc"}, nil, world, nil)
+				world, filled, err := reconcileSpawnedWindows(t.Context(), profile, driver, []string{"arc"}, nil, world, nil, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

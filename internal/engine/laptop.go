@@ -73,6 +73,7 @@ func stepPinned(profile *config.Profile, world World, state ConvergeState) (Conv
 	names, labels := profile.LaptopPinned, pinnedLabels(profile.LaptopPinned)
 	keys := SlotKeys("laptop", config.DisplayLaptop, names)
 	claims := NewClaimSet(profile, world.Slots, Reserve(profile, world.Slots, keys, DisplaySet(profile, world.Displays), world.Windows))
+	claims.staged = world.Staged
 	ids := make([]int, len(names))
 	hasID := make([]bool, len(names))
 	claimedIDs := make(map[int]struct{})

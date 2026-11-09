@@ -137,5 +137,6 @@ type ClaimSet struct {
 	profile  *config.Profile
 	claimed  map[int]struct{}
 	memory   SlotMemory
+	staged   map[int]StagedWindow
 	reserved map[int]SlotKey
 }
