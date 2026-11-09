@@ -108,6 +108,12 @@ query
 6979
 
 -m
+query
+--windows
+--window
+6979
+
+-m
 window
 88
 --insert
@@ -130,6 +136,12 @@ window
 77
 --space
 1
+
+-m
+query
+--windows
+--window
+77
 
 -m
 query
@@ -180,6 +192,12 @@ window
 2501
 --space
 1
+
+-m
+query
+--windows
+--window
+2501
 
 -m
 query
@@ -291,6 +309,12 @@ query
 77
 
 -m
+query
+--windows
+--window
+77
+
+-m
 window
 88
 --insert
@@ -335,6 +359,12 @@ query
 6979
 
 -m
+query
+--windows
+--window
+6979
+
+-m
 window
 88
 --insert
@@ -365,6 +395,12 @@ window
 2501
 --space
 1
+
+-m
+query
+--windows
+--window
+2501
 
 -m
 query

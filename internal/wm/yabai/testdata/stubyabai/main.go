@@ -168,7 +168,12 @@ func filterWindows(data []byte, args []string) ([]byte, error) {
 		if actual == value {
 			// yabai returns one object for --window, and an array for --space.
 			if args[0] == "--window" {
-				return window, nil
+				if os.Getenv("TESS_YABAI_MISSING_SPLIT_CHILD") == "1" {
+					delete(fields, "split-child")
+				} else if _, ok := fields["split-child"]; !ok {
+					fields["split-child"] = json.RawMessage(`"none"`)
+				}
+				return json.Marshal(fields)
 			}
 			filtered = append(filtered, window)
 		}
@@ -281,9 +286,15 @@ func mutateWindow(args []string) error {
 			if err != nil {
 				return err
 			}
-			if armPath != "" && manageable(window) && window["space"] != float64(space) {
-				if err := consumeArm(armPath, windows, float64(space)); err != nil {
-					return err
+			if window["space"] != float64(space) {
+				window["split-child"] = "none"
+				if window["is-floating"] == false && window["is-sticky"] != true && window["is-minimized"] != true && window["is-hidden"] != true && (window["manage"] == true || window["root-window"] == true && window["role"] == "AXWindow" && window["subrole"] == "AXStandardWindow" && window["level"] == float64(0) && window["can-move"] == true) {
+					window["split-child"] = "first_child"
+					if armPath != "" {
+						if err := consumeArm(armPath, windows, float64(space)); err != nil {
+							return err
+						}
+					}
 				}
 			}
 			window["space"] = space
@@ -329,13 +340,6 @@ func mutateWindow(args []string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
-}
-
-func manageable(window map[string]any) bool {
-	return window["root-window"] == true && window["is-floating"] == false &&
-		window["is-sticky"] == false && window["is-minimized"] == false && window["is-hidden"] == false &&
-		window["role"] == "AXWindow" && window["subrole"] == "AXStandardWindow" &&
-		window["level"] == float64(0) && window["can-move"] == true
 }
 
 func consumeArm(path string, windows []map[string]any, space any) error {

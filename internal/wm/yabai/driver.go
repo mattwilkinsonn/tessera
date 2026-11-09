@@ -648,7 +648,7 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error)
 			i++
 			continue
 		}
-		consumesOnMove, err := d.moveConsumesPending(ctx, step, pending)
+		moved, inspect, err := d.moveBefore(ctx, step, pending)
 		if err != nil {
 			return err
 		}
@@ -659,8 +659,11 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error)
 		if code != 0 {
 			return fmt.Errorf("running yabai %s: exit %d", strings.Join(step.Args, " "), code)
 		}
-		if consumesOnMove {
-			pending = nil
+		if inspect {
+			err = d.pendingAfterMove(ctx, step.Unfloat, moved, &pending)
+			if err != nil {
+				return err
+			}
 		}
 		pending, err = pendingAfterStep(pending, step.Args)
 		if err != nil {
@@ -703,15 +706,52 @@ func pendingAfterStep(pending *insertArm, args []string) (*insertArm, error) {
 	return &insertArm{anchor: anchor, direction: args[4]}, nil
 }
 
-func (d *Driver) moveConsumesPending(ctx context.Context, step BspStep, pending *insertArm) (bool, error) {
+func (d *Driver) moveBefore(ctx context.Context, step BspStep, pending *insertArm) (bool, bool, error) {
 	if pending == nil || !step.HasUnfloat {
-		return false, nil
+		return false, false, nil
 	}
 	destination, ok, err := moveSpaceDestination(step.Args)
 	if err != nil || !ok {
+		return false, false, err
+	}
+	var window struct {
+		Space *int `json:"space"`
+	}
+	if err := d.query(ctx, QueryWindowArgs(step.Unfloat), &window); err != nil {
+		return false, false, err
+	}
+	if window.Space == nil {
+		return false, false, fmt.Errorf("window %d has no space", step.Unfloat)
+	}
+	return *window.Space != destination, true, nil
+}
+
+func (d *Driver) moveAfter(ctx context.Context, id int, moved bool) (bool, error) {
+	var window struct {
+		SplitChild *string `json:"split-child"`
+	}
+	if err := d.query(ctx, QueryWindowArgs(id), &window); err != nil {
 		return false, err
 	}
-	return d.moveConsumesInsert(ctx, step.Unfloat, destination)
+	if window.SplitChild == nil {
+		return false, fmt.Errorf("window %d has no split-child", id)
+	}
+	// yabai send_window_to_space untiles and retiles in one handler;
+	// window_serialize emits split-child none only when no node exists.
+	return moved && *window.SplitChild != "none", nil
+}
+
+func (d *Driver) pendingAfterMove(ctx context.Context, id int, moved bool, pending **insertArm) error {
+	consumed, err := d.moveAfter(ctx, id, moved)
+	if err != nil {
+		slog.Warn("unknown yabai insert state after move", "error", err)
+		*pending = nil
+		return err
+	}
+	if consumed {
+		*pending = nil
+	}
+	return nil
 }
 
 func (d *Driver) clearInsert(ctx context.Context, arm *insertArm) {
@@ -742,27 +782,6 @@ func moveSpaceDestination(args []string) (int, bool, error) {
 	return destination, true, err
 }
 
-func (d *Driver) moveConsumesInsert(ctx context.Context, windowID, destination int) (bool, error) {
-	var moving struct {
-		Space     int    `json:"space"`
-		Root      *bool  `json:"root-window"`
-		Floating  *bool  `json:"is-floating"`
-		Sticky    *bool  `json:"is-sticky"`
-		Minimized *bool  `json:"is-minimized"`
-		Hidden    *bool  `json:"is-hidden"`
-		Role      string `json:"role"`
-		Subrole   string `json:"subrole"`
-		Level     *int   `json:"level"`
-		CanMove   *bool  `json:"can-move"`
-	}
-	if err := d.query(ctx, QueryWindowArgs(windowID), &moving); err != nil {
-		return false, err
-	}
-	if moving.Root == nil || moving.Floating == nil || moving.Sticky == nil || moving.Minimized == nil || moving.Hidden == nil || moving.Level == nil || moving.CanMove == nil {
-		return false, nil
-	}
-	return moving.Space != destination && *moving.Root && !*moving.Floating && !*moving.Sticky && !*moving.Minimized && !*moving.Hidden && moving.Role == "AXWindow" && moving.Subrole == "AXStandardWindow" && *moving.Level == 0 && *moving.CanMove, nil
-}
 func (d *Driver) allowBSPStep(ctx context.Context, steps []BspStep, index int) (bool, error) {
 	step := steps[index]
 	if len(step.Args) < 5 || step.Args[3] != insertArg || step.Args[4] != string(wm.LayoutStack) {

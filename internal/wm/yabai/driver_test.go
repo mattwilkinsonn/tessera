@@ -593,6 +593,33 @@ func TestRealizeBSPAlreadyTiledWindow(t *testing.T) {
 	}
 }
 
+func TestRealizeBSPPreMoveQueryFailureClearsArm(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_WINDOWS_EXIT_CODE", "1")
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(210, 2), Unfloat: 210, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err == nil {
+		t.Fatal("realizeBSP succeeded, want query failure")
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arm := "-m\nwindow\n210\n--insert\neast\n\n"
+	if got := strings.Count(string(data), arm); got != 2 {
+		t.Errorf("insert count = %d, want 2", got)
+	}
+	if strings.Contains(string(data), "--space\n") {
+		t.Errorf("move sent after query failure: %s", data)
+	}
+	state, err := os.ReadFile(os.Getenv("TESS_YABAI_ARM"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state) != 0 {
+		t.Errorf("arm remains set: %s", state)
+	}
+}
+
 func TestRealizeBSPManagedMoveConsumesArmBeforeQueryFailure(t *testing.T) {
 	driver, log := unfloatSafetyDriver(t)
 	arm := filepath.Join(t.TempDir(), "arm")
@@ -638,6 +665,44 @@ func TestRealizeBSPUnmanageableMoveClearsArm(t *testing.T) {
 	}
 	if got := strings.Count(string(data), "--insert\n"); got != 2 {
 		t.Errorf("insert count = %d, want 2", got)
+	}
+}
+
+func TestRealizeBSPRuleManagedMoveConsumesArm(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	windows := `[{"id":210,"space":2,"is-floating":false},{"id":211,"space":3,"root-window":true,"is-floating":false,"role":"AXDialog","manage":true}]`
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), []byte(windows), 0600); err != nil {
+		t.Fatal(err)
+	}
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(211, 2), Unfloat: 211, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 1 {
+		t.Errorf("insert count = %d, want 1", got)
+	}
+}
+
+func TestRealizeBSPMissingSplitChild(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_MISSING_SPLIT_CHILD", "1")
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(210, 2), Unfloat: 210, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err == nil || !strings.Contains(err.Error(), "split-child") {
+		t.Fatalf("realizeBSP = %v, want missing split-child error", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 1 {
+		t.Errorf("insert count = %d, want 1", got)
+	}
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_ARM"), nil, 0600); err != nil {
+		t.Fatal(err)
 	}
 }
 
