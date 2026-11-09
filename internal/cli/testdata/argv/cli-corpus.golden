@@ -90,6 +90,12 @@ window
 east
 
 -m
+query
+--windows
+--window
+6979
+
+-m
 window
 6979
 --space
@@ -106,6 +112,12 @@ window
 6979
 --insert
 east
+
+-m
+query
+--windows
+--window
+77
 
 -m
 window
@@ -144,6 +156,12 @@ window
 77
 --insert
 stack
+
+-m
+query
+--windows
+--window
+2501
 
 -m
 window
@@ -237,6 +255,12 @@ window
 east
 
 -m
+query
+--windows
+--window
+77
+
+-m
 window
 77
 --space
@@ -269,6 +293,12 @@ window
 stack
 
 -m
+query
+--windows
+--window
+6979
+
+-m
 window
 6979
 --space
@@ -293,6 +323,12 @@ window
 77
 --insert
 stack
+
+-m
+query
+--windows
+--window
+2501
 
 -m
 window

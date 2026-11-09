@@ -621,18 +621,16 @@ func (d *Driver) realizeStack(ctx context.Context, id wm.SpaceID, index int, tar
 	}
 	return nil
 }
+
+type insertArm struct {
+	anchor    int
+	direction string
+}
+
 func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error) {
-	var pending []string
+	var pending *insertArm
 	clearPending := func() {
-		if pending == nil {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		defer cancel()
-		_, code, err := d.run(cleanupCtx, pending)
-		if err != nil || code != 0 {
-			slog.Warn("clearing pending yabai insert", "anchor", pending[2], "direction", pending[4], "exit_code", code, "error", err)
-		}
+		d.clearInsert(ctx, pending)
 		pending = nil
 	}
 	defer func() {
@@ -650,6 +648,10 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error)
 			i++
 			continue
 		}
+		consumesOnMove, err := d.moveConsumesPending(ctx, step, pending)
+		if err != nil {
+			return err
+		}
 		_, code, err := d.run(ctx, step.Args)
 		if err != nil {
 			return err
@@ -657,8 +659,12 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error)
 		if code != 0 {
 			return fmt.Errorf("running yabai %s: exit %d", strings.Join(step.Args, " "), code)
 		}
-		if len(step.Args) >= 5 && step.Args[3] == insertArg {
-			pending = step.Args
+		if consumesOnMove {
+			pending = nil
+		}
+		pending, err = pendingAfterStep(pending, step.Args)
+		if err != nil {
+			return err
 		}
 		if step.Settle > 0 {
 			if err := waitContext(ctx, time.Duration(step.Settle)*time.Millisecond); err != nil {
@@ -670,17 +676,70 @@ func (d *Driver) realizeBSP(ctx context.Context, steps []BspStep) (result error)
 			if consumed {
 				pending = nil
 			}
-			if err != nil {
-				if errors.Is(err, wm.ErrSpaceFull) {
-					clearPending()
-					continue
+			if errors.Is(err, wm.ErrSpaceFull) {
+				clearPending()
+				if nextArmsWindow(steps, i, step.Unfloat) {
+					i++
 				}
+				continue
+			}
+			if err != nil {
 				return err
 			}
 			pending = nil
 		}
 	}
 	return nil
+}
+
+func pendingAfterStep(pending *insertArm, args []string) (*insertArm, error) {
+	if len(args) < 5 || args[3] != insertArg {
+		return pending, nil
+	}
+	anchor, err := strconv.Atoi(args[2])
+	if err != nil {
+		return pending, err
+	}
+	return &insertArm{anchor: anchor, direction: args[4]}, nil
+}
+
+func (d *Driver) moveConsumesPending(ctx context.Context, step BspStep, pending *insertArm) (bool, error) {
+	if pending == nil || !step.HasUnfloat || len(step.Args) < 5 || step.Args[3] != "--space" {
+		return false, nil
+	}
+	return d.moveConsumesInsert(ctx, step)
+}
+
+func (d *Driver) clearInsert(ctx context.Context, arm *insertArm) {
+	if arm == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	_, code, err := d.run(cleanupCtx, ArmInsertArgs(arm.anchor, arm.direction))
+	if err != nil || code != 0 {
+		slog.Warn("clearing pending yabai insert", "anchor", arm.anchor, "direction", arm.direction, "exit_code", code, "error", err)
+	}
+}
+
+func nextArmsWindow(steps []BspStep, index, windowID int) bool {
+	if index+1 >= len(steps) {
+		return false
+	}
+	args := steps[index+1].Args
+	return len(args) >= 5 && args[3] == insertArg && args[2] == strconv.Itoa(windowID)
+}
+
+func (d *Driver) moveConsumesInsert(ctx context.Context, step BspStep) (bool, error) {
+	var moving RawYabaiWindow
+	if err := d.query(ctx, QueryWindowArgs(step.Unfloat), &moving); err != nil {
+		return false, err
+	}
+	destination, err := strconv.Atoi(step.Args[4])
+	if err != nil {
+		return false, err
+	}
+	return !moving.IsFloating && moving.Space != destination, nil
 }
 func (d *Driver) allowBSPStep(ctx context.Context, steps []BspStep, index int) (bool, error) {
 	step := steps[index]
