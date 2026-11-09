@@ -27,18 +27,15 @@ type releaseAsset struct {
 }
 
 func publish(ctx context.Context, gh api, o publishOptions) error {
-	r, found, err := findRelease(ctx, gh, o)
-	if err != nil {
-		return err
-	}
-	if !found {
+	r, err := findRelease(ctx, gh, o)
+	if errors.Is(err, errNoRelease) {
 		if o.tarball == "" {
 			return errors.New("no published asset to fetch")
 		}
 		r, err = createDraft(ctx, gh, o)
-		if err != nil {
-			return err
-		}
+	}
+	if err != nil {
+		return err
 	}
 	if err := checkReleaseTarget(ctx, gh, o, r); err != nil {
 		return err
@@ -73,20 +70,22 @@ func publish(ctx context.Context, gh api, o publishOptions) error {
 	return nil
 }
 
-func findRelease(ctx context.Context, gh api, o publishOptions) (*release, bool, error) {
+var errNoRelease = errors.New("no release has the tag")
+
+func findRelease(ctx context.Context, gh api, o publishOptions) (*release, error) {
 	for page := 1; ; page++ {
 		var releases []release
 		endpoint := fmt.Sprintf("repos/%s/releases?per_page=100&page=%d", o.repo, page)
 		if err := apiJSON(ctx, gh, endpoint, &releases); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		for i := range releases {
 			if releases[i].Tag == o.tag {
-				return &releases[i], true, nil
+				return &releases[i], nil
 			}
 		}
 		if len(releases) < 100 {
-			return nil, false, nil
+			return nil, errNoRelease
 		}
 	}
 }
