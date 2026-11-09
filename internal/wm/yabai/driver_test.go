@@ -529,6 +529,308 @@ func TestUnfloatOneFocusSafety(t *testing.T) {
 	})
 }
 
+func TestRealizeBSPInsertRecovery(t *testing.T) {
+	for _, direction := range []string{"east", "south", "stack"} {
+		t.Run(direction, func(t *testing.T) {
+			driver, log := unfloatSafetyDriver(t)
+			t.Setenv("TESS_YABAI_FOCUS_STALE", "1")
+			steps := []BspStep{
+				{Args: ArmInsertArgs(210, direction)},
+				{Args: MoveWindowToSpaceArgs(210, 2), Unfloat: 210, HasUnfloat: true},
+			}
+			err := driver.realizeBSP(t.Context(), steps)
+			if err == nil || !strings.Contains(err.Error(), "did not activate target space") {
+				t.Fatalf("realizeBSP = %v, want target-space timeout", err)
+			}
+			data, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			arm := "-m\nwindow\n210\n--insert\n" + direction + "\n\n"
+			if strings.Count(string(data), arm) != 2 || !strings.HasSuffix(string(data), arm) {
+				t.Errorf("argv does not end with matching insert toggle:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestRealizeBSPInsertSuccess(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	steps := []BspStep{
+		{Args: ArmInsertArgs(210, "east")},
+		{Args: MoveWindowToSpaceArgs(210, 2), Unfloat: 210, HasUnfloat: true},
+	}
+	if err := driver.realizeBSP(t.Context(), steps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 1 {
+		t.Errorf("insert count = %d, want 1", got)
+	}
+}
+
+func TestRealizeBSPAlreadyTiledWindow(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), []byte(`[{"id":210,"space":2,"is-floating":false},{"id":211,"space":2,"is-floating":false}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	steps := []BspStep{
+		{Args: ArmInsertArgs(210, "east")},
+		{Args: MoveWindowToSpaceArgs(211, 2), Unfloat: 211, HasUnfloat: true},
+	}
+	if err := driver.realizeBSP(t.Context(), steps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 2 {
+		t.Errorf("insert count = %d, want 2", got)
+	}
+}
+
+func TestRealizeBSPPreMoveQueryFailureClearsArm(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_WINDOWS_EXIT_CODE", "1")
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(210, 2), Unfloat: 210, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err == nil {
+		t.Fatal("realizeBSP succeeded, want query failure")
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arm := "-m\nwindow\n210\n--insert\neast\n\n"
+	if got := strings.Count(string(data), arm); got != 2 {
+		t.Errorf("insert count = %d, want 2", got)
+	}
+	if strings.Contains(string(data), "--space\n") {
+		t.Errorf("move sent after query failure: %s", data)
+	}
+	state, err := os.ReadFile(os.Getenv("TESS_YABAI_ARM"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state) != 0 {
+		t.Errorf("arm remains set: %s", state)
+	}
+}
+
+func TestRealizeBSPManagedMoveConsumesArmBeforeQueryFailure(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	arm := filepath.Join(t.TempDir(), "arm")
+	t.Setenv("TESS_YABAI_ARM", arm)
+	t.Setenv("TESS_YABAI_FAIL_WINDOWS_AFTER_MOVE", "1")
+	windows := `[{"id":210,"space":2,"is-floating":false},{"id":211,"space":3,"root-window":true,"is-floating":false,"is-sticky":false,"is-minimized":false,"is-hidden":false,"role":"AXWindow","subrole":"AXStandardWindow","level":0,"can-move":true}]`
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), []byte(windows), 0600); err != nil {
+		t.Fatal(err)
+	}
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(211, 2), Unfloat: 211, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err == nil {
+		t.Fatal("realizeBSP succeeded, want query failure")
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 1 {
+		t.Errorf("insert count = %d, want 1", got)
+	}
+	state, err := os.ReadFile(arm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state) != 0 {
+		t.Errorf("arm remains set: %s", state)
+	}
+}
+
+func TestRealizeBSPUnmanageableMoveClearsArm(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	windows := `[{"id":210,"space":2,"is-floating":false},{"id":211,"space":3,"root-window":true,"is-floating":false,"is-sticky":true,"is-minimized":false,"is-hidden":false,"role":"AXWindow","subrole":"AXStandardWindow","level":0,"can-move":true}]`
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), []byte(windows), 0600); err != nil {
+		t.Fatal(err)
+	}
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(211, 2), Unfloat: 211, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 2 {
+		t.Errorf("insert count = %d, want 2", got)
+	}
+}
+
+func TestRealizeBSPRuleManagedMoveConsumesArm(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_RULE_MANAGED", "211")
+	windows := `[{"id":210,"space":2,"is-floating":false},{"id":211,"space":3,"root-window":true,"is-floating":false,"role":"AXDialog"}]`
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), []byte(windows), 0600); err != nil {
+		t.Fatal(err)
+	}
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(211, 2), Unfloat: 211, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 1 {
+		t.Errorf("insert count = %d, want 1", got)
+	}
+}
+
+// Pins that a stacked extra counts as consumed and sends no clearing toggle;
+// yabai's stack branch zeroes insert_dir before view_stack_window_node.
+func TestRealizeBSPStackMoveConsumesArm(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	windows := `[{"id":210,"space":2,"has-ax-reference":true,"is-floating":false},{"id":211,"space":3,"has-ax-reference":true,"root-window":true,"is-floating":false,"role":"AXWindow","subrole":"AXStandardWindow","level":0,"can-move":true}]`
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_WINDOWS"), []byte(windows), 0600); err != nil {
+		t.Fatal(err)
+	}
+	steps := []BspStep{{Args: ArmInsertArgs(210, "stack")}, {Args: MoveWindowToSpaceArgs(211, 2), Unfloat: 211, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 1 {
+		t.Errorf("insert count = %d, want 1", got)
+	}
+	state, err := os.ReadFile(os.Getenv("TESS_YABAI_ARM"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state) != 0 {
+		t.Errorf("arm remains set: %s", state)
+	}
+}
+
+func TestRealizeBSPMissingSplitChild(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_MISSING_SPLIT_CHILD", "1")
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(210, 2), Unfloat: 210, HasUnfloat: true}}
+	if err := driver.realizeBSP(t.Context(), steps); err == nil || !strings.Contains(err.Error(), "split-child") {
+		t.Fatalf("realizeBSP = %v, want missing split-child error", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 1 {
+		t.Errorf("insert count = %d, want 1", got)
+	}
+	if err := os.WriteFile(os.Getenv("TESS_YABAI_ARM"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRealizeBSPSkipsArmAfterFullUnfloat(t *testing.T) {
+	driver, log := capacityDriver(t, 24)
+	t.Setenv("TESS_YABAI_MUTATE", "1")
+	t.Setenv("TESS_YABAI_INSERT_EXIT_CODE", "1")
+	steps := []BspStep{{Args: MoveWindowToSpaceArgs(90, 1), Unfloat: 90, HasUnfloat: true}, {Args: ArmInsertArgs(90, "east")}}
+	if err := driver.realizeBSP(t.Context(), steps); err != nil {
+		t.Fatalf("realizeBSP: %v", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "--insert\n") {
+		t.Errorf("insert sent for floating anchor: %s", data)
+	}
+}
+
+func TestRealizeBSPVerbFailures(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		env         string
+		wantInserts int
+	}{
+		{name: "insert", env: "TESS_YABAI_INSERT_EXIT_CODE", wantInserts: 1},
+		{name: "space", env: "TESS_YABAI_SPACE_EXIT_CODE", wantInserts: 2},
+		{name: "toggle", env: "TESS_YABAI_TOGGLE_EXIT_CODE", wantInserts: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			driver, log := unfloatSafetyDriver(t)
+			t.Setenv(test.env, "1")
+			steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(210, 2), Unfloat: 210, HasUnfloat: true}}
+			if err := driver.realizeBSP(t.Context(), steps); err == nil {
+				t.Fatal("realizeBSP succeeded, want error")
+			}
+			data, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Count(string(data), "--insert\n"); got != test.wantInserts {
+				t.Errorf("insert count = %d, want %d", got, test.wantInserts)
+			}
+		})
+	}
+}
+
+func TestRealizeBSPCanceledCleanup(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	var config net.ListenConfig
+	listener, err := config.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TESS_YABAI_FOCUS_NOTIFY", listener.Addr().String())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	steps := []BspStep{{Args: ArmInsertArgs(210, "east")}, {Args: MoveWindowToSpaceArgs(210, 2), Unfloat: 210, HasUnfloat: true}}
+	result := make(chan error, 1)
+	go func() { result <- driver.realizeBSP(ctx, steps) }()
+	conn, err := listener.Accept()
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("realizeBSP = %v, want context.Canceled", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "--insert\n"); got != 2 {
+		t.Errorf("insert count = %d, want 2", got)
+	}
+}
+
+func TestRealizeBSPFailureBeforeInsert(t *testing.T) {
+	driver, log := unfloatSafetyDriver(t)
+	t.Setenv("TESS_YABAI_WINDOWS_EXIT_CODE", "1")
+	steps := []BspStep{{Args: ArmInsertArgs(210, "stack")}}
+	if err := driver.realizeBSP(t.Context(), steps); err == nil {
+		t.Fatal("realizeBSP succeeded, want error")
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "--insert\n") {
+		t.Errorf("unexpected insert in argv:\n%s", data)
+	}
+}
+
 func unfloatSafetyDriver(t *testing.T) (*Driver, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -553,6 +855,16 @@ func unfloatSafetyDriver(t *testing.T) (*Driver, string) {
 	driver := New(os.Getenv("TESS_YABAI"))
 	driver.unfloatFocusTimeout = 150 * time.Millisecond
 	driver.unfloatFocusPoll = 5 * time.Millisecond
+	arm := filepath.Join(root, "arm")
+	t.Setenv("TESS_YABAI_ARM", arm)
+	t.Cleanup(func() {
+		state, err := os.ReadFile(arm)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("reading arm: %v", err)
+		} else if len(state) != 0 {
+			t.Errorf("arm remains set: %s", state)
+		}
+	})
 	return driver, log
 }
 

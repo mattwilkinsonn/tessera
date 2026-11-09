@@ -90,6 +90,12 @@ window
 east
 
 -m
+query
+--windows
+--window
+6979
+
+-m
 window
 6979
 --space
@@ -100,6 +106,18 @@ query
 --windows
 --window
 6979
+
+-m
+query
+--windows
+--window
+6979
+
+-m
+window
+88
+--insert
+east
 
 -m
 window
@@ -108,6 +126,12 @@ window
 east
 
 -m
+query
+--windows
+--window
+77
+
+-m
 window
 77
 --space
@@ -118,6 +142,18 @@ query
 --windows
 --window
 77
+
+-m
+query
+--windows
+--window
+77
+
+-m
+window
+6979
+--insert
+east
 
 -m
 window
@@ -146,10 +182,34 @@ window
 stack
 
 -m
+query
+--windows
+--window
+2501
+
+-m
 window
 2501
 --space
 1
+
+-m
+query
+--windows
+--window
+2501
+
+-m
+query
+--windows
+--window
+2501
+
+-m
+window
+77
+--insert
+stack
 
 -m
 query
@@ -160,12 +220,6 @@ query
 --windows
 --window
 2383
-
--m
-query
---windows
---window
-2501
 
 -m
 window
@@ -237,6 +291,12 @@ window
 east
 
 -m
+query
+--windows
+--window
+77
+
+-m
 window
 77
 --space
@@ -247,6 +307,18 @@ query
 --windows
 --window
 77
+
+-m
+query
+--windows
+--window
+77
+
+-m
+window
+88
+--insert
+east
 
 -m
 window
@@ -269,10 +341,34 @@ window
 stack
 
 -m
+query
+--windows
+--window
+6979
+
+-m
 window
 6979
 --space
 1
+
+-m
+query
+--windows
+--window
+6979
+
+-m
+query
+--windows
+--window
+6979
+
+-m
+window
+88
+--insert
+stack
 
 -m
 query
@@ -283,22 +379,40 @@ query
 --windows
 
 -m
-query
---windows
---window
-6979
-
--m
 window
 77
 --insert
 stack
 
 -m
+query
+--windows
+--window
+2501
+
+-m
 window
 2501
 --space
 1
+
+-m
+query
+--windows
+--window
+2501
+
+-m
+query
+--windows
+--window
+2501
+
+-m
+window
+77
+--insert
+stack
 
 -m
 query
@@ -309,12 +423,6 @@ query
 --windows
 --window
 2383
-
--m
-query
---windows
---window
-2501
 
 -m
 window

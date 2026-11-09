@@ -32,6 +32,7 @@ const (
 	windowMode = "window"
 	ruleMode   = "rule"
 	windowsArg = "--windows"
+	insertArg  = "--insert"
 	spaceArg   = "--space"
 	focusArg   = "--focus"
 )
@@ -106,7 +107,7 @@ func ToggleFloatArgs(windowID int) []string {
 }
 
 func ArmInsertArgs(windowID int, direction string) []string {
-	return []string{"-m", windowMode, strconv.Itoa(windowID), "--insert", direction}
+	return []string{"-m", windowMode, strconv.Itoa(windowID), insertArg, direction}
 }
 
 func StackWindowArgs(targetWindowID, windowID int) []string {

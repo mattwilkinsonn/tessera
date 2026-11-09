@@ -16,6 +16,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if len(os.Args) == 6 && os.Args[2] == "window" {
+		key := "TESS_YABAI_" + strings.ToUpper(strings.TrimPrefix(os.Args[4], "--")) + "_EXIT_CODE"
+		if code := os.Getenv(key); code != "" {
+			status, err := strconv.Atoi(code)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			if status != 0 {
+				os.Exit(status)
+			}
+		}
+	}
 	if code := os.Getenv("TESS_YABAI_EXIT_CODE"); code != "" {
 		status, err := strconv.Atoi(code)
 		if err != nil {
@@ -57,6 +70,16 @@ func serve(args []string) error {
 	}
 	if args[2] == "--windows" && len(args) == 5 && args[3] == "--window" && os.Getenv("TESS_YABAI_MISSING_WINDOW") == args[4] {
 		return errors.New("could not locate window")
+	}
+	if args[2] == "--windows" && os.Getenv("TESS_YABAI_FAIL_WINDOWS_AFTER_MOVE") == "1" {
+		log, err := os.ReadFile(os.Getenv("TESS_YABAI_LOG"))
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(log), "--space\n") {
+			_, err := os.Stdout.WriteString("invalid json")
+			return err
+		}
 	}
 	if exitCode := os.Getenv("TESS_YABAI_WINDOWS_EXIT_CODE"); args[2] == "--windows" && exitCode != "" && exitCode != "0" {
 		return errors.New("windows query failed")
@@ -145,7 +168,12 @@ func filterWindows(data []byte, args []string) ([]byte, error) {
 		if actual == value {
 			// yabai returns one object for --window, and an array for --space.
 			if args[0] == "--window" {
-				return window, nil
+				if os.Getenv("TESS_YABAI_MISSING_SPLIT_CHILD") == "1" {
+					delete(fields, "split-child")
+				} else if _, ok := fields["split-child"]; !ok {
+					fields["split-child"] = json.RawMessage(`"none"`)
+				}
+				return json.Marshal(fields)
 			}
 			filtered = append(filtered, window)
 		}
@@ -238,11 +266,36 @@ func mutateWindow(args []string) error {
 		if window["id"] != float64(id) {
 			continue
 		}
+		armPath := os.Getenv("TESS_YABAI_ARM")
+		if armPath != "" && args[3] == "--insert" {
+			arm, err := os.ReadFile(armPath)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			value := args[2] + ":" + args[4]
+			if string(arm) == value {
+				value = ""
+			}
+			if err := os.WriteFile(armPath, []byte(value), 0600); err != nil {
+				return err
+			}
+		}
 		switch args[3] {
 		case "--space":
 			space, err := strconv.Atoi(args[4])
 			if err != nil {
 				return err
+			}
+			if window["space"] != float64(space) {
+				window["split-child"] = "none"
+				if window["is-floating"] == false && window["is-sticky"] != true && window["is-minimized"] != true && window["is-hidden"] != true && (os.Getenv("TESS_YABAI_RULE_MANAGED") == args[2] || window["root-window"] == true && window["role"] == "AXWindow" && window["subrole"] == "AXStandardWindow" && window["level"] == float64(0) && window["can-move"] == true) {
+					window["split-child"] = "first_child"
+					if armPath != "" {
+						if err := consumeArm(armPath, windows, float64(space)); err != nil {
+							return err
+						}
+					}
+				}
 			}
 			window["space"] = space
 			if os.Getenv("TESS_YABAI_ACTIVE_UNFLOAT") == "1" {
@@ -270,6 +323,11 @@ func mutateWindow(args []string) error {
 						if space["has-focus"] == true {
 							window["space"] = space["index"]
 							window["display"] = space["display"]
+							if armPath != "" {
+								if err := consumeArm(armPath, windows, space["index"]); err != nil {
+									return err
+								}
+							}
 							break
 						}
 					}
@@ -282,6 +340,30 @@ func mutateWindow(args []string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+func consumeArm(path string, windows []map[string]any, space any) error {
+	arm, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	parts := strings.SplitN(string(arm), ":", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	id, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return err
+	}
+	for _, window := range windows {
+		if window["id"] == float64(id) && window["space"] == space {
+			return os.WriteFile(path, nil, 0600)
+		}
+	}
+	return nil
 }
 
 func focusWindow(value string) error {
