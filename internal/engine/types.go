@@ -118,6 +118,8 @@ type ConvergeState struct {
 	ClaimedIDs         map[int]struct{}
 	TargetLabels       map[string]struct{}
 	DesiredOrder       []string
+	InitialLapSpaces   map[wm.SpaceID]struct{}
+	PinnedCount        int
 	CreateFailed       bool
 	PendingCreateLabel string
 	HasPendingCreate   bool
@@ -126,6 +128,7 @@ type ConvergeState struct {
 	PersistedFlexOrder []string
 	ToPersist          []string
 	ReapStrays         bool
+	ResetOrder         bool
 	DestroyTried       map[wm.SpaceID]struct{}
 	Filled             map[SlotKey]int
 }

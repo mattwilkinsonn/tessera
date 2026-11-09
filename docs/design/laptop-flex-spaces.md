@@ -122,6 +122,12 @@ rebuild:
 4. Any current flex slug absent from the file is appended to the file (end of
  order) and gets the last slot.
 
+Daemon-triggered converges preserve the relative order of existing `lap-*`
+spaces when the display count is unchanged. New pinned spaces go after their
+nearest available profile predecessor, or after home when there is none; new
+flex spaces follow existing laptop spaces. Explicit `tess laptop` and `tess apply`
+runs, and cascades with a changed or unknown display count, restore profile order.
+
 This is deterministic within and across sessions, and "append at end" is what
 `yabai -m space --create` does natively (appends to the display's space list),
 so no index-reshuffling reorder step is needed — the property `alphabetical`

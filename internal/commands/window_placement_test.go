@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/mattwilkinsonn/tessera/internal/config"
 	"github.com/mattwilkinsonn/tessera/internal/engine"
 
@@ -362,6 +363,106 @@ func (d *transitionDriver) LabelSpace(ctx context.Context, id wm.SpaceID, label 
 	}
 	d.converged = true
 	return d.Driver.LabelSpace(ctx, id, label)
+}
+
+func TestRunDisplayCascadeSpaceOrder(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		previous int
+		want     []string
+	}{
+		{name: "unchanged topology preserves user order", previous: 1, want: []string{"laptop", "lap-arc", "lap-spotify", "lap-arc-2"}},
+		{name: "changed topology resets profile order", previous: 2, want: []string{"laptop", "lap-arc", "lap-arc-2", "lap-spotify"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			driver := fake.New(fake.Seed{
+				Displays: []fake.SeedDisplay{{Idx: 3, Frame: displayFrame(1728, 1117)}},
+				Spaces: []fake.SeedSpace{{DisplayIdx: 3, Label: "laptop"}, {DisplayIdx: 3, Label: "lap-arc"},
+					{DisplayIdx: 3, Label: "lap-spotify"}, {DisplayIdx: 3, Label: "lap-arc-2"}},
+				Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 2}, {ID: 2, App: "Arc", SpaceIndex: 4},
+					{ID: 3, App: "Spotify", SpaceIndex: 3}},
+			})
+			env := commandEnv(t)
+			env.Topology = &TopologyState{}
+			env.Topology.RecordDisplays(test.previous)
+			if _, err := RunDisplayCascade(t.Context(), testProfile(t), driver, env); err != nil {
+				t.Fatal(err)
+			}
+			spaces, err := driver.QuerySpaces(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			labels := make([]string, 0, len(spaces))
+			for _, space := range spaces {
+				labels = append(labels, space.Label)
+			}
+			if !slices.Equal(labels, test.want) {
+				t.Fatalf("space order = %v, want %v", labels, test.want)
+			}
+		})
+	}
+}
+
+func TestRunDisplayCascadeContendedRetryResetsOrder(t *testing.T) {
+	base := fake.New(fake.Seed{
+		Displays: []fake.SeedDisplay{{Idx: 3, Frame: displayFrame(1728, 1117)}},
+		Spaces: []fake.SeedSpace{{DisplayIdx: 3, Label: "laptop"}, {DisplayIdx: 3, Label: "lap-arc"},
+			{DisplayIdx: 3, Label: "lap-spotify"}, {DisplayIdx: 3, Label: "lap-arc-2"}},
+		Windows: []fake.SeedWindow{{ID: 1, App: "Arc", SpaceIndex: 2}, {ID: 2, App: "Arc", SpaceIndex: 4},
+			{ID: 3, App: "Spotify", SpaceIndex: 3}},
+	})
+	env := commandEnv(t)
+	env.Topology = &TopologyState{}
+	env.Topology.RecordDisplays(0)
+	driver := &cascadeContentionDriver{Driver: base, lockPath: env.Paths.LaptopLock}
+	result, err := RunDisplayCascade(t.Context(), testProfile(t), driver, env)
+	if driver.lock == nil {
+		t.Fatal("cascade did not acquire the test lock")
+	}
+	if unlockErr := driver.lock.Unlock(); unlockErr != nil {
+		t.Fatal(unlockErr)
+	}
+	if err != nil || result != CascadeContended {
+		t.Fatalf("contended cascade = %q, %v", result, err)
+	}
+	result, err = RunDisplayCascade(t.Context(), testProfile(t), driver, env)
+	if err != nil || result != CascadeRan {
+		t.Fatalf("retry cascade = %q, %v", result, err)
+	}
+	spaces, err := driver.QuerySpaces(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	labels := make([]string, 0, len(spaces))
+	for _, space := range spaces {
+		labels = append(labels, space.Label)
+	}
+	want := []string{"laptop", "lap-arc", "lap-arc-2", "lap-spotify"}
+	if !slices.Equal(labels, want) {
+		t.Fatalf("space order = %v, want %v", labels, want)
+	}
+}
+
+type cascadeContentionDriver struct {
+	*fake.Driver
+	lockPath string
+	lock     *flock.Flock
+	queries  int
+}
+
+func (d *cascadeContentionDriver) QueryDisplays(ctx context.Context) ([]wm.Display, error) {
+	d.queries++
+	if d.queries == 2 {
+		lock, acquired, err := effects.AcquireLock(d.lockPath)
+		if err != nil {
+			return nil, err
+		}
+		if !acquired {
+			return nil, errors.New("test lock unavailable")
+		}
+		d.lock = lock
+	}
+	return d.Driver.QueryDisplays(ctx)
 }
 
 func TestRunDisplayCascadeHandoff(t *testing.T) {

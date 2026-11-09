@@ -23,6 +23,12 @@ func LaptopConvergeStep(profile *config.Profile, world World, state ConvergeStat
 			if !found {
 				return nil, s, false
 			}
+			s.InitialLapSpaces = make(map[wm.SpaceID]struct{})
+			for _, space := range world.Spaces {
+				if strings.HasPrefix(space.Label, "lap-") {
+					s.InitialLapSpaces[space.ID] = struct{}{}
+				}
+			}
 			s.Phase, s.Cursor, s.LaptopIdx = PhaseA, 0, laptopIdx
 			return RelabelHomeAction{HomeSpace: s.HomeSpace, Label: "laptop"}, s, true
 		case PhaseA:
@@ -110,6 +116,7 @@ func stepPinned(profile *config.Profile, world World, state ConvergeState) (Conv
 		s.PendingCreateLabel, s.HasPendingCreate = label, true
 		return CreateSpaceAction{DisplayIdx: s.LaptopIdx, Label: label}, s, true
 	}
+	s.PinnedCount = len(s.DesiredOrder)
 	s.Phase, s.Cursor, s.ClaimedIDs = PhaseB, 0, claimedIDs
 	s.CreateFailed = s.CreateFailed || deadCreate
 	s.PendingCreateLabel, s.HasPendingCreate = "", false
@@ -193,6 +200,9 @@ func stepReconcile(world World, state ConvergeState) (ConvergeAction, ConvergeSt
 func stepOrder(world World, state ConvergeState) (ConvergeAction, ConvergeState, bool) {
 	s := state
 	homePos := globalIndex(s.HomeSpace, world)
+	if !s.ResetOrder {
+		return stepOrderCreated(world, s, homePos)
+	}
 	for s.Cursor < len(s.DesiredOrder) {
 		label := s.DesiredOrder[s.Cursor]
 		s.Cursor++
@@ -212,11 +222,49 @@ func stepOrder(world World, state ConvergeState) (ConvergeAction, ConvergeState,
 	return nil, s, false
 }
 
-func InitialConvergeState(homeSpace wm.SpaceID, persisted []string, reapStrays bool) ConvergeState {
+func stepOrderCreated(world World, state ConvergeState, homePos int) (ConvergeAction, ConvergeState, bool) {
+	s := state
+	for s.Cursor < len(s.DesiredOrder) {
+		cursor := s.Cursor
+		s.Cursor++
+		space, found := spaceWithLabel(world.Spaces, s.DesiredOrder[cursor])
+		if !found || hasSpace(s.InitialLapSpaces, space.ID) {
+			continue
+		}
+		current := globalIndex(space.ID, world)
+		anchor := homePos
+		if cursor < s.PinnedCount {
+			for i := cursor - 1; i >= 0; i-- {
+				predecessor, exists := spaceWithLabel(world.Spaces, s.DesiredOrder[i])
+				if exists {
+					anchor = globalIndex(predecessor.ID, world)
+					break
+				}
+			}
+		} else {
+			for _, other := range world.Spaces {
+				if other.DisplayIdx != s.LaptopIdx || other.ID == space.ID || !strings.HasPrefix(other.Label, "lap-") {
+					continue
+				}
+				if hasSpace(s.InitialLapSpaces, other.ID) || slices.Contains(s.DesiredOrder[:cursor], other.Label) {
+					anchor = max(anchor, globalIndex(other.ID, world))
+				}
+			}
+		}
+		target := anchor + 1
+		if target < current {
+			return MoveSpaceAction{Space: space.ID, ToIndex: target}, s, true
+		}
+	}
+	s.Phase = PhaseLayout
+	return nil, s, false
+}
+
+func InitialConvergeState(homeSpace wm.SpaceID, persisted []string, reapStrays, resetOrder bool) ConvergeState {
 	return ConvergeState{
 		Phase: PhasePre, ClaimedIDs: make(map[int]struct{}), TargetLabels: make(map[string]struct{}), Filled: make(map[SlotKey]int),
 		HomeSpace: homeSpace, LaptopIdx: -1, PersistedFlexOrder: slices.Clone(persisted),
-		ToPersist: slices.Clone(persisted), ReapStrays: reapStrays, DestroyTried: make(map[wm.SpaceID]struct{}),
+		ToPersist: slices.Clone(persisted), ReapStrays: reapStrays, ResetOrder: resetOrder, DestroyTried: make(map[wm.SpaceID]struct{}),
 	}
 }
 

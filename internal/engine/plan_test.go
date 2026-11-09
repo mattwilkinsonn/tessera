@@ -243,6 +243,7 @@ func TestLaptopConvergeStep(t *testing.T) {
 	profile := engineTestProfile(t)
 	laptopConvergeCreationCases(t, profile)
 	laptopConvergeOrderCases(t, profile)
+	laptopConvergeUserOrderCases(t, profile)
 	laptopConvergeCleanupCases(t, profile)
 }
 
@@ -308,7 +309,7 @@ func laptopConvergeOrderCases(t *testing.T, profile *config.Profile) {
 	})
 	t.Run("space ids remain stable throughout converge", func(t *testing.T) {
 		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, nil, true)
-		state := InitialConvergeState("home", nil, true)
+		state := InitialConvergeState("home", nil, true, true)
 		referenced := make(map[wm.SpaceID]struct{})
 		for range 1000 {
 			action, next, ok := LaptopConvergeStep(profile, laptopSnapshot(world), state)
@@ -335,6 +336,45 @@ func laptopConvergeOrderCases(t *testing.T, profile *config.Profile) {
 		}
 		if _, ok := live["home"]; !ok {
 			t.Fatal("home space identity did not survive")
+		}
+	})
+}
+
+func laptopConvergeUserOrderCases(t *testing.T, profile *config.Profile) {
+	t.Helper()
+	t.Run("daemon preserves flex between pinned spaces", func(t *testing.T) {
+		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, []string{"lap-arc", "lap-spotify", "lap-arc-2"}, true)
+		actions := runLaptopConverge(t, profile, world, false)
+		for _, action := range actions {
+			if move, ok := action.(MoveSpaceAction); ok {
+				t.Fatalf("daemon moved existing space: %v", move)
+			}
+		}
+		want := []string{"laptop", "lap-arc", "lap-spotify", "lap-arc-2"}
+		if diff := cmp.Diff(want, laptopLabels(world)); diff != "" {
+			t.Fatalf("label order mismatch (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("explicit converge resets flex between pinned spaces", func(t *testing.T) {
+		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, []string{"lap-arc", "lap-spotify", "lap-arc-2"}, true)
+		runLaptopConverge(t, profile, world, true)
+		want := []string{"laptop", "lap-arc", "lap-arc-2", "lap-spotify"}
+		if diff := cmp.Diff(want, laptopLabels(world)); diff != "" {
+			t.Fatalf("label order mismatch (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("daemon inserts new pinned after existing predecessor", func(t *testing.T) {
+		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, []string{"lap-arc", "lap-spotify"}, true)
+		existing := slices.Clone(world.order)
+		actions := runLaptopConverge(t, profile, world, false)
+		for _, action := range actions {
+			if move, ok := action.(MoveSpaceAction); ok && slices.Contains(existing, move.Space) {
+				t.Fatalf("daemon moved existing space: %v", move)
+			}
+		}
+		want := []string{"laptop", "lap-arc", "lap-arc-2", "lap-spotify"}
+		if diff := cmp.Diff(want, laptopLabels(world)); diff != "" {
+			t.Fatalf("label order mismatch (-want +got):\n%s", diff)
 		}
 	})
 	t.Run("phase D reorders existing out-of-order lap spaces", func(t *testing.T) {
@@ -448,9 +488,32 @@ func (world *laptopTestWorld) destroy(id wm.SpaceID) {
 	}
 }
 
+func TestStepOrderCreatedMoveBoundaries(t *testing.T) {
+	world := World{
+		Displays: []wm.Display{{Idx: 3, SpaceIDs: []wm.SpaceID{"home", "new", "existing"}}, {Idx: 4, SpaceIDs: []wm.SpaceID{"remote"}}},
+		Spaces: []wm.Space{{ID: "home", DisplayIdx: 3}, {ID: "new", Label: "lap-new", DisplayIdx: 3},
+			{ID: "existing", Label: "lap-existing", DisplayIdx: 3}, {ID: "remote", Label: "lap-remote", DisplayIdx: 4}},
+	}
+	t.Run("rightward placement is skipped", func(t *testing.T) {
+		state := ConvergeState{HomeSpace: "home", LaptopIdx: 3, DesiredOrder: []string{"lap-existing", "lap-new"}, PinnedCount: 2,
+			InitialLapSpaces: map[wm.SpaceID]struct{}{"existing": {}}}
+		if action, _, emitted := stepOrder(world, state); emitted {
+			t.Fatalf("unexpected rightward move: %v", action)
+		}
+	})
+	t.Run("flex ignores another display", func(t *testing.T) {
+		state := ConvergeState{HomeSpace: "home", LaptopIdx: 3, DesiredOrder: []string{"lap-new"},
+			InitialLapSpaces: map[wm.SpaceID]struct{}{"remote": {}}}
+		action, _, emitted := stepOrder(world, state)
+		if emitted {
+			t.Fatalf("remote space influenced flex placement: %v", action)
+		}
+	})
+}
+
 func runLaptopConverge(t *testing.T, profile *config.Profile, world *laptopTestWorld, reap bool) []ConvergeAction {
 	t.Helper()
-	state := InitialConvergeState("home", nil, reap)
+	state := InitialConvergeState("home", nil, reap, reap)
 	actions := make([]ConvergeAction, 0)
 	for range 1000 {
 		action, next, ok := LaptopConvergeStep(profile, laptopSnapshot(world), state)
