@@ -2,237 +2,228 @@
 
 Parent: RIG-8858. This record supersedes draft tessera #76 (`event-driven.md`, RIG-8692). It keeps #76's fact inventory and drops its approach of waiting on yabai. Evidence, the binding table and the private-API list are in [evidence.md](evidence.md).
 
-**yabai sources.** Matt runs the Christian-SC26 fork of yabai (Homebrew `Christian-SC26/formulae/yabai`, v7.3.2; RIG-8327). Citations marked **SC26** are from that fork at `a26707a`, two commits past its v7.3.2 tag; neither commit touches a cited function. Citations marked **both** read the same in SC26 and in upstream at `dd84572`. Evidence § *yabai mechanisms* gives the source of every citation.
+**yabai sources.** Matt runs the Christian-SC26 fork of yabai (Homebrew `Christian-SC26/formulae/yabai`, v7.3.2; RIG-8327). Citations marked **SC26** are from that fork at `a26707a`, two commits past its v7.3.2 tag; neither commit touches a cited function. Citations marked **both** read the same in SC26 and in upstream at `dd84572`. After stage N, yabai is only a reference source, the origin of tess's scripting addition, and the rollback target. Evidence § *yabai mechanisms* gives the source of every citation.
 
-**Freeze.** This record freezes after Matt rules on questions 1, 3, 7, 8 and 9. N1 checks the assumptions of the chosen option. If a probe fails, the record reopens; N1 does not choose.
+**Freeze.** This record freezes after Matt rules on the open questions below. N1 checks the assumptions of the chosen design. If a probe fails, the record reopens; N1 does not choose.
 
-<!-- LENGTH §Approach: answers six required capability questions plus the migration, Space-service and actor contracts -->
+<!-- LENGTH §Approach: answers the required capability questions plus the migration, Space-service, scripting-addition and actor contracts -->
+
+## Decisions
+
+Matt ruled on the nine questions of the first draft on 2026-11-09.
+
+1. **Workspaces: tess owns native Spaces through its own scripting addition (C).** tess forks yabai's scripting addition (SA) from SC26 `a26707a` (MIT) and changes it as it needs; yabai itself is not maintained well enough to depend on. tess must still run on a Mac with SIP fully on, with fewer capabilities (§ *Capabilities and SIP*). Virtual workspaces (A) are preferred if a parking spike passes on Matt's displays (stage V). The other first-draft options are removed, with yabai's restricted configuration, `tess yabai-config apply` and yabai's mouse gestures. yabai stays only as the SA's source, in attribution, and in migration and its reverse.
+2. **SIP.** If virtual workspaces pass V0 and run through V3, Matt re-enables SIP. No date is set.
+3. **Signing identity.** A self-signed certificate now (A). The Developer ID replaces it when it exists (B); that is a one-line identity change in N2.
+4. **Mouse drag: float on drag (C).** tess is a slot manager, not a BSP tiler. Windows go into slots and stacks by themselves, and the keyboard moves them between slots. Dragging a slotted window floats it at once and pins it on top. The same shortcut puts it back in the slot it came from. Two new asks come with this ruling: move mode with a top-right indicator, and temporary slot resize with save and reset (§ *Slot interaction*).
+5. **Tree verbs go.** `insert`, `warp`, `reset-splits`, `balance`, `columns`, `space bsp` and the `cmd + alt - d` drop toggle have no meaning in the slot model. Keyboard slot moves stay (§ *Slot verbs*).
+6. **Windows: drop the komorebi code now (S0).** Native Windows support comes later. The macOS work sits behind `wm.Driver`, `wm.SpaceService`, `native.Platform` and `internal/hotkey`, so a later platform plugs in at those seams.
+7. **cgo** for every macOS framework call that needs it (A), in darwin-only packages.
+8. **Mouse gestures.** Not applicable; the question is removed.
+9. **Key repeat.** Any binding can set `repeat: true`; tess times the repeat itself. tessera is a personal project, so libraries are chosen on fit and maintenance only, not on adoption (§ *Library choices*).
 
 ## Open Questions
 
-### 1. Workspaces: who owns native Spaces once tess tiles?
+### 1. With SIP on, what happens when a job needs a new native Space?
 
-**Context:** in every option tess owns tiling: its tracks are the layout, and it moves windows with Accessibility (AX). The fork is only about native macOS Spaces. Creating, destroying and focusing a native Space works only through yabai's scripting addition, which is code injected into Dock and needs SIP partly off (evidence § *What needs the scripting addition*). Matt's AW display sits above the G9 with no free bottom corner, which is the case AeroSpace's parking does not support (evidence § *Live snapshot*). § *Workspaces: D against A* compares the two leading options on Matt's geometry.
+**Context:** with SIP fully on, tess cannot load its SA, and nothing can create or destroy a native Space (evidence § *What needs the scripting addition*). The laptop flex model (`laptop-flex-spaces.md`) and `CreateSpace` in the desk cascade both create Spaces. Matt's Mac keeps SIP partly off, so this decides behaviour only on another Mac or after Q2's SIP step.
 
-- **A. Virtual workspaces.** tess keeps one native Space per display. A workspace is a tess record. Switching moves windows on screen and parks the rest in a corner. No scripting addition, no SIP change. Costs: AW windows must park on another display, which AeroSpace does not support and V0 must prove; tess must restore a workspace when Cmd-Tab or the Dock activates a parked window; a crash leaves windows parked; Mission Control shows parked windows small; no Space animation; the migration destroys native Spaces and its reverse needs the scripting addition.
-- **B. Native Spaces through yabai's scripting addition, loaded by tess.** tess speaks the `yabai.osax` socket protocol itself. Costs: SIP stays off; tess tracks the osax protocol version (`2.1.37` in SC26) and a payload that needs a patch for most macOS point releases.
-- **C. Native Spaces through tess's own scripting addition.** As B, but tess owns the injected payload. Highest cost: arm64e code injection and per-release byte patterns become tess maintenance.
-- **D. Hybrid: yabai keeps native Spaces, tess tiles.** yabai runs a restricted configuration (§ *yabai's restricted configuration*): every Space `float`, no rules, no signals that mutate windows. tess calls yabai's Space commands through a new `wm.SpaceService` (N4). Costs: SIP stays off and yabai's payload patches remain; yabai's mouse gestures need an owner (question 8); a focus on another Space still waits for the Space switch, with a verified postcondition and one budget; two processes run.
+- **A. Space pool.** tess binds workspaces to the native Spaces that already exist. `CreateSpace` takes an unbound Space from the pool; if none is free it returns `wm.ErrCapability{Name: "space.create"}` and the job places the window on the active workspace. `tess doctor` prints how many Spaces each topology needs, so the user adds them once in Mission Control. Costs: unused Spaces stay in Mission Control; one manual step per new Mac.
+- **B. Fail the job.** `CreateSpace` returns the capability error and the job aborts. Costs: the laptop flex model stops working with SIP on.
+- **C. Virtual workspaces when the SA is missing.** tess falls back to stage V behaviour for the extra workspaces. Costs: two workspace models live in one desktop; parking is not proven on Matt's geometry.
 
-**Recommendation:** D, because it removes the split tree, insert arms, staging and the stack cap, keeps Spaces, Mission Control and native fullscreen as Matt uses them, needs no parking on the AW, and has a defined reverse. V0 researches A on its own schedule and does not block D.
+**Recommendation:** A, because it keeps every job working with no second workspace model, and the cost is a one-time setup step that `tess doctor` names.
 
-**Blocks:** N10 to N13, and V1 to V3.
+**Blocks:** the SIP-on path of N5 only.
 
-### 2. If tess removes yabai, does Matt re-enable SIP?
+### 2. Where does "save slot sizes to the profile" write?
 
-**Context:** depends on question 1. Only option A removes yabai; under D, SIP stays partly off. Re-enabling SIP is a Recovery-mode step and cannot be undone without another reboot into Recovery.
+**Context:** a temporary resize (§ *Temporary slot resize*) can be saved to the profile. The profile is CUE in Matt's nix repo, and the daemon reads it from a store path that it cannot write. `rule://config-in-cue` keeps config in CUE.
 
-- **A. Re-enable SIP after V3 and a two-week soak with no rollback.** Closes the attack surface that the partial SIP disable opens. Rollback to yabai then loses Space create and destroy until SIP is off again.
-- **B. Leave SIP as it is.** Rollback stays complete. The machine keeps the weaker protection with no remaining user.
+- **A. A tess-owned overlay file.** `tess layout save` writes `~/.config/tessera/overrides.cue`, which the profile loader unifies over the profile. `tess layout export` prints the same values as a CUE patch that Matt can move into his nix repo. Costs: two places define weights until Matt moves them.
+- **B. Edit the profile source in place.** The profile names its source path; tess rewrites the `weights` field there. Costs: tess writes into a version-controlled repo outside its own state; a rebuild is still needed.
+- **C. Print only.** `tess layout save` prints the patch and saves nothing. Costs: a saved size does not take effect until the next rebuild.
 
-**Recommendation:** A, because after the soak the rollback is unlikely and SIP protects every process, not only the WM.
+**Recommendation:** A, because a save takes effect at once, the overlay is plain CUE that the existing loader can unify, and `export` keeps the nix repo the long-term source.
 
-**Blocks:** the downstream SIP step in V3 only.
+**Blocks:** N9's save action only.
 
-### 3. Which signing identity keeps the Accessibility grant across nix rebuilds?
+### 3. How does tess get root to load its scripting addition?
 
-**Context:** every option needs the AX permission for tess. macOS keys that grant to the binary's designated requirement. An ad-hoc signature has no stable identity, so each rebuild looks like a new binary and the grant is lost [INFERENCE until N2 measures it] (evidence § *TCC*). `release-binaries.md` rules ad-hoc signing until a Developer ID exists.
+**Context:** loading needs root: yabai checks `is_root`, then uses `task_for_pid` on Dock (evidence § *What needs the scripting addition*). Dock restarts drop the payload, so the load runs again after each one. Today the downstream config holds a sudoers entry for `yabai --load-sa`.
 
-- **A. A local self-signed code-signing certificate.** Matt creates it once in the login keychain. Activation copies the daemon bundle to a stable path and signs it with that identity and a fixed identifier (N2). This is the method yabai documents for HEAD builds. One manual setup step.
-- **B. Wait for the Developer ID.** No local setup. The native work cannot ship until the DUNS number and Apple Developer Program membership exist.
-- **C. Accept a re-grant after each rebuild.** No setup. Matt clicks through System Settings after every tess change, and tess moves nothing until he does.
+- **A. A sudoers entry for one command.** nix-darwin writes a passwordless entry for `<stable path>/tess sa load`, and the daemon runs it at start and after `NSApplicationDockDidRestartNotification`. Same model as today. Costs: the entry names a path; a swap at that path runs as root, so the path must be root-owned.
+- **B. A root launchd daemon.** A small `tess sa-loader` LaunchDaemon runs as root and loads the SA when Dock starts. Costs: a long-running root process.
 
-**Recommendation:** A, conditional on N2's gate: two real activations keep the grant. It becomes a one-line identity change when the Developer ID arrives.
+**Recommendation:** A, because it matches what runs today and keeps no root process alive. N2 installs the bundle at a root-owned path for this reason.
 
-**Blocks:** N2, and the live gates of N6 onwards. Stage S does not need it: Carbon hotkeys need no permission.
-
-### 4. What does tess do when Matt drags a tiled window with the mouse?
-
-**Context:** a plain drag is a title-bar drag with no modifier. tess sees it as moved events while a mouse button is down (§ *Desired and observed state*). Modifier gestures are question 8.
-
-- **A. Snap back, or move across displays.** A tiled window dropped on its own display returns to its slot. A tiled window dropped on another display joins that display's active workspace as a new track at the drop side.
-- **B. Swap on drop.** Dropping onto another tiled window swaps the two, as `mouse_drop_action swap` does. Needs hit-testing of the drop point against slot frames.
-- **C. Float on drag.** A dragged tiled window becomes floating where it was dropped.
-
-**Recommendation:** A, because it keeps the layout the source of truth and needs no new gesture, while still letting a drag move a window to another monitor.
-
-**Blocks:** the drag handling in N7.
-
-### 5. Which tree-only verbs are deleted and which are remapped when tess tiles?
-
-**Context:** six verbs and one raw binding exist only because yabai keeps a binary split tree: `insert`, `warp`, `reset-splits`, `balance`, `columns`, `space bsp`, and the `cmd + alt - d` drop toggle. Stage S keeps every one of them working on yabai unchanged (§ *Hotkeys*). The remap happens when tess tiles, where a workspace is a list of tracks with weights. The full table is in evidence § *Binding migration*.
-
-- **A. Remap where a track meaning exists, delete the rest.** `insert stack|east` sets the arrival target of the focused workspace (a queryable field); `warp east` becomes `unstack east`; `balance` and `columns` set equal weights; `space bsp` becomes `space columns`; `reset-splits` and the drop toggle are deleted.
-- **B. Delete all of them.** Smaller command set. Matt loses keys he uses today and must learn `snap`.
-- **C. Keep the names as aliases forever.** No muscle-memory change. The CLI keeps names that describe a tree that no longer exists.
-
-**Recommendation:** A, because it keeps muscle memory for the keys that still make sense and removes only the two whose behaviour cannot exist without a tree.
-
-**Blocks:** N11 (remaps) and N13 (deletions).
-
-### 6. Does the Windows build also leave its third-party WM later?
-
-**Context:** `windows-backend/design.md` drives komorebi behind `wm.Driver`. This record keeps that seam and does not design a Win32 backend.
-
-- **A. Keep komorebi.** No Windows work here. The two platforms differ: macOS owns its tiling, Windows drives a WM.
-- **B. Plan a native Win32 backend on the same `native.Platform` seam later.** One model on both platforms. A second WM to own.
-
-**Recommendation:** A for now, because Windows has no user today; revisit when it does. This is a non-load-bearing deferral.
-
-### 7. How does Go call the macOS frameworks: cgo or purego?
-
-**Context:** tess calls Accessibility, CoreFoundation run loops, NSWorkspace notifications, CoreGraphics display callbacks and Carbon events. Several of these call back into Go from a C thread. `tess-app.md` § *Global Constraints* says "The `tess` module stays cgo-free", and the flake builds `tess` with `CGO_ENABLED = "0"`. [purego](https://github.com/ebitengine/purego) (about 4,100 stars, Apache-2.0) calls C without cgo; its `RegisterFunc` doc says "there is no way to verify that fptr matches the C function", and its `NewCallback` doc says "Only a limited number of callbacks may be created in a single Go process, and any memory allocated for these callbacks is never released". tess needs a fixed set of about ten callbacks, so the limit alone does not decide this. The only purego AX and hotkey wrappers found ([go-macos/accessibility](https://github.com/go-macos/accessibility), [go-macos/hotkey](https://github.com/go-macos/hotkey)) have no adoption yet.
-
-- **A. cgo, in Darwin-only packages.** Small C and Objective-C files compiled against the macOS SDK, with signatures checked by the compiler. Linux and Windows builds stay `CGO_ENABLED=0`. Choosing A supersedes the `tess-app.md` constraint for darwin builds of `tess`; S2 carries the build and packaging work.
-- **B. purego.** `tess` stays cgo-free on every platform and the frozen constraint holds. Every C signature, block and Objective-C class is declared by hand in Go and checked only at run time.
-
-**Recommendation:** A, because the callback-heavy run-loop code is the part most likely to crash, and compile-time signature checks are worth one darwin-only build change.
-
-**Blocks:** S2.
-
-### 8. Under D, who owns yabai's modifier mouse gestures?
-
-**Context:** depends on question 1 (D). yabai's mouse tap stays on in every configuration. With the modifier held, a left drag moves a window and a right drag resizes it. Neither checks whether the window is tiled: `MOUSE_DRAGGED` in `src/event_loop.c` (both) calls `window_manager_move_window(g_mouse_state.window, new_point.x, new_point.y)` and `window_manager_resize_window_relative_internal(...)`. `mouse_modifier` accepts only `alt`, `shift`, `cmd`, `ctrl` or `fn`, and `mouse_action1` and `mouse_action2` accept only `move` or `resize` (`COMMAND_CONFIG_MOUSE_MOD` parser branch in `src/message.c`, SC26). No supported setting turns the gestures off. Matt's yabairc sets `mouse_modifier fn` and says mouse window management is meant to be off. On a `float` Space yabai's release handler does nothing: `MOUSE_UP` (SC26) exits at `if (!src_view) goto err;` because the window is not tiled.
-
-- **A. tess owns all drags; disable yabai's gestures by patch.** A small patch on the fork (one argument constant and one parser branch in `src/message.c`) adds `mouse_modifier none`, which sets `MOUSE_MOD_NONE`. `mouse_mod_from_cgflags` never produces that value, so no gesture starts. Invariant: zero yabai frame writes. Costs: a patch on a fork Matt does not own, carried in a nix overlay until the fork maintainer merges it, and rebased on each fork release.
-- **B. yabai keeps modifier move and resize; tess yields during the gesture.** When a mouse button goes down with the `fn` flag held over a managed window, tess stops writing that window. When every button is up, tess reads the frame. A changed position follows question 4; a changed size on a tiled window snaps back. Invariant: yabai writes frames only to the window under an `fn` gesture, between mouse-down and mouse-up. No patch.
-- **C. No modifier gestures at all.** As A, but tess does not add its own replacement for modifier gestures later either. The patch is the same as A's; the difference is product scope.
-
-**Recommendation:** B, because it needs no patch on a third-party fork, keeps today's behaviour on the rare `fn` drag, and has an invariant N1 can test.
-
-**Blocks:** N1's mouse probe, N7's gesture handling and N9.
-
-### 9. Do the resize arrows keep key repeat?
-
-**Context:** under skhd, holding `shift + cmd + alt - left` repeats the 100 px resize. Carbon `RegisterEventHotKey` sends one pressed event and one released event per press (`kEventHotKeyPressed`, `kEventHotKeyReleased`), with no repeat.
-
-- **A. Accept the loss.** One press is one 100 px step. No code. A visible change from today on four bindings.
-- **B. Repeat in tess.** A binding can set `repeat: true`. On press tess runs the command, waits the system's initial key-repeat delay (`NSEvent.keyRepeatDelay`), then runs it again every `NSEvent.keyRepeatInterval` until the released event. About 60 lines, tested with `synctest`.
-
-**Recommendation:** B, because it keeps the stage S promise that every binding behaves as today, at a small cost.
-
-**Blocks:** S3 and S4.
+**Blocks:** N4's load step.
 
 ## Direction
 
-**Product fit.** Matt's ruling of 2026-11-09 asks to port everything into tess, move the keybinds into tess, align with the native app, and replace yabai as the backend, "not considering how we implemented it before". RIG-8858 tracks it. The frozen records already put tess's model at the centre: arrangements and topologies (`tess-app.md`, `grid-layouts.md`), named slots (`window-slot-memory.md`, `deskSlots`), the laptop flex model (`laptop-flex-spaces.md`) and arrival placement (`new-window-placement.md`). Today each of these is translated into yabai's split tree by `internal/wm/yabai`, and most of the pain in RIG-8691, #73 and #75 sits in that translation. This record removes the translation.
+**Product fit.** Matt's ruling of 2026-11-09 asks to port everything into tess, move the keybinds into tess, align with the native app, and replace yabai as the backend, "not considering how we implemented it before". RIG-8858 tracks it. The frozen records already put tess's model at the centre: arrangements and topologies (`tess-app.md`, `grid-layouts.md`), named slots (`window-slot-memory.md`, `deskSlots`), the laptop flex model (`laptop-flex-spaces.md`) and arrival placement (`new-window-placement.md`). Today each of these is translated into yabai's split tree by `internal/wm/yabai`, and most of the pain in RIG-8691, #73 and #75 sits in that translation. This record removes the translation. tess becomes a **slot manager**: a layout is a set of slots, each slot holds a stack, and windows fill slots by profile rules. It is not a BSP tiler.
 
-**Scope.** Repo `mattwilkinsonn/tessera` for the code. Matt's config (skhd, yabai, sketchybar, launchd agents and the profile) changes downstream in his nix repo, named here only as the downstream consumer. The Windows backend keeps working through the same seam (question 6). No hosted service and no usage-billed resource.
+**Scope.** Repo `mattwilkinsonn/tessera` for the code, including tess's own scripting addition under `sa/`. Matt's config (skhd, yabai, sketchybar, launchd agents, sudoers and the profile) changes downstream in his nix repo, named here only as the downstream consumer. The Windows (komorebi) code is deleted (Decision 6); macOS is built behind interfaces that a later platform can implement. No hosted service and no usage-billed resource.
 
 **Prior art.**
 
-- [yabai](https://github.com/koekeishiya/yabai) (MIT) and the [Christian-SC26 fork](https://github.com/Christian-SC26/yabai) Matt runs. The reference for how macOS window handling works: AX observers per app (`application_observe` in `src/application.c`), frame writes (`window_manager_set_window_frame` in `src/window_manager.c`) and focus (`window_manager_focus_window_with_raise`), all **both**. Its Space operations can stay behind a narrow adapter while tess owns tiling: `space_manager_add_space` in `src/space_manager.c` returns `SPACE_OP_ERROR_SCRIPTING_ADDITION` when the scripting addition fails (**both**). A `float` view does not tile: `space_manager_tile_window_on_space_with_insertion_point` starts with `if (view->layout == VIEW_FLOAT) return view;`, and `window_manager_handle_display_add_and_remove` guards its reflow with `if (view->layout != VIEW_FLOAT) {` (**both**). Rules, the mouse tap and focus side effects stay active (§ *yabai's restricted configuration*, question 8).
-- [AeroSpace](https://github.com/nikitabobko/AeroSpace). Its README says it uses "only a single private API to get window ID of accessibility object `_AXUIElementGetWindow`" and "will never require you to disable SIP". Its [guide](https://nikitabobko.github.io/AeroSpace/guide#emulation-of-virtual-workspaces) places inactive windows "outside the visible area of the screen, in the bottom right or left corner", requires that "every monitor has free space in the bottom right or left corner", and restores on activation: "Once you switch back to the workspace, (e.g. by the means of workspace command, or cmd + tab) windows are placed back to the visible area of the screen." Its hotkeys use [soffes/HotKey](https://github.com/soffes/HotKey), which calls Carbon `RegisterEventHotKey`. Borrow the hotkey API and the per-app AX threads; under option A, also the park and activation-restore rules. Matt's AW is outside the arrangement AeroSpace supports.
-- [Amethyst](https://github.com/ianyh/Amethyst). Public AX on top of native Spaces. Its "throw window to space" broke on macOS 15 ([#1662](https://github.com/ianyh/Amethyst/issues/1662), closed not planned); the maintainer states: "The mechanism by which we do it is no longer possible, it seems." The thread also records "failed to set compat aside id: CGError(rawValue: 717863)". Keep the warning: native Space moves without private APIs are not supported. It does not show that public AX alone can move windows between native Spaces, nor that delegating supported moves to yabai means keeping yabai's tiling tree.
-- [Rectangle](https://github.com/rxhanson/Rectangle). Hotkeys only, through [MASShortcut](https://github.com/rxhanson/MASShortcut), whose `MASHotKey.m` calls `RegisterEventHotKey`. Borrow: Carbon hotkeys need no permission prompt.
-- [skhd](https://github.com/koekeishiya/skhd), today's hotkey daemon, uses a `CGEventTap` (`event_tap_begin` in `src/event_tap.c`), which needs Accessibility. Avoid for the hotkey path.
+- [yabai](https://github.com/koekeishiya/yabai) (MIT) and the [Christian-SC26 fork](https://github.com/Christian-SC26/yabai) Matt runs. The reference for how macOS window handling works: AX observers per app (`application_observe` in `src/application.c`), frame writes (`window_manager_set_window_frame` in `src/window_manager.c`) and focus (`window_manager_focus_window_with_raise`), all **both**. Its scripting addition is the starting point of tess's own: `src/sa.m` (client), `src/osax/payload.m` (code that runs in Dock), `src/osax/loader.m` (injection) and the per-release tables `src/osax/arm64_payload.m` and `x64_payload.m` (SC26). Borrow: the socket protocol, the handshake that reports a version and a capability bitmask, and the byte-pattern tables. Do not borrow: the BSP tree, rules or the mouse tap.
+- [AeroSpace](https://github.com/nikitabobko/AeroSpace). Its README says it uses "only a single private API to get window ID of accessibility object `_AXUIElementGetWindow`" and "will never require you to disable SIP". Its [guide](https://nikitabobko.github.io/AeroSpace/guide#emulation-of-virtual-workspaces) places inactive windows "outside the visible area of the screen, in the bottom right or left corner", requires that "every monitor has free space in the bottom right or left corner", and restores on activation. Its hotkeys use [soffes/HotKey](https://github.com/soffes/HotKey), which calls Carbon `RegisterEventHotKey`. Borrow the hotkey API and the per-app AX threads; for stage V, also the park and activation-restore rules. Matt's AW is outside the arrangement AeroSpace supports ([#382](https://github.com/nikitabobko/AeroSpace/issues/382)).
+- [FancyZones](https://learn.microsoft.com/en-us/windows/powertoys/fancyzones), [Divvy](https://mizage.com/downloads/DivvyMacHelp.pdf), [Rectangle Pro](https://rectangleapp.com/pro/docs/layouts) and [Moom](https://manytricks.com/moom/help/snap.html): slot and zone managers. Borrow: a highlighted target while the user picks a slot (FancyZones, Moom), Escape to cancel (Divvy, Hammerspoon `hs.grid`), and saved layouts that the user updates explicitly (Rectangle Pro, Moom). None of them has tess's automatic arrival placement.
+- [niri tabs](https://niri-wm.github.io/niri/Tabs.html): a column shown as tabs with a side indicator. Borrow for stacks: one slot, many windows, one front window, keyboard cycling.
+- [Amethyst](https://github.com/ianyh/Amethyst). Public AX on top of native Spaces. Its "throw window to space" broke on macOS 15 ([#1662](https://github.com/ianyh/Amethyst/issues/1662)); the maintainer states: "The mechanism by which we do it is no longer possible, it seems." Keep the warning: native Space moves need private APIs.
+- [Rectangle](https://github.com/rxhanson/Rectangle) and [skhd](https://github.com/koekeishiya/skhd): Rectangle registers hotkeys with Carbon through MASShortcut and needs no permission prompt; skhd uses a `CGEventTap` (`event_tap_begin` in `src/event_tap.c`), which needs Accessibility. tess follows Rectangle.
 
-**Lifetime.** Years: this is the window manager of Matt's daily machine. The design is sized to that: each stage ships alone, every migration step is recorded and has a defined reverse, and the private-API list in tess stays at one symbol.
+**Lifetime.** Years: this is the window manager of Matt's daily machine. The design is sized to that: each stage ships alone, every migration step is recorded and has a defined reverse, and every private call sits behind a capability that can report itself missing.
 
-**Simpler option.** Keep yabai, finish #76 (events instead of sleeps) and move only the hotkeys and command routing into the daemon. That is stage S of this plan, and it ships value alone. It does not remove insert arms, the stack cap or staging floats, because those come from driving yabai's split tree from outside. The hybrid (question 1, D) is the next smallest step that does: it keeps yabai for native Spaces only.
+**Simpler option.** Keep yabai, finish #76 (events instead of sleeps) and move only the hotkeys and command routing into the daemon. That is stage S of this plan, and it ships value alone. It does not remove insert arms, the stack cap or staging floats, because those come from driving yabai's split tree from outside. Stage V without stage N (virtual workspaces, no SA) is simpler still, but it fails on the AW unless the parking spike passes.
 
 ## Problem / Intent
 
-tess decides layouts in its own terms but realizes them by issuing yabai commands against yabai's split tree and native Spaces, then sleeping or polling until yabai catches up. The mismatch causes the known failures: insert arms that cannot be queried, `ErrSpaceFull`, focus waits that time out (Zen), rule-managed windows, floating staging windows stranded by a failed apply, and fixed sleeps. Make tess the window manager on macOS: its own workspace and track model is the state, it moves and focuses windows itself, it owns the hotkeys, and every command runs in its daemon, with a staged cutover that never leaves Matt's desktop broken.
+tess decides layouts in its own terms but realizes them by issuing yabai commands against yabai's split tree and native Spaces, then sleeping or polling until yabai catches up. The mismatch causes the known failures: insert arms that cannot be queried, `ErrSpaceFull`, focus waits that time out (Zen), rule-managed windows, floating staging windows stranded by a failed apply, and fixed sleeps. Make tess the macOS window manager as a slot manager: its own workspace and slot model is the state, it moves and focuses windows itself, it owns the hotkeys and the scripting addition, and every command runs in its daemon. The cutover is staged and never leaves Matt's desktop broken, and no part of tess depends on yabai at run time after stage N.
 
 ## Approach
 
 ### End state and stages
 
-On macOS, tess owns window tracking, tiling, focus, hotkeys and the state feed for the app and sketchybar. Under question 1's recommendation, yabai remains only as the native-Space service. Each stage ships alone and leaves a working desktop.
+On macOS, tess owns window tracking, slot placement, focus, hotkeys, native Spaces (through its own scripting addition) and the state feed for the app and sketchybar. yabai does not run. Each stage ships alone and leaves a working desktop.
 
 | Stage | Tasks | What changes | yabai | skhd | Rollback |
 | --- | --- | --- | --- | --- | --- |
-| S | S1–S4 | Every command runs in the daemon. tess registers the hotkeys. Every binding keeps today's behaviour, including repeat (question 9). | tiles | **removed** at S4 | re-enable the skhd agent |
-| N-build | N1–N9 | Space service, model, platform layer and native driver; observe mode; actuation gate. Nothing moves on the daily desktop. | tiles | gone | none needed |
-| N-hybrid | N10–N12 | tess owns yabai's configuration; the recorded migration restricts yabai and tess tiles. | Spaces only | gone | `tess migrate --reverse` |
-| N-clean | N13 | Staging, insert arms, BSP verbs and yabai tiling code are deleted. | Spaces only | gone | revert the release |
-| V | V0–V3 | V0 researches A at any time. V1–V3 run only if question 1 later picks A; yabai is removed at V3. | **removed** at V3 | gone | `tess migrate --reverse` until V3 |
+| S | S0–S4 | The Windows code goes. Every command runs in the daemon. tess registers the hotkeys from the profile, with repeat. Every binding keeps today's behaviour. | tiles | **removed** at S4 | re-enable the skhd agent |
+| N-build | N1–N11 | tess's scripting addition, Space service, slot model, platform layer, native driver and slot interaction; observe mode; actuation gate. Nothing moves on the daily desktop. | tiles | gone | none needed |
+| N-switch | N12–N13 | The recorded migration stops yabai and starts the native backend; two-week soak. | stopped, installed | gone | `tess migrate --reverse` |
+| N-clean | N14 | The yabai driver, staging, insert arms and tree verbs are deleted. tess has no yabai code path. | **removed** | gone | revert the release, reinstall yabai |
+| V (optional) | V0–V3 | V0 runs the parking spike on Matt's geometry at any time. V1–V3 run only if V0 passes and Matt opts in. | removed | gone | `tess migrate --reverse` to native Spaces until V3 |
 
-Two WMs never write the same window at the same time. In N-hybrid, yabai's restricted configuration stops its tiling, rules and mutating signals; question 8 names the one gesture exception. N1 tests this invariant.
+Two WMs never run at once. From N12 on, yabai is stopped before tess's native backend starts, and Dock is restarted in between so yabai's payload is gone before tess's loads (§ *Migration*).
 
-### The window model is tess's state
+### Slots: the window model is tess's state
+
+tess is a slot manager. A **workspace** is one layout on one display. A layout is an ordered list of **slots** along one axis, one weight per slot, as `grid-layouts.md` defines tracks: a slot is one track. A slot holds a **stack** of windows with one front window, as a niri tab column does. New windows go into slots by the profile's arrival rules (`new-window-placement.md`). The keyboard moves windows between slots. There is no split tree.
 
 A new package, `internal/wm/native`, holds a `Model` with two parts.
 
 - **Lifecycle** is committed state: which windows exist, their pid, native Space, observed frame, apply status, AX attachment and tombstones of closed windows. Only platform events, Space-service notices and operation results change it. Lifecycle is never part of a job's working copy and is never discarded.
-- **Desired** is the layout: workspace membership, tracks, weights, front windows, modes and arrival targets. Jobs edit it on a working copy (§ *Job transactions*). The screen is made to match it.
+- **Desired** is the layout: workspace membership, slots, weights, temporary weight overrides, front windows, window modes and arrival targets. Jobs edit it on a working copy (§ *Job transactions*). The screen is made to match it.
 
 The parts hold these records:
 
 - **Display:** keyed by the UUID from `CGDisplayCreateUUIDFromDisplayID` (`display_uuid` in `src/display.c`, **both**), so profile `deviceId` values and `ResolveDisplay` keep working.
-- **Workspace:** an ID, a label, its display, a kind (`columns`, `rows` or `stack`), an ordered list of tracks, one weight per track, a front window per track, and an arrival target. Under D a workspace is bound to one native Space ID; under A it is a tess record only.
-- **Window:** a CGWindowID from `_AXUIElementGetWindow`, which is the number yabai reports, so `window-slots.json` survives the switch. Its mode is tiled (in a track), floating (own frame), excluded (not managed) or suspended (native fullscreen, or on a native Space tess does not manage).
-- **Layout** is a pure function: `Frames(area wm.Frame, ws Workspace) map[int]wm.Frame`. The area is the display frame minus the bar inset, 32 pt at the top, the same as `external_bar all:32:0` in Matt's yabairc today. Every window in a track gets the track's frame. The front window is raised.
+- **Workspace:** an ID, a label, its display, a kind (`columns`, `rows` or `stack`), an ordered list of slots, one weight per slot from the profile, an optional override weight vector (§ *Temporary slot resize*), and an arrival target. A workspace is bound to one native Space ID. In stage V it is a tess record only. The label is a tess field; macOS has no Space labels, and yabai's labels were yabai state.
+- **Slot:** a name (from `deskSlots` or the layout's track names), an ordered window list and a front window.
+- **Window:** a CGWindowID from `_AXUIElementGetWindow`, which is the number yabai reports, so `window-slots.json` survives the switch. Its mode is `slotted` (in a slot), `floating` (own frame, pinned on top, with a home slot), `excluded` (not managed) or `suspended` (native fullscreen, or on a native Space tess does not manage).
+- **Layout** is a pure function: `Frames(area wm.Frame, ws Workspace) map[int]wm.Frame`. The area is the display frame minus the bar inset, 32 pt at the top, the same as `external_bar all:32:0` in Matt's yabairc today. It uses the override weights when they are set. Every window in a slot gets the slot's frame. The front window is raised.
 
 The native backend implements `wm.Driver` against this model and a `wm.SpaceService` (§ *The Space service*).
 
 | `wm.Driver` call | Native meaning |
 | --- | --- |
-| `CreateSpace`, `DestroySpace`, `LabelSpace`, `MoveSpaceToIndex` | D: Space-service call, an irreversible checkpoint; then bind or unbind the workspace record. A: edit the record only. |
-| `MoveWindowToSpace` | Move desired membership. D: also a Space-service call and an irreversible checkpoint. |
-| `RealizeSpaceLayout(target)` | Set the workspace's kind, tracks and weights to `target`. |
-| `SetSpaceLayout`, `BalanceSpace` | Set the kind; set equal weights. |
-| `ToggleFloat`, `StackOnto`, `SwapWindows`, `FocusWindowDir`, `ResizeWindow` | Edit tracks or weights; resolve direction from the computed frames. |
-| `ArmInsert(dir)` | Set the workspace's arrival target, which can be queried. |
+| `CreateSpace`, `DestroySpace`, `MoveSpaceToIndex` | Space-service call, an irreversible checkpoint; then bind or unbind the workspace record. Without the capability, see open question 1. |
+| `LabelSpace` | Edit the workspace record only. |
+| `MoveWindowToSpace` | Move desired membership, then a Space-service call and an irreversible checkpoint. |
+| `RealizeSpaceLayout(target)` | Set the workspace's kind, slots and profile weights to `target`; keep any override. |
+| `ToggleFloat` | Float and pin the window, recording its home slot; or return a floating window to its home slot (§ *Float and pin*). |
+| `StackOnto`, `SwapWindows`, `FocusWindowDir`, `ResizeWindow` | Edit slots or override weights; resolve direction from the computed frames. |
 | `FocusWindow` | Checkpoint, then focus per § *Focus*. |
 | `Query*` | Read desired and lifecycle state together. |
 
 ### What the model deletes, and what must change first
 
-- **Insert arms.** The arrival target is a field in the model, not a one-shot toggle inside yabai.
-- **`ErrSpaceFull` and the stack cap.** A track is a Go slice. The cap is enforced before the driver sees any work: `evacuateWindows` in `internal/engine/desk.go` checks `if managed >= wm.StackWindowCap {`. N3 moves the cap behind `wm.Capabilities`. The retained yabai Space calls no longer check it (N4).
+- **Insert arms.** The arrival target is a field in the model, not a one-shot toggle inside yabai. `ArmInsert` and the `insert` verb go (Decision 5).
+- **`ErrSpaceFull` and the stack cap.** A slot is a Go slice. The cap is enforced before the driver sees any work: `evacuateWindows` in `internal/engine/desk.go` checks `if managed >= wm.StackWindowCap {`. N3 moves the cap behind `wm.Capabilities`.
 - **Staging floats.** `DeskPlan` floats slot owners (`FloatWindowOp{Staging: true}`) so that yabai's tree can be rebuilt in order, and `stagingPlan.before` in `internal/commands/staging.go` persists them with `effects.WriteStagedWindows` before the driver is called. N3 makes both depend on `Capabilities().NeedsStaging`.
-- **Settle waits.** `SettleUnit` and the tiling sleeps in evidence § *#76 sleep sites* go, because a tiling step is a model edit confirmed by read-back. The Space sleeps (`LabelSpace`'s 50 ms, `MoveWindowToSpace`'s 100 ms, `CreateSpace`'s poll) become postcondition checks in N4.
-- **yabai rules.** `Rules` in `internal/commands/orchestration.go` installs `auto:*` rules. In the hybrid tess installs no rules and the restricted configuration removes every rule. Native admission is a model decision: a window is managed when its subrole is `AXStandardWindow`, it is not native fullscreen, and it matches no entry in a new profile list `unmanaged`. The defaults reproduce today's exceptions (Finder, System Settings, 1Password, Akiflow dialogs). The laptop routing rules (`auto:code`, `auto:linear`, `auto:akiflow`, `auto:default-laptop-stack`) become arrival targets in the native `HandleWindowCreated` path.
-- **BSP terms.** `SplitType`, `ToggleSplit`, `SetSplitRatio` and `LayoutBSP` have no native meaning. They are removed at N13.
+- **Settle waits.** `SettleUnit` and the tiling sleeps in evidence § *#76 sleep sites* go, because a slot change is a model edit confirmed by read-back. The Space sleeps become postcondition checks in the Space service (N5).
+- **yabai rules.** `Rules` in `internal/commands/orchestration.go` installs `auto:*` rules. Native admission is a model decision: a window is managed when its subrole is `AXStandardWindow`, it is not native fullscreen, and it matches no entry in a new profile list `unmanaged`. The defaults reproduce today's exceptions (Finder, System Settings, 1Password, Akiflow dialogs). The laptop routing rules (`auto:code`, `auto:linear`, `auto:akiflow`, `auto:default-laptop-stack`) become arrival targets in the native `HandleWindowCreated` path.
+- **Tree verbs and BSP terms.** `insert`, `warp`, `reset-splits`, `balance`, `columns`, `space bsp` and `drop-action`, and the driver terms `SplitType`, `ToggleSplit`, `SetSplitRatio`, `LayoutBSP`, `WarpWindow` and `ArmInsert`, have no slot meaning. They are removed at N14 (Decision 5).
 
-### Workspaces: D against A
+### Workspaces: native Spaces now, virtual later
 
-| Concern, on Matt's displays | D: yabai holds Spaces | A: virtual workspaces |
+Stage N binds each workspace to a native Space and drives Spaces through tess's own scripting addition (§ *tess's scripting addition*). Stage V replaces native Spaces with virtual workspaces if the parking spike passes. The table compares them on Matt's displays.
+
+| Concern, on Matt's displays | N: native Spaces, tess SA | V: virtual workspaces |
 | --- | --- | --- |
 | AW above the G9, no free bottom corner | No parking | Must park on another display; AeroSpace does not support this; V0 measures it |
 | Cmd-Tab, Dock or a notification activates a hidden window | macOS switches the Space; tess attaches AX and flushes the newly visible workspace | tess must detect the activation and restore the workspace |
 | Native fullscreen | Native; window is suspended in its slot | Suspended; its Space is a stray Space |
 | Mission Control, Space animation, laptop flex "a new app gets a space for free" | Unchanged | Parked windows show small; no animation; flex spaces become records |
 | Crash of tess | Windows stay where they were | Windows stay parked until restart or rescue |
-| Focus on another Space (Zen) | Waits for the Space switch with a verified postcondition and one budget. N1 and N9 measure the success rate with a stated trial count; this record does not claim the Zen failure is fixed | No Space wait |
-| Mouse gestures | Owner per question 8 | tess only |
-| SIP and payload patches | Stay | Removed after V3 |
-| Migration and its reverse | Restrict yabai's configuration; reverse restores it (§ *Migration*) | Destroy native Spaces; reverse recreates them through the scripting addition |
+| Focus on another Space (Zen) | SA focus, else gesture fallback, with a verified postcondition and one budget. N1 and N11 measure the success rate with a stated trial count; this record does not claim the Zen failure is fixed | No Space wait |
+| SIP | Partly off for full capability; tess still runs with SIP on (§ *Capabilities and SIP*) | Can be turned back on (Decision 2) |
+| Per-release payload patches | tess owns them | None after V3 |
+| Migration and its reverse | Stop yabai, load tess's SA; reverse restarts yabai (§ *Migration*) | Destroy native Spaces through tess's SA; reverse recreates them |
 
-D removes every tiling failure named in § *Problem / Intent* and turns the Zen wait into a measured, bounded wait. A also retires SIP and the payload, but adds parking on an arrangement that the one mature implementation does not support.
+N removes every tiling failure named in § *Problem / Intent* with a payload tess controls. V also retires SIP and the payload, but needs parking on an arrangement that AeroSpace, the one mature implementation, does not support.
 
-### yabai's restricted configuration
+### tess's scripting addition
 
-`float` on a view stops tiling and display reflow, but not every path that moves a window. These paths stay active and the restricted configuration closes each one (all **both** unless marked):
+**Why an SA.** Creating and destroying a native Space works only from inside Dock. yabai does it with code injected into Dock: `space_manager_add_space` returns `scripting_addition_create_space(sid) ? SPACE_OP_ERROR_SUCCESS : SPACE_OP_ERROR_SCRIPTING_ADDITION` (**both**). tess owns that code now (Decision 1).
 
-- **New Spaces.** `view_create` in `src/view.c` gives a user Space the global layout unless the Space has the `VIEW_LAYOUT` flag (`view->layout = g_space_manager.layout;`). The restricted configuration sets the global `layout float`, so a Space created by Mission Control or by a yabai restart is `float` too. It also sets `float` on each Space that has its own layout, because `--layout` sets `VIEW_LAYOUT` (`COMMAND_SPACE_LAYOUT` branch in `src/message.c`, SC26).
-- **Rules.** `window_manager_apply_rule_effects_to_window` in `src/window_manager.c` moves windows across Spaces (`window_manager_send_window_to_space(sm, wm, window, sid, true);`) and applies grids (`window_manager_apply_grid(...)`) whatever the layout. The restricted configuration removes every rule.
-- **Signals.** Any signal action that calls a mutating yabai command is removed. Two kinds stay: tess's own `tessera-` signals, which `RegisterSignals` in `internal/daemon/wiring.go` adds and whose actions only notify the daemon socket or trigger sketchybar, and `dock_did_restart` → `sudo yabai --load-sa`, which loads the payload and moves no window.
-- **Focus side effects.** `window_manager_send_window_to_space` focuses the next window on the source Space when the moved window had focus: `window_manager_focus_window_with_raise(&next->application->psn, next->id, next->ref);`. This is expected. After a delegated move, tess focuses the window the job asked for; if the job asked for none, tess records the new focus in lifecycle state and does not fight it.
-- **Settings.** `mouse_follows_focus off`, `focus_follows_mouse off`, `auto_balance off`, `window_origin_display default`. The mouse tap is question 8.
+**Source.** tess forks the SA from SC26 `a26707a`, which is MIT licensed (`LICENSE.txt`: "Copyright (c) 2019 Åsmund Vikane"). The files are `src/sa.h`, `src/sa.m`, `src/osax/common.h`, `src/osax/payload.m`, `src/osax/loader.m`, `src/osax/arm64_payload.m` and `src/osax/x64_payload.m`, about 2,850 lines in total (evidence § *Scripting addition source*). The payload, loader, pattern table and `common.h` move into a new top-level `sa/` directory with yabai's copyright and the MIT text. The loader keeps its comment `The arm64e injection path is based on work by Jeremy Legendre (https://github.com/jslegendre)`. The client half (`sa.h`, `sa.m`) is not copied: tess writes its client in Go (`internal/sa`) and reads `sa.m` as the reference. `THIRD_PARTY_NOTICES.md` (added empty in S0) gains the yabai notice and the Legendre attribution in N4.
 
-**tess owns yabai's configuration (N10).** The downstream yabairc shrinks to loading the payload and running `tess yabai-config apply`, then `tess wake`. That command applies one of two sets: `legacy`, a profile block that holds today's yabairc settings, or `restricted`, a fixed set in tess. It picks the set from the migration state, not the profile. So a yabai restart re-applies the right set before any `layout bsp` can retile, and migrating needs no nix rebuild. With no migration state, it applies `legacy`.
+**What tess keeps.** The payload in SC26 handles 19 opcodes (`enum sa_opcode` in `src/osax/common.h`). tess keeps six and removes the rest:
+
+| Opcode | tess use |
+| --- | --- |
+| `HANDSHAKE` | version and capability bits |
+| `SPACE_CREATE`, `SPACE_DESTROY` | `CreateSpace`, `DestroySpace` |
+| `SPACE_FOCUS` | `FocusSpace` without animation |
+| `SPACE_MOVE` | `MoveSpace` (Space order on one display) |
+| `WINDOW_LAYER` | pin a floating window on top (§ *Float and pin*) |
+
+`WINDOW_TO_SPACE` and `WINDOW_LIST_TO_SPACE` are dropped, because tess moves windows between Spaces from its own process (§ *Capabilities and SIP*). Opacity, shadow, sticky, scale, order, focus and the animation proxies have no slot meaning and go. Fewer opcodes means fewer byte patterns and Dock ivars to keep per macOS release [INFERENCE: N4 counts the patterns left after the cut].
+
+**Protocol.** tess keeps yabai's wire format: a 2-byte length, a 1-byte opcode and packed arguments, over a Unix socket that the payload opens in Dock. It renames the socket from `/tmp/yabai-sa_<user>.socket` (`SA_SOCKET_PATH_FMT`) to `/tmp/tess-sa_<user>.socket`, the bundle from `yabai.osax` to `tess.osax`, and sets its own `OSAX_VERSION`, starting at `tess-1`. So yabai's payload and tess's payload never answer each other's socket.
+
+**Handshake.** yabai's handshake returns the payload version and a bitmask of what it found in Dock (`do_handshake` in `src/osax/payload.m`, SC26): `OSAX_ATTRIB_ADD_SPACE`, `OSAX_ATTRIB_REM_SPACE`, `OSAX_ATTRIB_MOV_SPACE` and others, each set only when its function pointer or pattern was found. tess reads the bitmask at load and after each Dock restart, and maps it to capabilities. A version that differs from the binary's own is a reload, never a silent use. yabai's client already notes the reason in `src/sa.m`: "The payload ignores a space move when it has no way to move spaces on this macOS version, but the socket write itself still succeeds."
+
+**Install and load (`tess sa`).** Same steps as `scripting_addition_load` in `src/sa.m` (SC26), in Go with a small cgo part:
+
+1. `tess sa status` (no root) reads SIP with `csr_get_active_config`, the boot-args for `-arm64e_preview_abi`, the installed bundle version, and the handshake. It prints the capability table below.
+2. `tess sa load` (root) checks `CSR_ALLOW_UNRESTRICTED_FS` and `CSR_ALLOW_TASK_FOR_PID` and the boot-arg, installs `/Library/ScriptingAdditions/tess.osax` when the version differs, runs its loader, and waits for the handshake. Root comes from open question 3.
+3. The daemon runs `tess sa load` at start and after `NSApplicationDockDidRestartNotification`, then re-reads capabilities. A failed load is not fatal: the daemon logs it and runs with the capabilities it has.
+4. `tess sa uninstall` (root) removes the bundle. Rollback runs it.
+
+**Build.** The payload and loader are Objective-C built by `flake.nix` for `aarch64-darwin` into the release bundle, beside `tess`. tess embeds no payload binary in Go; `tess sa load` copies it from the bundle. The x86_64 table stays in the tree only if Matt keeps an Intel Mac [INFERENCE: none in the profile; N4 deletes `x64_payload.m` unless one exists].
+
+**Per-release work.** The payload finds Dock functions by byte pattern and offset per macOS version and per CPU (`get_add_space_offset`, `get_add_space_pattern` in `src/osax/arm64_payload.m`, SC26). A new macOS release can break a pattern; a bad assumption can crash Dock (evidence § *What needs the scripting addition*). tess's rule: the payload refuses to hook a macOS version it has no entry for, and reports the capability as missing. It never guesses a pattern. Upstream yabai and SC26 changelogs stay the first place to look for a new pattern; tess ports a fix by hand and records its source commit in the table.
+
+### Capabilities and SIP
+
+tess runs with SIP fully on. It does less. Every capability is reported, never assumed.
+
+| Capability | Needs | SIP fully on | Source of the fact |
+| --- | --- | --- | --- |
+| Move, resize, focus, slot layout | AX grant | yes | public AX |
+| Hotkeys | none | yes | Carbon `RegisterEventHotKey` |
+| Read Spaces and the windows on each | private SkyLight reads, no SA | yes [INFERENCE: N1 checks with SIP on] | `SLSCopyManagedDisplaySpaces`, `SLSCopyWindowsWithOptionsAndTags`, `SLSCopySpacesForWindows`, all called by yabai's daemon, not its payload (**both**) |
+| Move a window to an existing Space | private SkyLight call, no SA | yes on macOS versions that have it [INFERENCE: N1 checks] | `space_manager_move_window_to_space` tries `SLSPerformAsynchronousBridgedWindowManagementOperation`, then `SLSMoveWindowsToManagedSpace`, before the SA (SC26) |
+| Focus a Space | SA; else a synthesized Dock gesture | yes, with animation | `space_manager_focus_space_using_gesture` (**both**) |
+| Create or destroy a Space | SA (`ADD_SPACE`, `REM_SPACE`) | **no** | `space_manager_add_space` (**both**) |
+| Reorder Spaces | SA (`MOV_SPACE`) | **no** | `space_manager_move_space_after_space` (**both**) |
+| Pin a floating window above slotted ones | SA (`WINDOW_LAYER`); else raise only | partly: raised, not kept on top | `do_window_layer` in `src/osax/payload.m` calls `SLSSetWindowSubLevel` (SC26) |
+
+`wm.SpaceService.Capabilities()` returns this table as `wm.SpaceCaps`. A call to a missing capability returns `wm.ErrCapability{Name}` at once and runs nothing. The state stream and `tess sa status` carry the table, so the app and sketchybar can show it. Open question 1 decides what a job does when `space.create` is missing. With SIP on and no SA, the laptop flex model has no Space to grow into; with the SA it works as today.
+
+**Private API in tess.** The daemon calls `_AXUIElementGetWindow` and the SkyLight read and window-move calls in the table, each resolved with `dlsym` at start. A missing symbol turns off its capability; it does not stop the daemon. Every other private call lives in the payload.
 
 ### The Space service
 
-`wm.SpaceOps` has no focus or window-to-Space call, and today's yabai driver hides fixed waits inside them. N4 adds a separate interface, `wm.SpaceService`, that the native driver uses. The yabai driver's Space methods call it too, so the fixed sleeps go on both backends.
+`wm.SpaceOps` has no focus or window-to-Space call, and today's yabai driver hides fixed waits inside them. N5 adds a separate interface, `wm.SpaceService`, with one implementation, `internal/wm/native/spaces`, that uses tess's SA client and the SkyLight calls above.
 
-**Contract for every operation.** The service subscribes to its notices before it runs the command. Right after the command it checks the postcondition once, which covers both an already-satisfied target and a notice that arrived early. It then waits for a relevant notice or a poll tick, whichever comes first, within the operation's budget. A met postcondition returns nil. A spent budget returns `*wm.SpaceOpError{Op, Outcome: wm.OutcomeUnknown}`. The caller then resolves the outcome with `Snapshot` (§ *Job transactions*).
+**Contract for every operation.** The service subscribes to its notices before it acts. Right after the action it checks the postcondition once, which covers both an already-satisfied target and a notice that arrived early. It then waits for a relevant notice or a poll tick, whichever comes first, within the operation's budget. A met postcondition returns nil. A spent budget returns `*wm.SpaceOpError{Op, Outcome: wm.OutcomeUnknown}`. The caller then resolves the outcome with `Snapshot` (§ *Job transactions*).
 
 | Operation | Postcondition (from `Snapshot`) | Notice | Poll fallback | Budget |
 | --- | --- | --- | --- | --- |
-| `CreateSpace(display)` | A user Space on `display` that was not in the before-set | `space_created` | 50 ms | 1 s |
-| `DestroySpace(sid)` | `sid` absent; already met if absent before | `space_destroyed` | 50 ms | 1 s |
-| `LabelSpace(sid, label)` | `sid` has `label` | none exists | none: `space_manager_set_label_for_space` runs inside the command handler (`COMMAND_SPACE_LABEL` branch, SC26), so one check after return | 0 |
-| `MoveSpace(sid, index)` | `sid` at `index` on its display | none exists | 50 ms | 1 s |
-| `FocusSpace(sid)` | `sid` is the active Space of its display; already met if visible | `space_changed` and `NSWorkspaceActiveSpaceDidChangeNotification` | 50 ms | 1 s |
-| `MoveWindowToSpace(win, sid)` | window's Space is `sid`; already met before the call | none: the move is asynchronous (`SLSPerformAsynchronousBridgedWindowManagementOperation` in `space_manager_move_window_to_space`, **both**) and the active Space does not change | 25 ms | 500 ms |
+| `CreateSpace(display)` | A user Space on `display` that was not in the before-set | SkyLight notify 1327 | 50 ms | 1 s |
+| `DestroySpace(sid)` | `sid` absent; already met if absent before | SkyLight notify 1328 | 50 ms | 1 s |
+| `MoveSpace(sid, index)` | `sid` at `index` on its display | none | 50 ms | 1 s |
+| `FocusSpace(sid)` | `sid` is the active Space of its display; already met if visible | `NSWorkspaceActiveSpaceDidChangeNotification` | 50 ms | 1 s (2 s on the gesture path) |
+| `MoveWindowToSpace(win, sid)` | window's Space is `sid`; already met before the call | none: the bridged move is asynchronous and the active Space does not change | 25 ms | 500 ms |
 
-The yabai signal list has `space_created`, `space_destroyed` and `space_changed`, and no signal for labels or Space order (`signal_type_str` in `src/event_signal.h`, SC26). The budgets are first values; N9 records each operation's measured time and N12 tunes them.
+yabai learns of Space create and destroy from private SkyLight connection notifications 1327 and 1328, which it registers on macOS 13 (Ventura) and later (`SLSRegisterConnectionNotifyProc` in `src/yabai.c`, posted as `SLS_SPACE_CREATED` and `SLS_SPACE_DESTROYED` from `src/mission_control.c`, SC26). tess registers the same two and also polls `SLSCopyManagedDisplaySpaces`. Labels are tess records and need no Space call. The budgets are first values; N11 records each operation's measured time and N13 tunes them.
 
-**Discovery of hidden windows.** Public AX does not return windows on inactive Spaces. yabai notes this in `window_manager_add_existing_application_windows` ("MacOS API does not return AXUIElementRef of windows on inactive spaces") and brute-forces `_AXUIElementCreateWithRemoteToken` (**both**). tess does not copy that. `Snapshot` reads yabai's window query, which already covers every Space, and gives tess full metadata for every window: ID, pid, Space, display, frame, role, subrole, app, title, minimized and hidden. AX attaches lazily: when a Space becomes visible, the app's worker reads its `kAXWindowsAttribute` and matches elements to IDs with `_AXUIElementGetWindow`. A window with no AX element has status `hidden` and gets no writes. Its membership is still complete, so the planners see every window.
+**Discovery of hidden windows.** Public AX does not return windows on inactive Spaces. yabai notes this in `window_manager_add_existing_application_windows` ("MacOS API does not return AXUIElementRef of windows on inactive spaces") and brute-forces `_AXUIElementCreateWithRemoteToken` (**both**). tess does not copy that. `Snapshot` reads every Space with `SLSCopyManagedDisplaySpaces`, the windows on each with `SLSCopyWindowsWithOptionsAndTags`, and pid, frame, title and layer from `CGWindowListCopyWindowInfo` (public). AX attaches lazily: when a Space becomes visible, the app's worker reads its `kAXWindowsAttribute` and matches elements to IDs with `_AXUIElementGetWindow`, then reads role and subrole. A window with no AX element has status `hidden` and gets no writes. Its membership is still complete, so the planners see every window.
 
 ### Job transactions
 
@@ -243,17 +234,17 @@ A job is one CLI request, hotkey, Hub cascade or arrival. It edits a working cop
 - **Abort.** On error or cancel, edits since the last checkpoint are discarded, in-flight worker operations of the job are fenced, and nothing more is flushed. `PreserveFocus` in `internal/commands/focus.go` restores focus after the discard.
 - **Space operations are irreversible checkpoints.** A Space-service call changes macOS, and a later abort cannot undo it. Its result goes into lifecycle state at once. Desired state follows reality: after a successful `MoveWindowToSpace`, the window's membership is its new Space even if the job later aborts. One compensation exists: a `CreateSpace` whose job aborts before anything is placed on the new Space destroys it again. An `OutcomeUnknown` is resolved by `Snapshot`; the resolved state goes into lifecycle state, and the job returns an error that names the resolved outcome.
 
-The yabai backend has no working copy and keeps today's behaviour.
+The yabai backend has no working copy and keeps today's behaviour until N14 deletes it.
 
 ### Desired and observed state
 
-Each window's lifecycle state carries an observed frame, its read time and an apply status: `ok`, `pending`, `constrained` (position matches, size differs, as with a terminal that snaps to cells), `refused` (position or visibility does not match after a retry), `hidden` (no AX element yet), `gesture` (question 8) or `suspended`.
+Each window's lifecycle state carries an observed frame, its read time and an apply status: `ok`, `pending`, `constrained` (position matches, size differs, as with a terminal that snaps to cells), `refused` (position or visibility does not match after a retry), `hidden` (no AX element yet), `dragging` (a mouse button is down on it) or `suspended`.
 
 **Operations and fencing.** Every request to a per-app worker carries an operation ID from one counter, and every frame write carries the window's write generation. The actor accepts a result only if its operation ID is the latest one issued for that window and was not fenced. A fenced or older result is dropped. If the window then has no operation in flight, the actor asks for a fresh read-back. A result that arrives after its waiter timed out is therefore never applied as current state.
 
-**Pending writes.** A frame write has a deadline of 500 ms [INFERENCE: tuned in N9]. Moved and resized events for that window before the deadline schedule a read-back and are never classified as a drag. Several events in one run-loop cycle coalesce: only the latest read-back counts. A matching read-back sets `ok`. At the deadline a mismatch gets one more write; a second mismatch sets `constrained` or `refused`. An AX write returns success even when the app ignores it; the [go-macos/accessibility](https://github.com/go-macos/accessibility) README measured this: "A write to `kAXPositionAttribute` returns `kAXErrorSuccess` whether or not the application honours it."
+**Pending writes.** A frame write has a deadline of 500 ms [INFERENCE: tuned in N11]. Moved and resized events for that window before the deadline schedule a read-back and are never classified as a drag. Several events in one run-loop cycle coalesce: only the latest read-back counts. A matching read-back sets `ok`. At the deadline a mismatch gets one more write; a second mismatch sets `constrained` or `refused`. An AX write returns success even when the app ignores it; the [go-macos/accessibility](https://github.com/go-macos/accessibility) README measured this: "A write to `kAXPositionAttribute` returns `kAXErrorSuccess` whether or not the application honours it."
 
-**Moves with no pending write.** If a mouse button went down with `fn` held over the window, the window is in `gesture` until every button is up (question 8). If a button is down without `fn`, the move is a plain drag (question 4). Otherwise it is an OS relocation, such as a clamp after a display change. An OS relocation updates lifecycle state only and does not change membership; the next flush re-asserts the desired frame once.
+**Moves with no pending write.** If a mouse button is down (`NSEvent.pressedMouseButtons`), the move is a user drag: the window enters `dragging`, and § *Float and pin* applies. tess writes no frame to a `dragging` window. Otherwise it is an OS relocation, such as a clamp after a display change. An OS relocation updates lifecycle state only and does not change membership; the next flush re-asserts the desired frame once. tess has no mouse tap and no modifier gestures.
 
 **Reporting.** `Flush` returns `*wm.ApplyError{Refused []int}` when a visibility or focus change was refused; a `constrained` size is not an error. The state stream carries each window's status, and a workspace with a `refused` window reports `fresh: false`. `tess query` shows the same.
 
@@ -263,66 +254,69 @@ Each window's lifecycle state carries an observed frame, its read time and an ap
 
 `FocusWindow(id)` resolves on one postcondition: lifecycle state shows `id` as the focused window, from the AX focused-window event or a read of `kAXFocusedWindowAttribute` on the frontmost app. A worker that returns success does not complete the focus. Steps, all inside one 1 s budget:
 
-1. If the window's Space is hidden (D), `FocusSpace` on the Space service.
+1. If the window's Space is hidden, `FocusSpace` on the Space service (SA focus, else the gesture path).
 2. Attach AX if needed, then flush the now-visible workspace.
 3. `AXMain` true, `AXRaise`, then `NSRunningApplication activateWithOptions`.
 
-A miss returns `wm.ErrFocusTimeout` with the focused window, the target and its app. This replaces the 50 ms poll in `unfloatOne` (`internal/wm/yabai/driver.go`). yabai focuses with private SkyLight calls (`window_manager_focus_window_with_raise`, **both**); tess uses AeroSpace's public path, and N1 measures whether it is enough for Zen.
+A miss returns `wm.ErrFocusTimeout` with the focused window, the target and its app. This replaces the 50 ms poll in `unfloatOne` (`internal/wm/yabai/driver.go`). yabai focuses with private SkyLight calls (`window_manager_focus_window_with_raise`, **both**); tess uses AeroSpace's public path, and N1 measures whether it is enough for Zen. If it is not, N1 reopens this record with the measured rate; the SA's `WINDOW_FOCUS` opcode is the fallback to restore.
 
 ### Lifecycle contract
 
-Desired membership changes only through: a tess command or hotkey, arrival placement, a plain drag (question 4), a Space-service result, a window closing, and display loss handled by the existing desk-to-laptop cascade. Every other event changes lifecycle state only.
+Desired membership changes only through: a tess command or hotkey, arrival placement, a drag (which floats the window), a Space-service result, a window closing, and display loss handled by the existing desk-to-laptop cascade. Every other event changes lifecycle state only.
 
-| Event | D | A |
+| Event | N: native Spaces | V: virtual workspaces |
 | --- | --- | --- |
 | Cmd-Tab, Dock or notification activates a window on a hidden workspace | macOS switches the Space; tess attaches AX and flushes the dirty workspace | tess makes the window's workspace active and un-parks it |
 | Native fullscreen enter, exit | `suspended` in its slot; on exit, the next flush returns it | same; the fullscreen Space is a stray Space |
-| A native Space tess did not create (user or app) | `float` by the global setting; tess binds a new workspace record to it | stray Space; its windows are `suspended`; tess never destroys it |
-| Window created while its Space is hidden | Snapshot or `window_created` adds it to lifecycle state; it joins that Space's workspace at the arrival target, `hidden` | parked at once |
-| yabai restart | yabairc runs `tess yabai-config apply` before `tess wake`; the daemon re-reads `Snapshot` | n/a after V3 |
-| Dock restart | `dock_did_restart` reloads the payload; Spaces keep their IDs [INFERENCE: N9 checks] | no effect |
+| A native Space tess did not create (user or app) | tess binds a new workspace record to it, kind `stack`, and adopts its windows | stray Space; its windows are `suspended`; tess never destroys it |
+| Window created while its Space is hidden | Snapshot adds it to lifecycle state; it joins that Space's workspace at the arrival target, `hidden` | parked at once |
+| Dock restart | the payload is gone; the daemon runs `tess sa load`, re-reads capabilities, then `Snapshot`; Spaces keep their IDs [INFERENCE: N11 checks] | no effect |
+| SA load fails or a capability is missing | the daemon keeps running with fewer capabilities; `tess sa status` and the state stream name what is missing | n/a |
 | Unplug with inactive workspaces | macOS moves the Spaces; the display cascade re-homes them per the arrangement | the cascade re-homes them; parked windows are re-parked after a ledger write |
 | Lid close, reconnect | display UUID returns; the 3 s `DisplayQuiet` debounce runs the cascade | same, then un-parks the active workspaces |
-| Daemon cold start | Snapshot gives every window on every Space; `native-state.json` gives desired membership; windows unknown to it join their Space's workspace at the arrival target; windows gone from Snapshot get tombstones | ledger first, then the same |
+| Daemon cold start | Snapshot gives every window on every Space; `native-state.json` gives desired membership and floating windows; windows unknown to it join their Space's workspace at the arrival target; windows gone from Snapshot get tombstones | ledger first, then the same |
 
 ### Migration: recorded and reversible
 
-**Guarantee.** The reverse gives a deterministic, usable rebuild from the profile. It does not restore the exact desktop from before the migration. yabai cannot rebuild a split tree after a layout change, because `space_manager_set_layout_for_space` calls `view_clear(view)` (**both**). SC26's `space --save-layout` and `--load-layout` serialize a tree, but `layout_store_reconstruct_node` matches leaves by app name and falls back to the first unused window (SC26), so tess does not depend on them. After a reverse:
+**Guarantee.** The reverse gives a deterministic, usable rebuild from the profile on yabai. It does not restore the exact desktop from before the migration, because yabai cannot rebuild a split tree it has lost (`space_manager_set_layout_for_space` calls `view_clear(view)`, **both**). After a reverse:
 
 - every window is on the native Space it was on when the reverse started;
-- every Space keeps its current label, order and display;
-- yabai's settings, rules and signals are the ones in the snapshot;
-- `tess apply` (desk) or `tess laptop` rebuilds each profile-defined layout, and yabai tiles every other Space in its own insertion order.
+- every Space keeps its order and display; yabai labels come back from the snapshot;
+- yabai runs with its own SA and today's yabairc;
+- `tess apply` (desk) or `tess laptop` rebuilds each profile-defined layout on the yabai backend.
 
-**State files.** `migration.json` records the direction (`forward` or `reverse`), the target (`hybrid` or `virtual`), the current phase, and per-item progress. It is synced before each item. `migration-snapshot.json` is written once in the snapshot phase and never changed. `native-state.json` is the native model and is separate from both. Startup with an unfinished migration continues in the recorded direction, whatever the profile says. The profile's `backend` is read only when a new migration starts. When the profile and the recorded state disagree, the daemon moves nothing new, reports `fresh: false`, and names the command that settles it.
+**State files.** `migration.json` records the direction (`forward` or `reverse`), the target (`native` or `virtual`), the current phase, and per-item progress. It is synced before each item. `migration-snapshot.json` is written once in the snapshot phase and never changed. `native-state.json` is the native model and is separate from both. Startup with an unfinished migration continues in the recorded direction, whatever the profile says. The profile's `backend` is read only when a new migration starts. When the profile and the recorded state disagree, the daemon moves nothing new, reports `fresh: false`, and names the command that settles it.
 
-**To the hybrid (N11).**
+**To native (N12).** yabai stays installed until N14, so the reverse can start it again.
 
-1. **Preflight.** AX is trusted for the stable daemon identity (N2). yabai runs with the scripting addition. yabairc delegates to `tess yabai-config apply` (N10). N9 has passed. The profile is valid. No other migration is open.
-2. **Snapshot.** Spaces (ID, index, label, display, layout and whether it has its own layout), windows (ID, Space, frame, floating, stack index), every setting in the restricted set, the rule list and the signal list. Written to `migration-snapshot.json`.
-3. **Adopt.** One workspace per native Space. Where a profile arrangement covers the Space (desk slots, the laptop flex model), tracks and weights are the planner's target for it. Otherwise tess groups windows into tracks by geometry: windows whose left edges are within 8 pt form one track, ordered left to right; a weight is the track's width divided by the area's width; windows that share one frame form a stack, with the topmost as front. Written to `native-state.json`.
-4. **Restrict.** One recorded item each: the global `layout float`; then each rule removed; then each mutating signal removed; then `float` on each Space that has its own layout.
-5. **Activate.** The daemon starts the native backend, takes a `Snapshot` and flushes.
+1. **Preflight.** AX is trusted for the stable daemon identity (N2). `tess sa status` shows the tess payload builds for this macOS version. N11 has passed. The profile is valid. No other migration is open.
+2. **Snapshot.** Spaces (ID, index, yabai label, display), windows (ID, Space, frame, floating, stack index). Written to `migration-snapshot.json`.
+3. **Adopt.** One workspace per native Space, with its yabai label as the tess label. Where a profile arrangement covers the Space (desk slots, the laptop flex model), slots and weights are the planner's target for it. Otherwise tess groups windows into slots by geometry: windows whose left edges are within 8 pt form one slot, ordered left to right; a weight is the slot's width divided by the area's width; windows that share one frame form a stack, with the topmost as front. yabai floating windows become `floating` with no home slot. Written to `native-state.json`.
+4. **Stop yabai.** Two recorded items. First, `launchctl bootout` of the yabai agent, so yabai stops and no `dock_did_restart` signal reloads its payload. Second, restart Dock (terminate it; launchd starts it again), which drops yabai's injected payload; wait until Dock runs again. yabai's bundle stays in `/Library/ScriptingAdditions` but nothing loads it.
+5. **Load.** `tess sa load`; the handshake must report `tess-<n>`, not yabai's version.
+6. **Activate.** The daemon starts the native backend, takes a `Snapshot` and flushes.
 
-**Reverse.** `tess migrate --reverse` records `direction: reverse` first. Then, one recorded item each and in the opposite order: tess stops writing frames; each Space that still exists gets its snapshot layout back; signals and rules are added again (add-only, never `rule --apply`, as in `new-window-placement.md`); the global settings are restored. Spaces created since the snapshot inherit the restored global layout. Spaces deleted since are skipped. A display change during the reverse pauses it until the 3 s display debounce settles. Each item is idempotent, so a crash resumes the reverse. An item that fails three times stops the migration in `reverse-blocked`: tess moves nothing, yabai keeps its current settings, and `tess migrate --reverse` runs the rest. The last step runs `tess apply` or `tess laptop` for the current topology. Matt then sets `backend: "yabai"` in the profile.
+**Reverse.** `tess migrate --reverse` records `direction: reverse` first. Then, one recorded item each and in the opposite order: tess stops writing frames; `tess sa uninstall`; Dock restarts; the yabai agent is bootstrapped again and loads its own SA through its yabairc; labels from the snapshot are set again on Spaces that still exist; `backend` returns to `yabai`; the last step runs `tess apply` or `tess laptop` for the current topology. Spaces deleted since the snapshot are skipped. A display change during the reverse pauses it until the 3 s display debounce settles. Each item is idempotent, so a crash resumes the reverse. An item that fails three times stops the migration in `reverse-blocked`: tess moves nothing, and `tess migrate --reverse` runs the rest. The reverse works until N14 removes the yabai driver; after N14, rollback is to install the last release before N14.
 
-**To virtual workspaces (V2, only under A).** Snapshot; seed workspaces from native Space memberships; write the ledger; park the inactive workspaces; move every window to the first native Space of its display and destroy the others through yabai; check that AX is trusted and every window is adopted; only then stop yabai. Reverse: start yabai with the scripting addition, recreate the Spaces, move windows back per the snapshot, un-park and restore labels.
+**To virtual workspaces (V2, only if V0 passes).** Snapshot; seed workspaces from native Space memberships; write the ledger; park the inactive workspaces; move every window to the first native Space of its display and destroy the others through tess's SA; check that AX is trusted and every window is adopted; only then `tess sa uninstall`. Reverse: load tess's SA, recreate the Spaces, move windows back per the snapshot, un-park.
 
-### Parking and recovery (A only)
+### Parking and recovery (stage V only)
 
-A window of an inactive workspace is parked so that only a 1 px column stays on screen, at a park corner. For each display, tess picks a bottom corner where the area below and beside it belongs to no other display. The AW has none, so its windows park at the free corner of the nearest other display (evidence § *Live snapshot*). This is outside what AeroSpace supports; V0 measures it. `native-state.json` is synced before a window is parked and holds its last visible frame.
+A window of an inactive workspace is parked so that only a 1 px column stays on screen, at a park corner. For each display, tess picks a bottom corner where the area below and beside it belongs to no other display. The AW has none, so its windows must park at the free corner of another display (evidence § *Live snapshot*). This is outside what AeroSpace supports ([#382](https://github.com/nikitabobko/AeroSpace/issues/382), [#413](https://github.com/nikitabobko/AeroSpace/issues/413)); V0 measures it. `native-state.json` is synced before a window is parked and holds its last visible frame.
 
-`tess rescue` (N7, both D and A) runs without the daemon and without the profile. It reads the ledger if one exists; otherwise it finds every window less than 10 % on screen. It moves each to the centre of the nearest display. It runs as the same signed executable as the daemon, so it has the same AX grant (N2).
+`tess rescue` (N8, for both N and V) runs without the daemon and without the profile. It reads the ledger if one exists; otherwise it finds every window less than 10 % on screen. It moves each to the centre of the nearest display. It runs as the same signed executable as the daemon, so it has the same AX grant (N2).
 
 ### Hotkeys
 
-**API: Carbon `RegisterEventHotKey`.** It needs no permission. [go-macos/hotkey](https://github.com/go-macos/hotkey) reports that registering three combos "on macOS 26.6.2 produced no dialog and needed no grant", and Rectangle (through MASShortcut) and AeroSpace (through soffes/HotKey) use the same call. A `CGEventTap`, which skhd uses, needs the Accessibility grant. [golang.design/x/hotkey](https://github.com/golang-design/hotkey) uses an event tap on macOS, so tess does not use it. Known limits:
+**API: Carbon `RegisterEventHotKey`.** It needs no permission. [go-macos/hotkey](https://github.com/go-macos/hotkey) reports that registering three combos "on macOS 26.6.2 produced no dialog and needed no grant", and Rectangle (through MASShortcut) and AeroSpace (through soffes/HotKey) use the same call. A `CGEventTap`, which skhd uses, needs the Accessibility grant. Known limits:
 
 - macOS 15 rejects Option-only and Option+Shift combos with error -9868 ([Apple forum thread 763878](https://developer.apple.com/forums/thread/763878)). None of Matt's 50 bindings use those modifier sets.
-- Carbon sends one pressed and one released event per press, with no repeat. Question 9 recommends a tess repeat for bindings with `repeat: true`.
+- Carbon sends `kEventHotKeyPressed` once per press and `kEventHotKeyReleased` once per release, with no repeat events. tess times repeat itself (below).
 - A registered combo is taken from every app, as skhd does today.
 
-**Threading.** Carbon hotkey events and AX observers need a run loop. `cmd/tess` locks the main goroutine to the main thread. `tess daemon` runs `NSApplication` with the prohibited activation policy on that thread (yabai calls `NSApplicationLoad` in `yabai.c`, **both**). All Go work runs on other goroutines.
+**Repeat.** Any binding can set `repeat: true` (Decision 9). On press tess runs the command, waits the system's initial key-repeat delay (`NSEvent.keyRepeatDelay`), then runs it again every `NSEvent.keyRepeatInterval` until the released event. A repeat is queued only when the previous run of the same binding has finished, so a slow command never builds a backlog. A lost released event (for example, the screen locks while the key is held) is covered by a 10 s cap on one hold [INFERENCE: value is a guess; S3 logs real holds].
+
+**Threading.** Carbon hotkey events, AX observers and the move-mode panel need a run loop on the main thread. `cmd/tess` locks the main goroutine to the main thread in `init`. `tess daemon` runs `NSApplication` on that thread with the `accessory` activation policy: no Dock icon, but it may own windows. The `prohibited` policy is not usable, because Apple documents that such an app "may not create windows" ([NSApplication.ActivationPolicy.prohibited](https://developer.apple.com/documentation/appkit/nsapplication/activationpolicy-swift.enum/prohibited)). yabai calls `NSApplicationLoad` then `[NSApp run]` in `main` (`src/yabai.c`, **both**). All Go work runs on other goroutines.
 
 **Config in `profile.cue`.** A new `hotkeys` list:
 
@@ -336,7 +330,7 @@ hotkeys: [
 
 Key names cover letters, digits, arrows, `equal` and `keypad0` to `keypad9`, `keypadDecimal`, `keypadEnter`, `keypadPlus`, `keypadMinus`, `keypadDivide`, `keypadMultiply` and `keypadClear`. Each maps to one macOS virtual key code; skhd's `0x53` is `keypad1`. Profile load rejects an unknown key, a duplicate combo, and a `run` list that `cli.Parse` rejects. A press dispatches the parsed command into the daemon's job queue. A profile reload unregisters and registers the changed bindings.
 
-**Binding transport, then semantics.** Stage S moves all 50 bindings without changing what any of them does on yabai. 41 already run `tess` and move unchanged. Nine call yabai directly and get tess verbs that run the same yabai commands:
+**Binding transport in stage S.** Stage S moves all 50 bindings without changing what any of them does on yabai. 41 already run `tess` and move unchanged. Nine call yabai directly and get tess verbs that run the same yabai commands:
 
 | skhd binding | tess binding in S4 | yabai command it runs |
 | --- | --- | --- |
@@ -346,7 +340,75 @@ Key names cover letters, digits, arrows, `equal` and `keypad0` to `keypad9`, `ke
 | `shift + cmd + alt - arrows` | `resize left`, `right`, `up`, `down`, with `repeat: true` | `--resize left:-100:0`, else `right:-100:0` (and so on) |
 | `cmd + alt - d` | new `drop-action toggle` | flips `mouse_drop_action` and posts the same notification |
 
-The tree verbs (`insert`, `warp`, `space bsp`, `reset-splits`) keep their yabai behaviour through stage S. Question 5's remaps land with the hybrid switch (N11). `drop-action toggle` is deleted at N13 under question 5. Evidence § *Binding migration* has all 50 rows.
+The tree verbs keep their yabai behaviour through stage S. They are deleted at N14 (§ *Slot verbs*). Evidence § *Binding migration* has all 50 rows.
+
+### Slot interaction
+
+The slot-manager prior art (evidence § *Slot-manager prior art*) agrees on four points that tess follows: slot identity is the source of truth, not raw coordinates; arrival placement is separate from direct moves; a target is highlighted before commit and Escape cancels; and a layout change is temporary until the user saves it.
+
+#### Slot verbs
+
+| Verb | Meaning on the native backend |
+| --- | --- |
+| `focus west\|east\|north\|south` | focus the front window of the neighbouring slot |
+| `swap <dir>` | swap the focused window with the front window of the neighbouring slot |
+| `stack <dir>` | move the focused window into the neighbouring slot's stack, as its front |
+| `stack recent` | move the focused window into the stack of the window focused before it |
+| `stack-cycle next\|prev` | change the front window of the focused slot |
+| `focus-slot <n>` | focus slot `n` of the active workspace |
+| `move-mode` | § *Move mode* |
+| `toggle-float`, `toggle-float center` | § *Float and pin* |
+| `resize <dir>\|grow\|shrink` | temporary weight change (§ *Temporary slot resize*) |
+| `layout save\|reset\|export` | § *Temporary slot resize* |
+| `snap 3col\|50-50\|columns`, `space stack`, `apply`, `laptop` | unchanged meaning; set slots and profile weights, clear the override |
+
+`warp east` was used to pull a window out of a stack; `stack east` replaces it. `insert`, `balance`, `columns`, `reset-splits`, `space bsp` and `drop-action` are deleted (Decision 5); `layout reset` covers what `balance` and `columns` did. Evidence § *Binding migration* maps every key.
+
+#### Move mode
+
+Today a cross-slot move takes three steps: click window A, click window B, press the shortcut. Move mode takes the shortcut first:
+
+1. Matt clicks or focuses window A and presses the `move-mode` shortcut. tess records A as the source.
+2. tess shows the indicator (below) and highlights the slot under the pointer.
+3. Matt clicks a destination: a window, which puts A into that window's slot as its front, or an empty slot area, which puts A into that slot. Keyboard path: while move mode is on, the `focus <dir>` bindings move the highlight between slots instead of focus, and the `move-mode` shortcut commits to the highlighted slot.
+4. Escape or 10 s with no input cancels. tess registers Escape as a Carbon hotkey only while move mode is on, so Escape reaches apps normally at every other time. The indicator closes on commit or cancel.
+
+tess sees the destination click without a mouse tap. In move mode it opens one transparent, borderless, non-activating `NSPanel` per display, at a window level above normal windows and with `ignoresMouseEvents = false`, and takes the click on that panel. The panel reports the screen point; tess hit-tests it against the computed slot frames. Because the click lands on tess's panel, the app under it never sees it. When move mode ends, the panels close. [INFERENCE: N1 checks that a non-activating panel receives `mouseDown` without activating tess or changing the focused window.]
+
+**Indicator.** A small borderless `NSPanel` with the `nonactivatingPanel` style, in the **top-right** corner of the display with the source window, below the 32 pt bar inset. It shows `Move: <app> — click a slot, Esc to cancel`. It does not take focus and is not a macOS notification: notifications need a permission and macOS places them ([Apple: asking permission](https://developer.apple.com/documentation/usernotifications/asking-permission-to-use-notifications)). Apple documents that a `nonactivatingPanel` "does not activate the owning app" ([style mask](https://developer.apple.com/documentation/appkit/nswindow/stylemask-swift.struct/nonactivatingpanel)). The indicator is part of the platform layer (`native.Platform.ShowIndicator`), so a later platform supplies its own.
+
+#### Float and pin
+
+Dragging a slotted window floats it at once (Decision 4).
+
+- **Drag start.** The first moved or resized event with a mouse button down and no pending write sets the window to `dragging`, mode `floating`, and records its **home slot** (workspace ID, slot name, index in the stack). The slot closes up: the next window in the stack becomes front, or the other slots take the space. tess writes nothing to the dragged window.
+- **Drag end.** When every button is up, tess reads the frame and keeps it as the floating frame. It pins the window above slotted windows with the SA's `WINDOW_LAYER` opcode at the floating level. Without that capability, tess raises the window once and marks it `pinned: false` in the state stream (§ *Capabilities and SIP*).
+- **Back to the slot.** `toggle-float` on a floating window with a home slot returns it to that slot at its old stack index, and clears the pin. If the home slot no longer exists (a topology change), it goes to the workspace's arrival target. `toggle-float` on a slotted window floats it in place with its current frame and the same home-slot record; `toggle-float center` floats it at the 4×4 centre cell of a 6×6 grid, as today.
+- **Across displays.** A drag that ends on another display moves the window's membership to that display's active workspace, still floating, with its home slot unchanged.
+- **Persistence.** Floating windows and their home slots are in `native-state.json`, so they survive a daemon restart.
+
+#### Temporary slot resize
+
+`resize` changes the active workspace's **override** weights, not its profile weights. For example, `resize grow` on the AW's left slot widens it by the step and narrows its neighbour. The override is used by `Frames` until it is cleared. It lives in `native-state.json` and survives a daemon restart, but a `tess apply`, `snap` or topology change clears it, as those commands set the profile layout.
+
+- `tess layout save` writes the override as the layout's weights (open question 2 decides where), then clears it.
+- `tess layout reset` clears the override, so the profile weights apply again.
+- `tess layout export` prints the override as a CUE patch for the profile.
+
+All three are CLI verbs, so a hotkey can run them. The app (`tess-app.md`) adds "Save layout" and "Reset layout" actions that send the same verbs over the daemon socket. The state stream marks a workspace with an override as `modified: true`, so the app and sketchybar can show it.
+
+### Library choices
+
+Libraries are chosen on fit and maintenance (Decision 9), and cgo is allowed (Decision 7). Evidence § *Go library survey* has the full table.
+
+| Need | Choice | Why |
+| --- | --- | --- |
+| Global hotkeys with release events | own cgo wrapper over Carbon `RegisterEventHotKey` in `internal/hotkey/darwin` | [go-macos/hotkey](https://github.com/go-macos/hotkey) is purego Carbon and needs no permission, but its API exposes only press events; tess needs `kEventHotKeyReleased` to stop a repeat. [golang.design/x/hotkey](https://github.com/golang-design/hotkey) is cross-platform and reports key-up, but on macOS it uses a `CGEventTap`, which needs an Accessibility or Input Monitoring grant. The wrapper is about 100 lines [INFERENCE]. |
+| AX, AXObserver | own cgo in `internal/wm/native/darwin` | [go-macos/accessibility](https://github.com/go-macos/accessibility) (purego, active) has no AXObserver support; tess reads it as reference for frame writes, not as a dependency |
+| NSWorkspace, CGDisplay callbacks, run loop, NSPanel | own cgo and Objective-C | no Go wrapper covers them; [go-macos/objc](https://github.com/go-macos/objc) (purego, active) warns that `App()` binds to the first calling thread, which is easy to get wrong |
+| Bundle and signing | the nix activation in N2 | [tmc/macgo](https://github.com/tmc/macgo) builds bundles and signs them, but N2 needs a fixed identifier and a stable path that activation already controls |
+
+The cgo surface stays narrow: each wrapper exposes Go functions and sends callback values to channels. Pure logic stays in packages with no cgo.
 
 ### Daemon and IPC
 
@@ -354,52 +416,66 @@ The tree verbs (`insert`, `warp`, `space bsp`, `reset-splits`) keep their yabai 
 
 **One writer.** The daemon runs one job at a time; all jobs already pass through `TopologyState.SerializeCascade`. On native, jobs run as § *Job transactions* describes, against the actor in § *Desired and observed state*.
 
-**Fallback.** On the yabai backend a failed dial runs the command in-process, as today. On native the CLI exits 1 with `tess daemon not running`, because only the daemon holds the model. `tess rescue` and `tess yabai-config apply` are the commands that run without it.
+**Fallback.** On the yabai backend a failed dial runs the command in-process, as today. On native the CLI exits 1 with `tess daemon not running`, because only the daemon holds the model. `tess rescue`, `tess sa status|load|uninstall` and `tess migrate --status` are the commands that run without it.
 
-**State for the app and the bar.** tess-app's A3 state stream (`subscribe 1`, full `state` frames) is the one feed. `daemon.StatePublisher` is specified in `tess-app.md` and is not in the code yet; N7 depends on A3 landing first. On native the actor calls `StatePublisher.Request` after each flush; the frame carries workspace membership and each window's status. A new `tess query` prints one `state` frame as JSON. Matt's sketchybar scripts call `tess query` instead of `yabai -m query` before N11. The daemon keeps triggering the sketchybar event `yabai_spaces_changed` until those scripts rename it.
+**State for the app and the bar.** tess-app's A3 state stream (`subscribe 1`, full `state` frames) is the one feed. `daemon.StatePublisher` is specified in `tess-app.md` and is not in the code yet; N8 depends on A3 landing first. On native the actor calls `StatePublisher.Request` after each flush; the frame carries workspace membership, each window's status and mode, the `modified` flag, move mode, and the capability table. A new `tess query` prints one `state` frame as JSON. Matt's sketchybar scripts call `tess query` instead of `yabai -m query` before N12. The daemon keeps triggering the sketchybar event `yabai_spaces_changed` until those scripts rename it.
 
 ### Risks, weighed against keeping yabai
 
-| Risk | Keeping yabai | Hybrid (D) | Virtual (A) |
+| Risk | Keeping yabai | N: tess SA | V: virtual |
 | --- | --- | --- | --- |
-| macOS releases | Payload patches per point release (evidence § *What needs the scripting addition*) | Same payload risk, but only Space operations depend on it | One private symbol in tess, which AeroSpace also depends on |
-| SIP | Partly off | Partly off | Can be turned back on (question 2) |
-| A third-party fork | Matt depends on Christian-SC26's releases | Same; tess also depends on the fork's query output and Space commands | Removed after V3 |
+| macOS releases | yabai or SC26 must ship payload patches (evidence § *What needs the scripting addition*) | tess ships them; fewer opcodes to patch; a version with no entry runs with fewer capabilities, never with a guessed pattern | One private symbol for AX plus the SkyLight reads |
+| SIP | Partly off | Partly off for full capability; runs with SIP on | Can be turned back on (Decision 2) |
+| A third-party project | Matt depends on Christian-SC26's releases | None at run time; upstream changelogs are a source of fixes | None |
+| Dock crash | yabai's payload can crash Dock | Same risk, smaller payload; a crash restarts Dock and tess reloads | None |
 | TCC | Stable Homebrew path | Stable identity from N2; a lost grant is detected with `AXIsProcessTrusted`: tess moves nothing and reports `fresh: false` | Same |
-| Crash | Windows stay | Windows stay | Windows stay parked until restart or `tess rescue` |
-| App quirks | Handled for years | tess meets them again: Electron, terminals, apps with minimum sizes. N8 finds enumeration and event gaps; N9 finds write and focus quirks before N11 | Same, plus park offsets (AeroSpace issue #527, Zoom) |
-| Code to own | 0 lines, but tess fights a 20,165-line C program (upstream reference) from outside | [INFERENCE] about 3,500 lines of Go and 800 of C and Objective-C | About 1,000 more for parking, activation restore and the ledger [INFERENCE] |
+| Crash of tess | Windows stay | Windows stay | Windows stay parked until restart or `tess rescue` |
+| App quirks | Handled for years | tess meets them again: Electron, terminals, apps with minimum sizes. N10 finds enumeration and event gaps; N11 finds write and focus quirks before N12 | Same, plus park offsets (AeroSpace issue #527, Zoom) |
+| Code to own | 0 lines, but tess fights a 20,165-line C program (upstream reference) from outside | [INFERENCE] about 3,500 lines of Go, 1,000 of cgo and Objective-C, and the SA fork cut down from about 2,850 lines | About 1,000 more for parking, activation restore and the ledger [INFERENCE] |
 
-The pain in RIG-8691, #73 and #75 comes from driving yabai's split tree through a CLI. The hybrid removes that cause and keeps the parts of yabai that tess cannot replace without a payload or parking. Every stage has a reverse until N13.
+The pain in RIG-8691, #73 and #75 comes from driving yabai's split tree through a CLI. Stage N removes that cause and owns the one part of yabai that tess cannot replace without parking: the payload. Every stage has a reverse until N14.
 
 ## Alternatives considered
 
 - **Keep yabai and finish #76.** This is the simpler option in § *Direction*. Stage S delivers it. Rejected as the end state because it keeps the split tree.
-- **Native Spaces through a scripting addition tess loads or owns.** Question 1, options B and C.
-- **Virtual workspaces now.** Question 1, option A; researched in V0.
-- **Fork yabai further** (RIG-8327 option B). Removes the CLI gap but keeps 20,000 lines of C, the payload and the BSP model. Rejected; question 8 A is the only patch this record considers.
-- **Run AeroSpace as the backend.** It has its own tree, not tess's tracks, and no client API for tess's slot and arrangement model. tess would drive a second WM from outside again. Rejected.
+- **Hybrid: yabai keeps native Spaces, tess tiles.** Rejected by Matt (Decision 1): yabai stays a run-time dependency and is poorly maintained.
+- **Load yabai's SA unchanged and speak its socket protocol.** Rejected by Matt (Decision 1): tess would track a payload it cannot change.
+- **Virtual workspaces now.** Preferred if it works (Decision 1), but parking on the AW is unproven; stage V runs after V0.
+- **Run AeroSpace as the backend.** It has its own tree, not tess's slots, and no client API for tess's slot and arrangement model. tess would drive a second WM from outside again. Rejected.
+- **BSP or tree tiling in tess.** Rejected (Decision 4): tess is a slot manager.
 - **CGEventTap hotkeys.** Needs the Accessibility grant and receives every key event. Rejected for Carbon.
-- **purego instead of cgo.** Question 7, option B.
+- **purego instead of cgo.** Rejected (Decision 7).
 
 ## Global Constraints
 
-- Go 1.27.3 as `go.mod` pins. This record supersedes the `tess-app.md` § *Global Constraints* rule "The `tess` module stays cgo-free" for darwin builds of `tess` only (question 7). cgo lives only in files with `//go:build darwin` under `internal/wm/native/darwin` and `internal/hotkey/darwin`. Linux and Windows builds stay `CGO_ENABLED=0`. The module gains no new Go module.
-- Private API in tess: `_AXUIElementGetWindow` only, resolved with `dlsym` at start; a missing symbol stops the native backend with a clear error. tess loads no scripting addition and writes no SkyLight state.
+- Go 1.27.3 as `go.mod` pins. This record supersedes the `tess-app.md` § *Global Constraints* rule "The `tess` module stays cgo-free" for darwin builds of `tess` (Decision 7). cgo lives only in files with `//go:build darwin` under `internal/wm/native/darwin`, `internal/wm/native/spaces/darwin`, `internal/hotkey/darwin` and `internal/sa/darwin`. Builds for other systems stay `CGO_ENABLED=0`.
+- macOS only. The Windows code is deleted in S0 and no Windows build or CI job remains (Decision 6). Platform-neutral seams stay: `wm.Driver`, `wm.SpaceService`, `native.Platform` and `internal/hotkey`. Pure logic (slot layout, park corners, model edits, migration phases, adoption grouping, repeat timing) has no cgo and is tested with `GOOS=linux` in CI.
+- Private API in the tess daemon: `_AXUIElementGetWindow` and the SkyLight reads and window-move calls in § *Capabilities and SIP*, each resolved with `dlsym` at start. A missing symbol turns off its capability. Every other private call lives in tess's payload.
+- tess runs with SIP fully on. Every capability is reported by `wm.SpaceCaps`; a missing one returns `wm.ErrCapability` and never pretends to succeed. The payload hooks no macOS version it has no entry for.
+- After N14, nothing in tess calls, queries or starts yabai. yabai appears only in `sa/` attribution, in evidence, and in the migration reverse before N14.
+- The SA fork keeps yabai's MIT copyright and licence text and the loader's Jeremy Legendre attribution. `THIRD_PARTY_NOTICES.md` lists both.
 - One writer: only the actor goroutine changes the `Model`. The actor never blocks on a worker or an event. cgo callbacks send values to channels and never call Go code that takes a lock.
 - Lifecycle state is never discarded by an abort. Every worker result carries an operation ID; stale results are dropped. A waiter completes only on its postcondition.
 - Every AX element has a 250 ms messaging timeout. Every frame write is read back; status is reported, never assumed.
-- Two WMs never write the same window at the same time. In the hybrid, yabai runs the restricted configuration, and only the gesture owner of question 8 may write during a gesture.
-- Every Space-service call subscribes before it commands, checks its postcondition, and has a budget. No fixed sleep remains in a Space operation.
+- Two WMs never run at once. tess has no mouse tap and never writes to a window in `dragging`.
+- Every Space-service call subscribes before it acts, checks its postcondition, and has a budget. No fixed sleep remains in a Space operation.
 - Every migration item is recorded in `migration.json` before it runs. The direction is recorded apart from the profile. The snapshot file is never changed after it is written.
-- The AX grant belongs to one signed executable at a stable path. The daemon and `tess rescue` both run it.
-- The `wm` seam stays: the engine, the commands and the komorebi backend see `wm.Driver`. Pure logic (layout, park corners, model edits, migration phases, adoption grouping) has no cgo and is tested on every OS.
-- yabai claims cite SC26 or say **both**; a claim true only in the upstream reference is not used for the hybrid.
+- The AX grant belongs to one signed executable at a stable, root-owned path. The daemon, `tess rescue` and `tess sa load` all run it.
+- UI: the move-mode indicator and click panels are borderless, non-activating `NSPanel`s; tess never posts a macOS notification for interaction state.
+- yabai claims cite SC26 or say **both**.
 - Tests use `gotest.tools/v3` and `synctest`; no `time.Sleep`. Errors are wrapped with `%w`. Comments are 1–2 lines with no issue IDs.
 - Public repo: name Matt's config only as the downstream consumer. No private paths or hosts.
 - No usage-billed resource is added.
 
 ## Plan
+
+Stage S ships first and alone. Stage N tasks land in order; N1 is a spike whose results can reopen this record. Stage V is optional and starts only after V0 passes.
+
+### S0 — Delete the Windows code
+
+Interfaces: delete `internal/wm/komorebi/` (including `spike/` and `spikestate/`), `internal/effects/guard_windows.go` and `guard_windows_test.go`, `internal/cli/cli_root_windows_test.go`, `internal/commands/test_root_windows_test.go`, `internal/daemon/test_root_windows_test.go`, and `docs/design/windows-backend/`. Rename `cmd/tess/backend_other.go` to `backend_darwin.go` with `//go:build darwin`, and drop the komorebi half of the `Bootstrap` comment in `cmd/tess/backend.go`. In `.github/workflows/ci.yml`, delete the `windows` job and the "Vet Windows packages" and "Lint Windows packages" steps; add one step that runs `GOOS=linux go vet` on the packages with no cgo, so the pure logic stays portable. Remove komorebi from `tess-app.md`'s capability table and from `README.md` if named. Add `THIRD_PARTY_NOTICES.md` at the repo root with a heading and no entries.
+
+Gate: `go build ./...` and `go test -race ./...` on darwin; `GOOS=linux go vet` on the portable packages; `grep -ri komorebi` over the repo finds only this record and its evidence; `moon ci` green.
 
 ### S1 — Every command through the daemon
 
@@ -409,39 +485,39 @@ Gate: `net.Pipe` tests for each frame kind; a reject and a dial failure fall bac
 
 ### S2 — Darwin cgo build and packaging
 
-Interfaces: `flake.nix` builds `tess` on `aarch64-darwin` with `CGO_ENABLED = "1"` and the darwin SDK frameworks (ApplicationServices, AppKit, Carbon, CoreGraphics); other systems keep `"0"`. The release tarball contract in `release-binaries.md` is unchanged. `cmd/tess` gains the main-thread lock and the `NSApplication` run loop for `tess daemon` in a darwin file.
+Interfaces: `flake.nix` builds `tess` on `aarch64-darwin` with `CGO_ENABLED = "1"` and the darwin SDK frameworks (ApplicationServices, AppKit, Carbon, CoreGraphics). The release tarball contract in `release-binaries.md` is unchanged. `cmd/tess` gains the main-thread lock in `init` and, in a darwin file, the `NSApplication` run loop with the `accessory` activation policy for `tess daemon`.
 
-Gate: in the `nix` CI job, `otool -L result/bin/tess` lists only `/usr/lib` and `/System/Library` paths, never `/nix/store`; the unpacked release tarball runs `tess --version` on the runner outside Nix; `codesign --verify --strict` passes; `GOOS=linux` and `GOOS=windows` builds with `CGO_ENABLED=0` pass.
+Gate: in the `nix` CI job, `otool -L result/bin/tess` lists only `/usr/lib` and `/System/Library` paths, never `/nix/store`; the unpacked release tarball runs `tess --version` on the runner outside Nix; `codesign --verify --strict` passes; `tess daemon` shows no Dock icon on Matt's Mac.
 
-### S3 — Hotkeys in the daemon
+### S3 — Hotkeys in the daemon, with repeat
 
-Interfaces: `config.Hotkey{Key string; Mods []string; Run []string; Repeat bool}` and `#Hotkey` in `schema.cue`. `internal/hotkey` (portable): `type Combo struct{Key uint16; Mods Mods}`, `Parse(h config.Hotkey) (Combo, error)`, `Diff(old, new []Binding) (add, remove []Binding)`, and `Repeater` (question 9): `func (r *Repeater) Handle(ctx context.Context, ev Event, run func(context.Context))` with `Event{ID uint32; Down bool}`, using the delay and interval from `internal/hotkey/darwin.RepeatTiming() (delay, interval time.Duration)`. `internal/hotkey/darwin`: `Register(c Combo, id uint32) error`, `Unregister(id uint32) error`, `Events() <-chan Event`.
+Interfaces: `config.Hotkey{Key string; Mods []string; Run []string; Repeat bool}` and `#Hotkey` in `schema.cue`, with `hotkeys?: [...#Hotkey]` on `#Profile`. `internal/hotkey` (portable, no cgo): `type Mods uint8`; `type Combo struct{Key uint16; Mods Mods}`; `type Binding struct{ID uint32; Combo Combo; Run []string; Repeat bool}`; `Parse(h config.Hotkey) (Combo, error)`; `Diff(old, new []Binding) (add, remove []Binding)`; `type Event struct{ID uint32; Down bool}`; `type Repeater struct{Delay, Interval, MaxHold time.Duration}` with `func (r *Repeater) Handle(ctx context.Context, ev Event, run func(context.Context) error)`, which runs on down, repeats only when the binding sets `Repeat`, waits for each run to finish before the next, and stops on up or `MaxHold`. `internal/hotkey/darwin` (cgo over Carbon): `Register(c Combo, id uint32) error`, `Unregister(id uint32) error`, `Events() <-chan Event` carrying both `kEventHotKeyPressed` and `kEventHotKeyReleased`, and `RepeatTiming() (delay, interval time.Duration)` from `NSEvent.keyRepeatDelay` and `keyRepeatInterval`.
 
-Gate: table tests for every key name and every profile rejection; `synctest` tests for repeat (one run on a short press; runs at delay, then each interval while held; none after release). On Matt's Mac, `tess daemon` registers the 50 combos with skhd stopped and logs each status; any failure, including a bare keypad key, blocks S4.
+Gate: table tests for every key name and every profile rejection; `synctest` tests for repeat (one run on a short press; runs at delay, then each interval while held; none after release; none queued while a slow run is in flight; stop at `MaxHold` with no release). On Matt's Mac, `tess daemon` registers the 50 combos with skhd stopped and logs each status, and a held key logs the down and up events; any failure, including a bare keypad key, blocks S4.
 
 ### S4 — Binding transport and skhd removal
 
-Interfaces: new verbs on the yabai backend: `stack recent` (`wm.WindowOps.RecentWindow(ctx context.Context) (int, bool, error)`, then `StackOnto`), `toggle-float center` (`wm.WindowOps.FloatGrid(ctx context.Context, winID int, g wm.GridCell) error`), `resize left|right|up|down` (existing `ResizeWindow` with the opposite-edge fallback) and `drop-action toggle` (yabai only). The tree verbs are unchanged. Downstream: Matt's profile gains `hotkeys` from evidence § *Binding migration*; the skhd agent and `skhdrc` go; `DefaultServices` returns only yabai.
+Interfaces: new verbs on the yabai backend: `stack recent` (`wm.WindowOps.RecentWindow(ctx context.Context) (int, bool, error)`, then `StackOnto`), `toggle-float center` (`wm.WindowOps.FloatGrid(ctx context.Context, winID int, g wm.GridCell) error`), `resize left|right|up|down` (existing `ResizeWindow` with the opposite-edge fallback) and `drop-action toggle` (yabai only). The tree verbs are unchanged. Downstream: Matt's profile gains `hotkeys` from evidence § *Binding migration*, with `repeat: true` on the four resize arrows and on `resize grow|shrink`; the skhd agent and `skhdrc` go; `DefaultServices` returns only yabai.
 
-Gate: a table test sends each of the 50 bindings through the dispatcher to the recording yabai driver and asserts the exact yabai arguments: today's for the nine raw bindings, today's `tess` path for the rest. Matt runs all 50 on the desk with skhd stopped, holding each resize arrow for 2 s.
+Gate: a table test sends each of the 50 bindings through the dispatcher to the recording yabai driver and asserts the exact yabai arguments: today's for the nine raw bindings, today's `tess` path for the rest. Matt runs all 50 on the desk with skhd stopped, holding each repeat binding for 2 s.
 
-### N1 — Feasibility spike for D
+### N1 — Feasibility spike
 
-Interfaces: live tests in `internal/wm/native/darwin` with `//go:build darwin && live`, on a minimal cgo bridge that N6 grows. N1 adds its results to evidence.md as a new section, *Spike results*, with the trial count of each measurement.
+Interfaces: live tests in `internal/wm/native/darwin` with `//go:build darwin && live`, on a minimal cgo bridge that N7 grows. N1 adds its results to evidence.md as a new section, *Spike results*, with the trial count of each measurement. N1 runs while yabai still tiles, on one scratch Space that Matt sets to `float` by hand for the test.
 
-Probes, on a scratch Space under the restricted configuration, with the gesture owner from question 8:
+Probes:
 
 - AX frame write and read-back for Zen, a terminal with size increments, an Electron app, Finder and a window with a minimum size.
-- Public focus, including Zen on another display and Zen on a hidden Space after `FocusSpace`: 20 trials each, success rate and time to postcondition.
-- The yabai write invariant: tess writes frames, a window opens, a new Space is created through Mission Control, yabai restarts, Dock restarts, and a display is reconfigured; yabai must write no frame (read-back plus yabai's debug output). Then an `fn` left drag and an `fn` right drag: yabai writes only to the dragged window, only until release, and its release handler does nothing.
-- `pressedMouseButtons` and `modifierFlags` during a plain drag, an `fn` drag and an OS clamp.
-- Each Space-service operation's time to postcondition, 20 trials.
+- Public focus, including Zen on another display and Zen on a hidden Space after a Space focus: 20 trials each, success rate and time to postcondition.
+- `NSEvent.pressedMouseButtons` during a title-bar drag, and the moved events it causes, against an OS clamp after a display change.
+- With SIP as it is and, on a second boot, with SIP fully on: the SkyLight reads in `Snapshot` and the bridged window-to-Space move, 20 trials each.
+- A non-activating `NSPanel` under the `accessory` policy: it shows above normal windows, takes a click, and does not change the focused window or activate tess.
 
 Gate: every probe has a recorded result and a negative control (a skipped write must read back unchanged). A failed probe reopens this record.
 
-### N2 — TCC deployment
+### N2 — TCC deployment and signing
 
-Interfaces: the home-manager module adds `programs.tessera.daemon.signingIdentity`. Activation copies `tess` out of the store into `~/Applications/Tessera Daemon.app/Contents/MacOS/tess`, with `CFBundleIdentifier` `io.github.mattwilkinsonn.tessera.daemon`, and signs it with `codesign --force -s <identity> -i io.github.mattwilkinsonn.tessera.daemon`. It writes the new bundle beside the old one, signs it, then swaps the two and restarts the launchd agent, whose `ProgramArguments` name the stable path. `tess rescue` from the store re-executes the stable-path binary.
+Interfaces: the home-manager module adds `programs.tessera.daemon.signingIdentity`, set to Matt's self-signed certificate now and to the Developer ID later (Decision 3). Activation copies the release bundle out of the store into `/Applications/Tessera Daemon.app`, owned by root, with `CFBundleIdentifier` `io.github.mattwilkinsonn.tessera.daemon`, and signs `Contents/MacOS/tess` with `codesign --force -s <identity> -i io.github.mattwilkinsonn.tessera.daemon`. The bundle also holds `Contents/Resources/tess.osax`. Activation writes the new bundle beside the old one, signs it, then swaps the two and restarts the launchd agent, whose `ProgramArguments` name the stable path. `tess rescue` and `tess sa` from the store re-execute the stable-path binary.
 
 Gate, recorded in evidence § *TCC* and marked [INFERENCE] until done: two different builds pass through real activations and keep the grant; it survives logout and reboot; a revoked grant makes the daemon report `fresh: false` and move nothing; `tess rescue --dry-run` with the daemon stopped is trusted. Record `codesign -d -r-` and the executable path of each process.
 
@@ -451,28 +527,58 @@ Interfaces: `type Capabilities struct{ StackCap int; NeedsStaging bool }` and `C
 
 Gate: the real command and executor path with `{0, false}` places 40 windows in one stack with no staging write; with `{24, true}` today's behaviour and tests are unchanged; a failure injected between staging and realization restores staged windows on yabai and flushes nothing on a transactional fake.
 
-### N4 — Space service
+### N4 — tess's scripting addition
+
+Interfaces: a new `sa/` directory with the fork of SC26 `a26707a` (§ *tess's scripting addition*): `sa/payload/payload.m`, `sa/payload/arm64_payload.m`, `sa/loader/loader.m`, `sa/common.h`, and `sa/LICENSE.txt` with yabai's MIT text. The payload keeps opcodes `HANDSHAKE`, `SPACE_FOCUS`, `SPACE_CREATE`, `SPACE_DESTROY`, `SPACE_MOVE` and `WINDOW_LAYER`, and their patterns and offsets; every other handler, pattern and ivar lookup is deleted. Socket `/tmp/tess-sa_<user>.socket`; bundle `tess.osax`; `OSAX_VERSION` `tess-1`. `flake.nix` builds the payload and loader for `aarch64-darwin` into the bundle. `THIRD_PARTY_NOTICES.md` gains the yabai MIT notice and the Jeremy Legendre attribution.
+
+Go side, `internal/sa` (portable protocol, no cgo):
+
+```go
+type Attrib uint32 // mirrors OSAX_ATTRIB_* in sa/common.h
+
+type Handshake struct {
+	Version string
+	Attrib  Attrib
+}
+
+type Client interface {
+	Handshake(ctx context.Context) (Handshake, error)
+	CreateSpace(ctx context.Context, display uint64) error
+	DestroySpace(ctx context.Context, sid uint64) error
+	FocusSpace(ctx context.Context, sid uint64) error
+	MoveSpaceAfter(ctx context.Context, sid, after uint64) error
+	SetWindowLayer(ctx context.Context, wid uint32, level int) error
+}
+
+func Encode(op Opcode, args ...any) ([]byte, error)
+func Dial(path string) Client
+```
+
+`internal/sa/darwin` (cgo): `Status() (Status, error)` with `Status{SIPFilesystem, SIPTaskForPID, BootArg bool; Installed string; Handshake *Handshake}`; `Install(bundle string) error`; `Load() error`; `Uninstall() error`. CLI: `tess sa status`, `tess sa load`, `tess sa uninstall`. Downstream: a sudoers entry for `/Applications/Tessera Daemon.app/Contents/MacOS/tess sa load` (open question 3).
+
+Gate: `Encode` golden tests match the byte layout of yabai's `sa_payload_init`, `pack` and `sa_payload_send` macros for every kept opcode; a fake payload socket tests the handshake, a version mismatch (reload, never use) and a missing attribute (`ErrCapability`). On Matt's Mac with yabai stopped and Dock restarted: `tess sa load` reports `tess-1` and the expected bits; create, focus, move and destroy a scratch Space; `SetWindowLayer` keeps a test window above a normal one; Dock restart drops the payload and `tess sa load` restores it. With SIP fully on (second boot, or a second Mac): `tess sa status` reports every SA capability missing and `tess sa load` exits non-zero with a clear message.
+
+### N5 — Space service and capabilities
 
 Interfaces, in `internal/wm`:
 
 ```go
 type NativeSpace struct {
-	ID       uint64
-	Index    int
-	Label    string
-	Display  string
-	Visible  bool
+	ID         uint64
+	Index      int
+	Display    string
+	Visible    bool
 	Fullscreen bool
-	OwnLayout bool
 }
 
 type NativeWindow struct {
-	ID, PID                    int
-	Space                      uint64
-	Display                    string
-	Frame                      Frame
-	App, Title, Role, Subrole  string
-	Minimized, Hidden          bool
+	ID, PID    int
+	Space      uint64
+	Display    string
+	Frame      Frame
+	App, Title string
+	Layer      int
+	Minimized  bool
 }
 
 type SpaceSnapshot struct {
@@ -482,16 +588,23 @@ type SpaceSnapshot struct {
 }
 
 type SpaceNotice struct {
-	Kind  Event
-	Space uint64
+	Kind   Event
+	Space  uint64
 	Window int
 }
 
+type SpaceCaps struct {
+	Read, MoveWindow, Focus, FocusInstant bool
+	Create, Destroy, Reorder, PinLayer    bool
+}
+
+type ErrCapability struct{ Name string }
+
 type SpaceService interface {
+	Capabilities() SpaceCaps
 	Snapshot(ctx context.Context) (SpaceSnapshot, error)
 	CreateSpace(ctx context.Context, display string) (uint64, error)
 	DestroySpace(ctx context.Context, sid uint64) error
-	LabelSpace(ctx context.Context, sid uint64, label string) error
 	MoveSpace(ctx context.Context, sid uint64, index int) error
 	FocusSpace(ctx context.Context, sid uint64) error
 	MoveWindowToSpace(ctx context.Context, winID int, sid uint64) error
@@ -505,25 +618,25 @@ type SpaceOpError struct {
 }
 ```
 
-`internal/wm/yabai.SpaceService` implements it over the existing query and run helpers, with notices from the daemon's signal path, per § *The Space service*. The yabai driver's `CreateSpace`, `DestroySpace`, `LabelSpace`, `MoveSpaceToIndex` and `MoveWindowToSpace` call it. Their fixed sleeps and polls go. `MoveWindowToSpace` keeps `wm.CanAddToSpace` only while the target Space tiles.
+`internal/wm/native/spaces` implements it per § *The Space service* over `sa.Client` and a cgo SkyLight layer in `internal/wm/native/spaces/darwin` (`dlsym` for each private symbol; a missing one clears its `SpaceCaps` bit). `Capabilities` recomputes after each SA load. With no `Create` capability, `CreateSpace` follows open question 1. `fake.SpaceService` is configurable per capability.
 
-Gate: tests on the recording runner for each operation: already satisfied; notice before the command (subscribed first); no notice, met by poll inside the budget; never met, returns `OutcomeUnknown`; `LabelSpace` with no wait. `MoveWindowToSpace` with 30 windows on a `float` target and an unchanged active Space. `Snapshot` decodes windows on hidden Spaces.
+Gate: tests on the fake SA socket and a fake SkyLight layer for each operation: already satisfied; notice before the action (subscribed first); no notice, met by poll inside the budget; never met, returns `OutcomeUnknown`; missing capability returns `ErrCapability` with no call made. `Snapshot` returns windows on hidden Spaces. `MoveWindowToSpace` with 30 windows and an unchanged active Space.
 
-### N5 — Model, layout and status
+### N6 — Slot model, layout and status
 
-Interfaces: `native.Model{Lifecycle Lifecycle; Desired Desired}`. `Lifecycle` holds `map[int]WindowLife` with `WindowLife{ID, PID int; Space uint64; Observed wm.Frame; ReadAt time.Time; Status Status; Attached bool; Op uint64; Gen uint64}`, tombstones `map[int]uint64`, and the focused window. `Desired` holds `[]Workspace` with `Workspace{ID, Label, Display string; Space uint64; Kind wm.LayoutKind; Tracks [][]int; Weights []float64; Front []int; Arrival Arrival}` and `map[int]WindowWant` with `WindowWant{Workspace string; Mode Mode; Float wm.Frame}`. `Frames(area wm.Frame, ws Workspace) map[int]wm.Frame`. `ParkCorners(displays []wm.Display) map[string]wm.Frame`. `AdoptTracks(windows []wm.NativeWindow, area wm.Frame) ([][]int, []float64, []int)`. `Desired.Copy() *WorkingCopy`; `(*WorkingCopy).Commit(l *Lifecycle) (dropped []int)`.
+Interfaces: `native.Model{Lifecycle Lifecycle; Desired Desired}`. `Lifecycle` holds `map[int]WindowLife` with `WindowLife{ID, PID int; Space uint64; Observed wm.Frame; ReadAt time.Time; Status Status; Attached bool; Op uint64; Gen uint64}`, tombstones `map[int]uint64`, and the focused window. `Desired` holds `[]Workspace` with `Workspace{ID, Label, Display string; Space uint64; Kind wm.LayoutKind; Slots []Slot; Weights []float64; Override []float64; Arrival Arrival}`, `Slot{Name string; Windows []int; Front int}`, and `map[int]WindowWant` with `WindowWant{Workspace string; Mode Mode; Float wm.Frame; Home *HomeSlot}`, `HomeSlot{Workspace, Slot string; Index int}`. `Mode` is `slotted`, `floating`, `excluded` or `suspended`. `Frames(area wm.Frame, ws Workspace) map[int]wm.Frame` uses `Override` when set; `(*Workspace).ClearOverride()`. `SlotAt(area wm.Frame, ws Workspace, p wm.Point) (slot string, ok bool)`. `ParkCorners(displays []wm.Display) map[string]wm.Frame`. `AdoptSlots(windows []wm.NativeWindow, area wm.Frame) ([]Slot, []float64)`. `Desired.Copy() *WorkingCopy`; `(*WorkingCopy).Commit(l *Lifecycle) (dropped []int)`.
 
-Gate: pure table tests on the three-display fixture: 40 windows in one stack; weights that do not sum to 1; a commit that names a tombstoned window drops it; a window that appeared after the copy joins at the arrival target; `AdoptTracks` on columns, stacks and overlapping floats.
+Gate: pure table tests on the three-display fixture: 40 windows in one stack; weights that do not sum to 1; an override replaces profile weights and `ClearOverride` restores them; `SlotAt` on slot edges; a commit that names a tombstoned window drops it; a window that appeared after the copy joins at the arrival target; `AdoptSlots` on columns, stacks and overlapping floats.
 
-### N6 — Darwin platform layer
+### N7 — Darwin platform layer
 
-Interfaces: `native.Platform`: `Apps() ([]App, error)`, `Attach(pid int, ids []int) (attached []int, err error)`, `SetFrame(op uint64, id int, f wm.Frame) error`, `ReadFrame(op uint64, id int) error`, `Focus(op uint64, id int) error`, `FocusedWindow(pid int) (int, error)`, `Displays() ([]wm.Display, error)`, `Mouse() MouseState`, `Events() <-chan PlatformEvent`, `Results() <-chan Result`, `Trusted() bool`. `MouseState{Buttons uint; Fn bool}`. `Result{Op uint64; Window int; Frame wm.Frame; Err error}`. `PlatformEvent{Kind EventKind; PID, Window int}` with kinds for app launch and quit, window created, destroyed, focused, moved, resized, minimized, deminimized, title, display changed and native Space changed. `internal/wm/native/darwin` implements it with cgo and per-app workers.
+Interfaces: `native.Platform`: `Apps() ([]App, error)`, `Attach(pid int, ids []int) (attached []int, err error)`, `SetFrame(op uint64, id int, f wm.Frame) error`, `ReadFrame(op uint64, id int) error`, `Focus(op uint64, id int) error`, `FocusedWindow(pid int) (int, error)`, `Displays() ([]wm.Display, error)`, `MouseButtons() uint`, `ShowIndicator(display, text string) error`, `HideIndicator() error`, `PickSlot(ctx context.Context, displays []string) (<-chan wm.Point, error)`, `Events() <-chan PlatformEvent`, `Results() <-chan Result`, `Trusted() bool`. `Result{Op uint64; Window int; Frame wm.Frame; Err error}`. `PlatformEvent{Kind EventKind; PID, Window int}` with kinds for app launch and quit, window created, destroyed, focused, moved, resized, minimized, deminimized, title, display changed, native Space changed and Dock restarted. `internal/wm/native/darwin` implements it with cgo and per-app workers; the indicator and the pick panels are `NSPanel`s per § *Move mode*.
 
-Gate: N1's live tests pass against this layer; a hung app (a test helper that blocks its main thread) times out at 250 ms while another app's write completes; `Attach` on a hidden Space returns nothing and, after the Space becomes visible, returns the window.
+Gate: N1's live tests pass against this layer; a hung app (a test helper that blocks its main thread) times out at 250 ms while another app's write completes; `Attach` on a hidden Space returns nothing and, after the Space becomes visible, returns the window; `PickSlot` returns a point on click and closes its panels on context cancel.
 
-### N7 — Native driver, actor and rescue
+### N8 — Native driver, actor and rescue
 
-Interfaces: `native.Driver` implements `wm.Driver`, `wm.Transactional`, `wm.EventStream` and `wm.ProcessSupervisor` over `Model`, `Platform` and `wm.SpaceService`. The actor loop, operation fencing, pending writes and status per § *Desired and observed state*; focus per § *Focus*; checkpoints and compensation per § *Job transactions*; plain-drag handling per question 4; gesture handling per question 8; cold start per § *Lifecycle contract*; `*wm.ApplyError`; `StatePublisher.Request` after each flush; `tess query`; `tess rescue`.
+Interfaces: `native.Driver` implements `wm.Driver`, `wm.Transactional`, `wm.EventStream` and `wm.ProcessSupervisor` over `Model`, `Platform` and `wm.SpaceService`. The actor loop, operation fencing, pending writes and status per § *Desired and observed state*; focus per § *Focus*; checkpoints and compensation per § *Job transactions*; cold start per § *Lifecycle contract*; SA reload on Dock restart; `*wm.ApplyError`; `StatePublisher.Request` after each flush; `tess query`; `tess rescue`.
 
 Gate: `synctest` tests on a fake platform and a fake Space service:
 
@@ -535,91 +648,94 @@ Gate: `synctest` tests on a fake platform and a fake Space service:
 - an `OutcomeUnknown` is resolved by `Snapshot`;
 - a focus worker returns success with no focused-window event, and `FocusWindow` returns `ErrFocusTimeout`;
 - intermediate and delayed moved events during a pending write raise no drag;
-- an `fn` gesture suspends writes until all buttons are up;
+- a Dock-restart event reloads the SA and recomputes capabilities;
+- with every SA capability off, apply, focus and slot moves still work and `CreateSpace` follows open question 1;
 - a refused write returns `ApplyError` and `fresh: false`;
 - cold start with windows on three hidden Spaces and one window unknown to `native-state.json`;
 - the existing `internal/commands` and `internal/daemon` suites pass on `native.Driver`.
 
-### N8 — Observe mode
+### N9 — Slot interaction
 
-Interfaces: `backend: "observe"` runs the yabai driver and, read-only, the native platform and Space service. The daemon logs each window whose native membership or frame differs from yabai's, including windows on hidden Spaces, and each event yabai saw that tess did not.
+Interfaces: the verbs in § *Slot verbs* on `native.Driver`: `stack <dir>`; `move-mode` with `commands.MoveModeCommand{}` and actor state `MoveMode{Source int; Highlight string; Deadline time.Time}`; float and pin per § *Float and pin*, using `HomeSlot` and the `PinLayer` capability; `resize` on `Override`; `layout save|reset|export` with `commands.LayoutCommand{Action string}` (save target per open question 2). New CLI kinds `move-mode`, `stack` and `layout` in `internal/cli`. The state stream gains `moveMode`, per-window `mode` and `pinned`, and per-workspace `modified`.
+
+Gate: `synctest` tests on the fake platform: move mode commits on a click inside a slot, on a click on a window, and on the keyboard path, and cancels on Escape and on the 10 s timeout; the indicator shows and hides once each; Escape is registered only while move mode is on. A drag start floats the window, closes its slot and records the home slot; `toggle-float` returns it to the same slot and index; a home slot that vanished sends it to the arrival target; a drag that ends on another display moves membership. `resize` then `layout reset` restores profile frames; `apply` clears an override. With `PinLayer` off the window is raised and reports `pinned: false`.
+
+### N10 — Observe mode
+
+Interfaces: `backend: "observe"` runs the yabai driver and, read-only, the native platform and Space service. The daemon logs each window whose native membership or frame differs from yabai's, including windows on hidden Spaces, and each event yabai saw that tess did not. tess's SA is not loaded in observe mode; yabai's is.
 
 Gate: one week of Matt's use. Every difference is fixed. A difference may be accepted only when it does not change the membership the planners read. This proves enumeration and event coverage only, not writes or focus.
 
-### N9 — Actuation gate
+### N11 — Actuation gate
 
-Interfaces: N1's live suite, extended, run by Matt on the desk against `native.Driver` on one scratch Space under the restricted configuration.
+Interfaces: N1's live suite, extended, run by Matt on the desk against `native.Driver` on one scratch Space, with yabai stopped for the run and started again after.
 
-Gate: tiling, swap, stack, resize, focus (Zen across displays and on a hidden Space, 20 trials each, success rate recorded), float, a window that refuses a frame, a terminal, an Electron app, a plain drag and an `fn` left and right drag with release, `tess rescue`, a daemon `kill -9` mid-flush, and a cold restart with windows on hidden Spaces and windows created while the daemon was down. No drag misclassified, no write loop, no yabai write outside question 8's exception.
+Gate: slot placement, swap, stack, resize and reset, focus (Zen across displays and on a hidden Space, 20 trials each, success rate recorded), move mode by click and by keyboard, a drag that floats and pins, `toggle-float` back to the slot, a window that refuses a frame, a terminal, an Electron app, `tess rescue`, a daemon `kill -9` mid-flush, a Dock restart, and a cold restart with windows on hidden Spaces and windows created while the daemon was down. No drag misclassified, no write loop.
 
-### N10 — tess owns yabai's configuration
+### N12 — Migration and switch
 
-Interfaces: `tess yabai-config apply` reads `migration.json` (if any) and applies `legacy` or `restricted` through the yabai driver, removing and adding rules and signals by label. Profile block `yabai: legacy: {settings: {[string]: string}, rules: [...#Rule], signals: [...#Signal]}`. `restricted` is a fixed Go value per § *yabai's restricted configuration*. Downstream: yabairc becomes `sudo yabai --load-sa`, the `dock_did_restart` signal, `tess yabai-config apply` and `tess wake`; the profile gains `yabai.legacy` with today's settings.
+Interfaces: `tess migrate --to native`, `tess migrate --reverse` and `tess migrate --status` per § *Migration*; profile `backend: "yabai" | "observe" | "native"`; `migration.json` and `migration-snapshot.json`. Downstream: sketchybar reads `tess query`; the yabai agent stays installed but the migration boots it out; the yabai sudoers entry stays until N14.
 
-Gate: on the yabai backend, with no migration, `yabai -m config <key>` returns today's value for every key in `legacy` after a yabai restart (parity test against a recorded table); with `restricted` applied on a scratch machine state, a new Space is `float`, a new window is neither tiled nor moved, and yabai restart, Dock restart and a display change keep it so.
+Gate: fake tests inject a crash after each item, forward and in reverse, and prove resume in the recorded direction; a profile that disagrees with the recorded state moves nothing; a reverse after Spaces were added and removed; a display change mid-reverse; a reverse item that fails three times ends in `reverse-blocked`. On Matt's Mac: one forward, one full reverse, then forward again; then the live checklist: apply on desk, unplug to laptop, replug, focus-slot 1–9, Zen focus, Cmd-Tab to a hidden Space, native fullscreen and back, Dock restart, move mode, drag-float and return.
 
-### N11 — Hybrid migration and switch
+### N13 — Soak
 
-Interfaces: `tess migrate --to hybrid`, `tess migrate --reverse` and `tess migrate --status` per § *Migration*; profile `backend: "yabai" | "observe" | "hybrid"`; `migration.json` and `migration-snapshot.json`; question 5's remaps on the native driver. Downstream: sketchybar reads `tess query`.
+Gate: two weeks on `native` with no reverse, with Space-service budgets tuned from the recorded timings.
 
-Gate: fake tests inject a crash after each item, forward and in reverse, and prove resume in the recorded direction; a profile that disagrees with the recorded state moves nothing; a reverse after Spaces were added, removed and moved to another display; a display change mid-reverse; a reverse item that fails three times ends in `reverse-blocked`. On Matt's Mac: one forward, one full reverse, then forward again; then the live checklist: apply on desk, unplug to laptop, replug, focus-slot 1–9, Zen focus, Cmd-Tab to a hidden Space, native fullscreen and back, yabai restart, Dock restart.
+### N14 — Remove yabai and tree code
 
-### N12 — Soak
+Interfaces: delete `internal/wm/yabai/` (driver, args, rules, signals, supervisor and test data), `internal/commands/staging.go`, `staged-windows.json` handling, `wm.RuleOps`, `wm.EventSource`, `wm.SettleOps`, `ArmInsert`, `ToggleSplit`, `SetSplitRatio`, `SplitType`, `LayoutBSP`, `WarpWindow`, `SetSpaceLayout`, `BalanceSpace`, `StackWindowCap`, `ErrSpaceFull`, the `observe` and `yabai` backend values, `tess migrate --to native` and its reverse, and the CLI verbs `insert`, `warp`, `reset-splits`, `balance`, `columns`, `space bsp`, `drop-action` and `rules`. `wm.Capabilities` loses `NeedsStaging`. Rewrite `README.md`, which today calls tess "a config layer for yabai". Downstream: remove the yabai agent, yabairc, the yabai Homebrew formula and the yabai sudoers entry; `sudo yabai --uninstall-sa`.
 
-Gate: two weeks on `hybrid` with no reverse, with Space-service budgets tuned from the recorded timings. Matt then confirms question 1 or opens V1.
+Gate: a search for `yabai` in `*.go` files finds nothing outside comments that name the SA's source; `go build ./...` on darwin and `GOOS=linux go vet` on portable packages pass; `moon ci` green; Matt runs one full day with yabai uninstalled.
 
-### N13 — Remove tree code
+### V0 — Parking spike on Matt's geometry
 
-Interfaces: delete `internal/commands/staging.go`, `staged-windows.json` handling, `ArmInsert`, `ToggleSplit`, `SetSplitRatio`, `SplitType`, `LayoutBSP`, `WarpWindow`, `wm.RuleOps`, `StackWindowCap`, `ErrSpaceFull`, `drop-action`, `yabai.legacy` handling after a completed hybrid soak, and the yabai tiling arguments. The yabai package keeps `SpaceService`, queries and process supervision. komorebi keeps the `wm.Driver` methods that still exist.
+Interfaces: live probes in the N1 suite, behind `//go:build darwin && live && virtual`, with a disposable AX test window and a scratch controller. Needs only S2 and N7. Does not block any N task.
 
-Gate: `go build ./...` on darwin, linux and windows; `moon ci` green.
+Probes, from evidence § *Virtual workspaces*: for AW windows, park at both AW bottom corners and at the free laptop bottom-left and G9 bottom-right corners; record requested and read-back frames and screenshots of all three displays, and whether any part stays visible or clickable. Repeat with Zoom and other resistant apps, floating and slotted sizes, and several windows. Then rapid workspace changes; Cmd-Tab and Dock activation for single- and multi-window apps; Mission Control; native fullscreen enter and exit; tess termination and relaunch while windows are parked; unplug and reconnect, and sleep and wake, with parked AW windows.
 
-### V0 — Virtual workspace research (independent)
+Gate: pass only if AW windows stay out of the visible work area with no leak onto another display, every activation restores the intended workspace and window, and cold-start rescue restores every parked frame. Results go to evidence.md. A fail ends stage V for this geometry.
 
-Interfaces: live probes in the N1 suite, behind `//go:build darwin && live && virtual`. Needs only S2. Does not block any N task.
+### V1 — Virtual workspace lifecycle (only after V0 passes)
 
-Probes: park clamping at each candidate corner of the three displays, including AW windows parked on another display; the event sequence when Cmd-Tab, the Dock and a notification activate a parked window; Mission Control with parked windows. Results go to evidence.md.
+Interfaces: parking and the ledger per § *Parking and recovery*; activation restore, stray Spaces and unplug per § *Lifecycle contract*; a model-backed `wm.SpaceService` with every SA capability off.
 
-Gate: every probe recorded. Matt uses the results if he revisits question 1.
+Gate: fake tests for every row of the lifecycle table under V; live: AW windows parked and restored, Cmd-Tab and Dock activation of a parked window, native fullscreen and back, unplug with inactive workspaces, lid close and reconnect, daemon `kill -9` with parked windows then restart and `tess rescue`.
 
-### V1 — Virtual workspace lifecycle (only under question 1, A)
-
-Interfaces: parking and the ledger per § *Parking and recovery*; activation restore, stray Spaces and unplug per § *Lifecycle contract*; a model-backed `wm.SpaceService`.
-
-Gate: fake tests for every row of the lifecycle table under A; live: AW windows parked and restored, Cmd-Tab and Dock activation of a parked window, native fullscreen and back, unplug with inactive workspaces, lid close and reconnect, daemon `kill -9` with parked windows then restart and `tess rescue`.
-
-### V2 — Consolidation migration (only under A)
+### V2 — Consolidation migration (only after V0 passes)
 
 Interfaces: `tess migrate --to virtual` and `--reverse` per § *Migration*.
 
 Gate: a crash after each item resumes in the recorded direction on fakes; on Matt's Mac, one forward and one full reverse with parked windows before the daily switch.
 
-### V3 — Remove yabai (only under A)
+### V3 — Retire the SA (only after V0 passes)
 
-Interfaces: delete `internal/wm/yabai`, `wm.EventSource`, `tess yabai-config` and the hybrid backend value. Downstream: the yabai agent, yabairc, the sudoers entry and, per question 2, SIP.
+Interfaces: `tess sa uninstall` on Matt's Mac; the sudoers entry goes downstream. The `sa/` code stays, because a Mac with SIP partly off can still use native Spaces. Matt re-enables SIP when he chooses (Decision 2).
 
-Gate: two weeks on `virtual` with no reverse, then `go build ./...` on all three systems and `moon ci` green.
+Gate: two weeks on `virtual` with no reverse.
 
 ## Tasks
 
+- [ ] S0 — delete the Windows (komorebi) code, CI job and design record; add `THIRD_PARTY_NOTICES.md`
 - [ ] S1 — every command through the daemon (#76 T5 protocol)
-- [ ] S2 — darwin cgo build, `otool` and bare-runner checks; Linux and Windows stay cgo-free
-- [ ] S3 — `hotkeys` in the profile; Carbon registration; key repeat; 50-combo live check
+- [ ] S2 — darwin cgo build, `accessory` run loop, `otool` and bare-runner checks
+- [ ] S3 — `hotkeys` in the profile; Carbon press and release; repeat on any binding; 50-combo live check
 - [ ] S4 — nine raw bindings as tess verbs on yabai; behaviour test for all 50; downstream skhd removal
-- [ ] N1 — feasibility spike for D: writes, focus, yabai write invariant, gestures, Space timings
-- [ ] N2 — stable signed daemon bundle; TCC gate through real activations
+- [ ] N1 — feasibility spike: writes, focus, drags, SkyLight with SIP on, non-activating panel
+- [ ] N2 — stable signed daemon bundle (self-signed now, Developer ID later); TCC gate
 - [ ] N3 — `wm.Capabilities` and `wm.Transactional`; planner and staging behind them
-- [ ] N4 — `wm.SpaceService` with postconditions; yabai Space calls lose their fixed sleeps
-- [ ] N5 — `native.Model` with lifecycle and desired state, `Frames`, `AdoptTracks`, working copy
-- [ ] N6 — `native.Platform`, lazy `Attach`, the cgo darwin layer with per-app workers
-- [ ] N7 — `native.Driver`, actor, fencing, focus postcondition, gestures, `tess query`, `tess rescue`
-- [ ] N8 — observe mode for one week, including hidden Spaces
-- [ ] N9 — actuation gate on a scratch Space
-- [ ] N10 — `tess yabai-config apply`; legacy and restricted sets; delegating yabairc
-- [ ] N11 — recorded hybrid migration, reverse, question 5 remaps, sketchybar on `tess query`
-- [ ] N12 — two-week hybrid soak; tune Space budgets
-- [ ] N13 — delete staging, insert arms, BSP verbs and yabai tiling code
-- [ ] V0 — virtual workspace research (independent of D)
-- [ ] V1 — virtual workspace lifecycle (only if question 1 becomes A)
-- [ ] V2 — consolidation migration and reverse (only under A)
-- [ ] V3 — remove yabai; SIP per question 2 (only under A)
+- [ ] N4 — tess's scripting addition: fork, cut to six opcodes, install, load, version handshake, attribution
+- [ ] N5 — `wm.SpaceService` with capabilities and postconditions; SIP-on degradation
+- [ ] N6 — slot model with override weights, home slots, `Frames`, `SlotAt`, `AdoptSlots`, working copy
+- [ ] N7 — `native.Platform`, lazy `Attach`, indicator and pick panels, cgo darwin layer
+- [ ] N8 — `native.Driver`, actor, fencing, focus postcondition, SA reload, `tess query`, `tess rescue`
+- [ ] N9 — slot interaction: move mode with top-right indicator, float and pin on drag, temporary resize with save and reset
+- [ ] N10 — observe mode for one week, including hidden Spaces
+- [ ] N11 — actuation gate on a scratch Space
+- [ ] N12 — recorded migration from yabai to native, reverse, sketchybar on `tess query`
+- [ ] N13 — two-week soak; tune Space budgets
+- [ ] N14 — delete the yabai driver, staging, insert arms and tree verbs; uninstall yabai downstream
+- [ ] V0 — parking spike on Matt's three-display geometry (optional, any time after N7)
+- [ ] V1 — virtual workspace lifecycle (only after V0 passes)
+- [ ] V2 — consolidation migration and reverse (only after V0 passes)
+- [ ] V3 — retire the SA on Matt's Mac; SIP per Decision 2
