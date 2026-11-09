@@ -243,6 +243,7 @@ func TestLaptopConvergeStep(t *testing.T) {
 	profile := engineTestProfile(t)
 	laptopConvergeCreationCases(t, profile)
 	laptopConvergeOrderCases(t, profile)
+	laptopConvergeUserOrderCases(t, profile)
 	laptopConvergeCleanupCases(t, profile)
 }
 
@@ -337,6 +338,10 @@ func laptopConvergeOrderCases(t *testing.T, profile *config.Profile) {
 			t.Fatal("home space identity did not survive")
 		}
 	})
+}
+
+func laptopConvergeUserOrderCases(t *testing.T, profile *config.Profile) {
+	t.Helper()
 	t.Run("daemon preserves flex between pinned spaces", func(t *testing.T) {
 		world := newLaptopWorld([]wm.Window{{ID: 1, App: "Arc"}, {ID: 2, App: "Arc"}, {ID: 3, App: "Spotify"}}, []string{"lap-arc", "lap-spotify", "lap-arc-2"}, true)
 		actions := runLaptopConverge(t, profile, world, false)
