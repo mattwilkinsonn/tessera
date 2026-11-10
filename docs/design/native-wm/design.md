@@ -4,13 +4,13 @@ Parent: RIG-8858. This record supersedes draft tessera #76 (`event-driven.md`, R
 
 **yabai sources.** Matt runs the Christian-SC26 fork of yabai (Homebrew `Christian-SC26/formulae/yabai`, v7.3.2; RIG-8327). Citations marked **SC26** are from that fork at `a26707a`, two commits past its v7.3.2 tag; neither commit touches a cited function. Citations marked **both** read the same in SC26 and in upstream at `dd84572`. After stage N, yabai is only a reference source, the origin of tess's scripting addition, and the rollback target. Evidence § *yabai mechanisms* gives the source of every citation.
 
-**Freeze.** This record freezes after Matt rules on the open questions below. N1 checks the assumptions of the chosen design. If a probe fails, the record reopens; N1 does not choose.
+**Freeze.** Matt has ruled on every open question (Decisions 10 to 12), so none remain. N1 checks the assumptions of the chosen design. If a probe fails, the record reopens; N1 does not choose.
 
 <!-- LENGTH §Approach: answers the required capability questions plus the migration, Space-service, scripting-addition and actor contracts -->
 
 ## Decisions
 
-Matt ruled on the nine questions of the first draft on 2026-11-09.
+Matt ruled on the nine questions of the first draft on 2026-11-09, and on the three open questions on 2026-11-10.
 
 1. **Workspaces: tess owns native Spaces through its own scripting addition (C).** tess forks yabai's scripting addition (SA) from SC26 `a26707a` (MIT) and changes it as it needs; yabai itself is not maintained well enough to depend on. tess must still run on a Mac with SIP fully on, with fewer capabilities (§ *Capabilities and SIP*). Virtual workspaces (A) are preferred if a parking spike passes on Matt's displays (stage V). The other first-draft options are removed, with yabai's restricted configuration, `tess yabai-config apply` and yabai's mouse gestures. yabai stays only as the SA's source, in attribution, and in migration and its reverse.
 2. **SIP.** If virtual workspaces pass V0 and run through V3, Matt re-enables SIP. No date is set.
@@ -21,43 +21,13 @@ Matt ruled on the nine questions of the first draft on 2026-11-09.
 7. **cgo** for every macOS framework call that needs it (A), in darwin-only packages.
 8. **Mouse gestures.** Not applicable; the question is removed.
 9. **Key repeat.** Any binding can set `repeat: true`; tess times the repeat itself. tessera is a personal project, so libraries are chosen on fit and maintenance only, not on adoption (§ *Library choices*).
+10. **Space pool with SIP on (A).** tess binds workspaces to the native Spaces that already exist. `CreateSpace` takes an unbound Space from the pool; if none is free it returns `wm.ErrCapability{Name: "space.create"}` and the job places the window on the active workspace. `tess doctor` prints how many Spaces each topology needs, so the user adds them once in Mission Control. The shortage shows in the top-right indicator area, the same space as the move-mode indicator. Costs: unused Spaces stay in Mission Control; one manual step per new Mac.
+11. **Overrides save into the profile source file.** Matt's own choice ("just have tess update it"). Downstream, home-manager deploys `~/.config/tessera/profile.cue` with `mkOutOfStoreSymlink` to the profile source in Matt's nix repo checkout, so the daemon reads the live source file, not a store copy. `tess layout save` resolves the symlink, checks the file's hash against the hash read at load and refuses on a mismatch, rewrites `weights` with a `cuelang.org/go` AST edit and `format` (which keeps comments), vets the result against `#Profile`, writes a temp file and renames it into place, then reloads the profile. The saved weights become the profile weights, so the override clears at once and no frame moves. A missing symlink target is an error and nothing is saved. `cue vet` still runs at switch, and the edit shows as a diff in Matt's repo for him to commit. Costs: tess writes into Matt's repo checkout, and an uncommitted change is lost if he resets the checkout.
+12. **Root for the scripting addition: sudoers (A).** nix-darwin writes a passwordless sudoers entry for `tess sa load` and `tess sa restore`. The daemon runs `tess sa load` at start and after `NSApplicationDockDidRestartNotification`. The entry names a path, so N2 installs the bundle at a root-owned path.
 
 ## Open Questions
 
-### 1. With SIP on, what happens when a job needs a new native Space?
-
-**Context:** with SIP fully on, tess cannot load its SA, and nothing can create or destroy a native Space (evidence § *What needs the scripting addition*). The laptop flex model (`laptop-flex-spaces.md`) and `CreateSpace` in the desk cascade both create Spaces. Matt's Mac keeps SIP partly off, so this decides behaviour only on another Mac or after Q2's SIP step.
-
-- **A. Space pool.** tess binds workspaces to the native Spaces that already exist. `CreateSpace` takes an unbound Space from the pool; if none is free it returns `wm.ErrCapability{Name: "space.create"}` and the job places the window on the active workspace. `tess doctor` prints how many Spaces each topology needs, so the user adds them once in Mission Control. Costs: unused Spaces stay in Mission Control; one manual step per new Mac.
-- **B. Fail the job.** `CreateSpace` returns the capability error and the job aborts. Costs: the laptop flex model stops working with SIP on.
-- **C. Virtual workspaces when the SA is missing.** tess falls back to stage V behaviour for the extra workspaces. Costs: two workspace models live in one desktop; parking is not proven on Matt's geometry.
-
-**Recommendation:** A, because it keeps every job working with no second workspace model, and the cost is a one-time setup step that `tess doctor` names.
-
-**Blocks:** the SIP-on path of N5 only.
-
-### 2. Where does "save slot sizes to the profile" write?
-
-**Context:** a temporary resize (§ *Temporary slot resize*) can be saved to the profile. The profile is CUE in Matt's nix repo, and the daemon reads it from a store path that it cannot write. `rule://config-in-cue` keeps config in CUE.
-
-- **A. A tess-owned overlay file.** `tess layout save` writes `~/.config/tessera/overrides.cue`, which the profile loader unifies over the profile. `tess layout export` prints the same values as a CUE patch that Matt can move into his nix repo. Costs: two places define weights until Matt moves them.
-- **B. Edit the profile source in place.** The profile names its source path; tess rewrites the `weights` field there. Costs: tess writes into a version-controlled repo outside its own state; a rebuild is still needed.
-- **C. Print only.** `tess layout save` prints the patch and saves nothing. Costs: a saved size does not take effect until the next rebuild.
-
-**Recommendation:** A, because a save takes effect at once, the overlay is plain CUE that the existing loader can unify, and `export` keeps the nix repo the long-term source.
-
-**Blocks:** N9's save action only.
-
-### 3. How does tess get root to load its scripting addition?
-
-**Context:** loading needs root: yabai checks `is_root`, then uses `task_for_pid` on Dock (evidence § *What needs the scripting addition*). Dock restarts drop the payload, so the load runs again after each one. Today the downstream config holds a sudoers entry for `yabai --load-sa`.
-
-- **A. A sudoers entry for one command.** nix-darwin writes a passwordless entry for `<stable path>/tess sa load`, and the daemon runs it at start and after `NSApplicationDockDidRestartNotification`. Same model as today. Costs: the entry names a path; a swap at that path runs as root, so the path must be root-owned.
-- **B. A root launchd daemon.** A small `tess sa-loader` LaunchDaemon runs as root and loads the SA when Dock starts. Costs: a long-running root process.
-
-**Recommendation:** A, because it matches what runs today and keeps no root process alive. N2 installs the bundle at a root-owned path for this reason.
-
-**Blocks:** N4's load step.
+None. Matt ruled on all three questions on 2026-11-10; the rulings are Decisions 10 to 12.
 
 ## Direction
 
@@ -119,7 +89,7 @@ The native backend implements `wm.Driver` against this model and a `wm.SpaceServ
 
 | `wm.Driver` call | Native meaning |
 | --- | --- |
-| `CreateSpace`, `DestroySpace`, `MoveSpaceToIndex` | Space-service call, an irreversible checkpoint; then bind or unbind the workspace record. Without the capability, see open question 1. |
+| `CreateSpace`, `DestroySpace`, `MoveSpaceToIndex` | Space-service call, an irreversible checkpoint; then bind or unbind the workspace record. Without the capability, see Decision 10. |
 | `LabelSpace` | Edit the workspace record only. |
 | `MoveWindowToSpace` | Move desired membership, then a Space-service call and an irreversible checkpoint. |
 | `RealizeSpaceLayout(target)` | Set the workspace's kind, slots and profile weights to `target`. Whether the override survives is decided by the command, not the driver (§ *Temporary slot resize*): the driver takes `clearOverride bool` from the planner. |
@@ -191,7 +161,7 @@ tess renames the socket from `/tmp/yabai-sa_<user>.socket` (`SA_SOCKET_PATH_FMT`
 **Install and load (`tess sa`).** Same steps as `scripting_addition_load` in `src/sa.m` (SC26), in Go with a small cgo part:
 
 1. `tess sa status` (no root) reads SIP with `csr_get_active_config`, the boot-args for `-arm64e_preview_abi`, the installed bundle version, and the handshake. It prints the capability table below.
-2. `tess sa load` (root) checks `CSR_ALLOW_UNRESTRICTED_FS` and `CSR_ALLOW_TASK_FOR_PID` and the boot-arg, installs `/Library/ScriptingAdditions/tess.osax` when the version differs, runs its loader, and waits for the handshake. Root comes from open question 3.
+2. `tess sa load` (root) checks `CSR_ALLOW_UNRESTRICTED_FS` and `CSR_ALLOW_TASK_FOR_PID` and the boot-arg, installs `/Library/ScriptingAdditions/tess.osax` when the version differs, runs its loader, and waits for the handshake. Root comes from Decision 12.
 3. **Only the native backend loads it.** The daemon runs `tess sa load` at start and after `NSApplicationDockDidRestartNotification` (the notification yabai observes in `src/workspace.m`, SC26) only when the profile says `backend: "native"`. With `backend: "yabai"`, `"observe"` or `"virtual"` it never loads, installs or talks to tess's payload. The one other caller is a test run by hand, `tess sa load --test`: it writes the restore record (step 5), boots out yabai's agent, then loads. `tess sa restore` ends every test run. A failed load is not fatal: the daemon logs it and runs with the capabilities it has.
 4. `tess sa uninstall` (root) unloads by restarting Dock and removes `/Library/ScriptingAdditions/tess.osax`. Every reverse path runs it before yabai starts again (§ *Migration*).
 5. **Crash-safe restore.** `tess sa load` first writes `sa-restore.json` in the state directory: `{"loaded_by": "tess", "yabai_agent_was_loaded": bool, "yabai_sa_was_installed": bool}`. `tess sa restore` reads it and returns the machine to that state: uninstall tess's payload, restart Dock, reinstall yabai's SA with `yabai --load-sa` if it was installed, and `launchctl bootstrap` yabai's agent if it was loaded. Each step checks its result first, so a second run after a crash does only what is left. The file is deleted only after the last step succeeds.
@@ -215,7 +185,7 @@ tess runs with SIP fully on. It does less. Every capability is reported, never a
 | Reorder Spaces | SA (`MOV_SPACE`) | **no** | `space_manager_move_space_after_space` (**both**) |
 | Pin a floating window above slotted ones | SA (`WINDOW_LAYER`); else raise only | partly: raised, not kept on top | `do_window_layer` in `src/osax/payload.m` calls `SLSSetWindowSubLevel` (SC26) |
 
-`wm.SpaceService.Capabilities()` returns this table as `wm.SpaceCaps`. A call to a missing capability returns `wm.ErrCapability{Name}` at once and runs nothing. The state stream and `tess sa status` carry the table, so the app and sketchybar can show it. Open question 1 decides what a job does when `space.create` is missing. With SIP on and no SA, the laptop flex model has no Space to grow into; with the SA it works as today.
+`wm.SpaceService.Capabilities()` returns this table as `wm.SpaceCaps`. A call to a missing capability returns `wm.ErrCapability{Name}` at once and runs nothing. The state stream and `tess sa status` carry the table, so the app and sketchybar can show it. Decision 10 decides what a job does when `space.create` is missing. With SIP on and no SA, the laptop flex model uses only the pooled Spaces; with the SA it works as today.
 
 **Private API in tess.** The daemon calls `_AXUIElementGetWindow` and the SkyLight read and window-move calls in the table, each resolved with `dlsym` at start. A missing symbol turns off its capability; it does not stop the daemon. Every other private call lives in the payload.
 
@@ -417,7 +387,7 @@ The slot-manager prior art (evidence § *Slot-manager prior art*) agrees on four
 | `move-mode` | § *Move mode* |
 | `toggle-float`, `toggle-float center` | § *Float and pin* |
 | `resize <dir>\|grow\|shrink` | temporary weight change (§ *Temporary slot resize*) |
-| `layout save\|reset\|export` | § *Temporary slot resize* |
+| `layout save\|reset` | § *Temporary slot resize* |
 | `snap 3col\|50-50\|columns`, `space stack`, `apply`, `laptop` | unchanged meaning; set slots and profile weights, clear the override |
 
 `warp east` was used to pull a window out of a stack; `stack east` replaces it. `insert`, `balance`, `columns`, `reset-splits`, `space bsp` and `drop-action` are deleted (Decision 5); `layout reset` covers what `balance` and `columns` did. Evidence § *Binding migration* maps every key.
@@ -454,17 +424,16 @@ Dragging a slotted window floats it at once (Decision 4).
 | Clears the override | Keeps the override |
 | --- | --- |
 | `apply`, `laptop`, `snap 3col\|50-50\|columns`, `space stack` | arrival placement of a new window |
-| `layout reset`, `layout save` (after it writes) | `focus`, `focus-slot`, `swap`, `stack`, `stack-cycle`, move mode, float and return |
+| `layout reset`; `layout save` (after the reload) | `focus`, `focus-slot`, `swap`, `stack`, `stack-cycle`, move mode, float and return |
 | a change of the workspace's slot count (a slot added or removed by a command) | a Hub cascade or `DisplayQuiet` cascade that re-homes a workspace to the same display kind |
 | a topology change that moves the workspace to another display | daemon restart, Dock restart |
 
 The planner sets `clearOverride` on `RealizeSpaceLayout` from this table. A cascade that keeps the override but changes the slot count clears it, because the weight vector no longer fits.
 
-- `tess layout save` writes the override as the layout's weights (open question 2 decides where), reloads the profile, checks that the reloaded weights equal the override, then clears it. A failed write or check keeps the override and returns an error.
+- `tess layout save` writes the override as the layout's `weights` in the profile source file, through the symlink (Decision 11), then reloads the profile. The saved weights are the profile weights, so the override clears and no frame moves. A hash mismatch, a vet failure or a missing target returns an error and saves nothing.
 - `tess layout reset` clears the override, so the profile weights apply again.
-- `tess layout export` prints the override as a CUE patch for the profile.
 
-All three are CLI verbs, so a hotkey can run them. The app (`tess-app.md`) adds "Save layout" and "Reset layout" actions that send the same verbs over the daemon socket. The state stream marks a workspace with an override as `modified: true`, so the app and sketchybar can show it.
+Both are CLI verbs, so a hotkey can run them. The app (`tess-app.md`) adds "Save layout" and "Reset layout" actions that send the same verbs over the daemon socket. The state stream marks a workspace with an override as `modified: true`, so the app and sketchybar can show it.
 
 ### Library choices
 
@@ -628,7 +597,7 @@ func Encode(op Opcode, args ...any) ([]byte, error)
 func Dial(path string) Client
 ```
 
-`internal/sa/darwin` (cgo): `Status() (Status, error)` with `Status{SIPFilesystem, SIPTaskForPID, BootArg bool; Installed string; Handshake *Handshake}`; `Install(bundle string) error`; `Load() error`; `Uninstall() error`; `Restore() error` per § *tess's scripting addition* step 5, with `type RestoreRecord struct{LoadedBy string; YabaiAgentWasLoaded, YabaiSAWasInstalled bool}` in `internal/sa`. CLI: `tess sa status`, `tess sa load [--test]`, `tess sa uninstall`, `tess sa restore`. The daemon calls `Load` only on `backend: "native"`. Downstream: a sudoers entry for `/Applications/Tessera Daemon.app/Contents/MacOS/tess sa load` and `… sa restore` (open question 3).
+`internal/sa/darwin` (cgo): `Status() (Status, error)` with `Status{SIPFilesystem, SIPTaskForPID, BootArg bool; Installed string; Handshake *Handshake}`; `Install(bundle string) error`; `Load() error`; `Uninstall() error`; `Restore() error` per § *tess's scripting addition* step 5, with `type RestoreRecord struct{LoadedBy string; YabaiAgentWasLoaded, YabaiSAWasInstalled bool}` in `internal/sa`. CLI: `tess sa status`, `tess sa load [--test]`, `tess sa uninstall`, `tess sa restore`. The daemon calls `Load` only on `backend: "native"`. Downstream: a sudoers entry for `/Applications/Tessera Daemon.app/Contents/MacOS/tess sa load` and `… sa restore` (Decision 12).
 
 Gate: `Encode` golden tests for every kept opcode, byte for byte against a C harness built from yabai's `sa_payload_init`, `pack` and `sa_payload_send` macros: `SPACE_CREATE` with one `uint64` anchor, `SPACE_MOVE` with `src`, `dst`, `src_prev = 0` and a 1-byte `focus = 0`, and `WINDOW_LAYER` with a `uint32` and an `int32`. A handshake parser test on `tess-1\0` plus four mask bytes plus `\n`. A fake payload socket tests the handshake, a version mismatch (reload, never use) and a missing attribute (`ErrCapability`). A test that the daemon with `backend: "yabai"` or `"observe"` never calls `Load`. `Restore` tests on a fake system: a crash after each step, then a second `Restore`, ends in the recorded state; a missing record is a no-op.
 
@@ -694,7 +663,7 @@ type SpaceOpError struct {
 }
 ```
 
-`internal/wm/native/spaces` implements it per § *The Space service* over `sa.Client` and a cgo SkyLight layer in `internal/wm/native/spaces/darwin` (`dlsym` for each private symbol; a missing one clears its `SpaceCaps` bit). `CreateSpace(display)` resolves the display's current Space from `Snapshot` and sends it as the anchor. `Capabilities` recomputes after each SA load and is cleared by `InvalidateSA()`, which the actor calls on a Dock restart. With no `Create` capability, `CreateSpace` follows open question 1. `fake.SpaceService` is configurable per capability.
+`internal/wm/native/spaces` implements it per § *The Space service* over `sa.Client` and a cgo SkyLight layer in `internal/wm/native/spaces/darwin` (`dlsym` for each private symbol; a missing one clears its `SpaceCaps` bit). `CreateSpace(display)` resolves the display's current Space from `Snapshot` and sends it as the anchor. `Capabilities` recomputes after each SA load and is cleared by `InvalidateSA()`, which the actor calls on a Dock restart. With no `Create` capability, `CreateSpace` follows Decision 10. `fake.SpaceService` is configurable per capability.
 
 Gate: tests on the fake SA socket and a fake SkyLight layer for each operation: already satisfied; notice before the action (subscribed first); no notice, met by poll inside the budget; never met, returns `OutcomeUnknown`; missing capability returns `ErrCapability` with no call made. `CreateSpace` on a display sends that display's current Space ID, and returns the no-anchor error for a display with none. `FocusSpace` uses a 1 s budget on the SA path and 2 s on the gesture path, and the gesture path never posts twice within 150 ms. `InvalidateSA` makes the next SA call return `ErrCapability` with no socket write. `Snapshot` returns windows on hidden Spaces. `MoveWindowToSpace` with 30 windows and an unchanged active Space.
 
@@ -733,9 +702,9 @@ Gate: `synctest` tests on a fake platform and a fake Space service:
 - intermediate and delayed moved events during a pending write raise no drag;
 - Dock restart, per § *Lifecycle contract*, *Dock restart*: SA capabilities are false before the reload returns; a Space operation in flight at the notice returns `OutcomeUnknown` and its late result is dropped; jobs queued during recovery run after it;
 - Dock restart where Space IDs change: each workspace is re-bound to the new Space that holds its windows, and the reconcile is logged;
-- Dock restart where `tess sa load` fails: the daemon keeps running, SA bits stay false, the state stream names the failure, and `CreateSpace` follows open question 1;
+- Dock restart where `tess sa load` fails: the daemon keeps running, SA bits stay false, the state stream names the failure, and `CreateSpace` follows Decision 10;
 - Dock restart with two pinned windows: `WINDOW_LAYER` is sent again for both when `PinLayer` returns, and `pinned: false` is reported when it does not;
-- with every SA capability off, apply, focus and slot moves still work and `CreateSpace` follows open question 1;
+- with every SA capability off, apply, focus and slot moves still work and `CreateSpace` follows Decision 10;
 - with `SpaceCaps.Focus` off, `FocusWindow` on a hidden window returns `ErrFocusTimeout` with reason `space-focus-unavailable` and focuses nothing else;
 - a refused write returns `ApplyError` and `fresh: false`;
 - cold start with windows on three hidden Spaces and one window unknown to `native-state.json`;
@@ -743,11 +712,11 @@ Gate: `synctest` tests on a fake platform and a fake Space service:
 
 ### N9 — Slot interaction
 
-Interfaces: the verbs in § *Slot verbs* on `native.Driver`: `stack <dir>`; `move-mode` with `commands.MoveModeCommand{}` and actor state `MoveMode{Source int; Highlight string; Deadline time.Time}`; float and pin per § *Float and pin*, using `HomeSlot` and the `PinLayer` capability; `resize` on `Override`; `layout save|reset|export` with `commands.LayoutCommand{Action string}` (save target per open question 2). New CLI kinds `move-mode`, `stack` and `layout` in `internal/cli`. The state stream gains `moveMode`, per-window `mode` and `pinned`, and per-workspace `modified`.
+Interfaces: the verbs in § *Slot verbs* on `native.Driver`: `stack <dir>`; `move-mode` with `commands.MoveModeCommand{}` and actor state `MoveMode{Source int; Highlight string; Deadline time.Time}`; float and pin per § *Float and pin*, using `HomeSlot` and the `PinLayer` capability; `resize` on `Override`; `layout save|reset` with `commands.LayoutCommand{Action string}`; `layout save` runs the symlink, hash, AST-edit, vet, rename and reload steps of Decision 11. New CLI kinds `move-mode`, `stack` and `layout` in `internal/cli`. The state stream gains `moveMode`, per-window `mode` and `pinned`, and per-workspace `modified`.
 
 Gate: `synctest` tests on the fake platform: move mode commits on a click inside a slot, on a click on a window, and on the keyboard path, and cancels on Escape and on the 10 s timeout; the indicator shows and hides once each; Escape is registered only while move mode is on. A drag start floats the window, closes its slot and records the home slot; `toggle-float` returns it to the same slot and index; a home slot that vanished sends it to the arrival target; a drag that ends on another display moves membership. With `PinLayer` off the window is raised and reports `pinned: false`.
 
-Override tests, one per row of § *Temporary slot resize*, *What clears the override*: each command in the left column clears it, each event in the right column keeps it. Save and reset: `resize` then `layout reset` restores profile frames; `resize` then `layout save` writes the target from open question 2, reloads the profile, and the reloaded weights equal the old override with the override cleared; a daemon restart after `save` keeps the saved weights; a save whose write fails keeps the override and returns an error; `layout reset` after a save gives the saved weights, not the old profile weights.
+Override tests, one per row of § *Temporary slot resize*, *What clears the override*: each command in the left column clears it, each event in the right column keeps it. Save and reset: `resize` then `layout reset` restores profile frames; `resize` then `layout save` rewrites the source file through the symlink, reloads it, and the override clears with no frame change; a hash mismatch at save refuses and leaves the file and the override unchanged; a vet failure leaves the file unchanged; a missing symlink target errors and saves nothing; `layout reset` after a save keeps the saved weights as the profile weights.
 
 ### N10 — Observe mode
 
@@ -763,7 +732,7 @@ Gate: slot placement, swap, stack, resize, save and reset, focus (Zen across dis
 
 ### N12 — Migration and switch
 
-Interfaces: `tess migrate --to native`, `tess migrate --reverse` and `tess migrate --status` per § *Migration*; profile `backend: "yabai" | "observe" | "native"`; `migration.json` and `migration-snapshot.json`. Bindings per § *Bindings across the switch*: `backends?: [...("yabai" | "native")]` on `#Hotkey` and `config.Hotkey`; `wm.Driver.Supports(argv []string) bool`; `hotkey.Set(backend string, all []Binding) []Binding`; the switch is `Diff` from one set to the other, applied in one actor step. Downstream: Matt's profile gains the native-only bindings and marks the yabai-only ones; sketchybar reads `tess query`; the yabai agent stays installed but the migration boots it out; the yabai sudoers entry stays until N14.
+Interfaces: `tess migrate --to native`, `tess migrate --reverse` and `tess migrate --status` per § *Migration*; profile `backend: "yabai" | "observe" | "native"`; `migration.json` and `migration-snapshot.json`. Bindings per § *Bindings across the switch*: `backends?: [...("yabai" | "native")]` on `#Hotkey` and `config.Hotkey`; `wm.Driver.Supports(argv []string) bool`; `hotkey.Set(backend string, all []Binding) []Binding`; the switch is `Diff` from one set to the other, applied in one actor step. Downstream: home-manager deploys `~/.config/tessera/profile.cue` with `mkOutOfStoreSymlink` to the profile source in Matt's nix repo checkout (Decision 11), so `layout save` edits the live file; Matt's profile gains the native-only bindings and marks the yabai-only ones; sketchybar reads `tess query`; the yabai agent stays installed but the migration boots it out; the yabai sudoers entry stays until N14.
 
 Gate: fake tests inject a crash after each item, forward and in reverse, and prove resume in the recorded direction; a profile that disagrees with the recorded state moves nothing; a reverse after Spaces were added and removed; a display change mid-reverse; a reverse item that fails three times ends in `reverse-blocked`. Binding tests: each set validates apart; a native-set binding that names a tree verb fails profile load; the switch registers exactly the native set with no moment where both sets or neither are registered; a crash between the binding item and activation resumes with the native set; the reverse registers exactly the S4 set. On Matt's Mac: one forward, one full reverse, then forward again; after each, `tess query` lists the registered combos and they match the expected set; then the live checklist: apply on desk, unplug to laptop, replug, focus-slot 1–9, Zen focus, Cmd-Tab to a hidden Space, native fullscreen and back, Dock restart, move mode on cmd+alt i, drag-float and return.
 
@@ -773,7 +742,7 @@ Gate: two weeks on `native` with no reverse, with Space-service budgets tuned fr
 
 ### N14 — Remove yabai and tree code
 
-Interfaces: delete `internal/wm/yabai/` (driver, args, rules, signals, supervisor and test data), `internal/commands/staging.go`, `staged-windows.json` handling, `wm.RuleOps`, `wm.EventSource`, `wm.SettleOps`, `ArmInsert`, `ToggleSplit`, `SetSplitRatio`, `SplitType`, `LayoutBSP`, `WarpWindow`, `SetSpaceLayout`, `BalanceSpace`, `StackWindowCap`, `ErrSpaceFull`, the `observe` and `yabai` backend values, `tess migrate --to native` and its reverse, and the CLI verbs `insert`, `warp`, `reset-splits`, `balance`, `columns`, `space bsp`, `drop-action` and `rules`. `wm.Capabilities` loses `NeedsStaging`. The `backends` field of `#Hotkey` goes, with the yabai-only bindings. `sa.RestoreRecord` loses its yabai fields, and `tess sa restore` only uninstalls tess's payload. Rewrite `README.md`, which today calls tess "a config layer for yabai". Downstream: remove the yabai agent, yabairc, the yabai Homebrew formula and the yabai sudoers entry; `sudo yabai --uninstall-sa`. The tagged downstream commit from the first commit keeps them.
+...pace bsp`, `drop-action` and `rules`. `wm.Capabilities` loses `NeedsStaging`. The `backends` field of `#Hotkey` goes, with the yabai-only bindings. `sa.RestoreRecord` loses its yabai fields, and `tess sa restore` only uninstalls tess's payload. Rewrite `README.md`, which today calls tess "a config layer for yabai". Downstream: remove the yabai agent, yabairc, the yabai Homebrew formula and the yabai sudoers entry; `sudo yabai --uninstall-sa`. The tagged downstream commit from the first commit keeps them. [col 843]
 
 Gate, in two commits. First commit: `docs/runbooks/rollback-to-yabai.md` per § *Migration*, *After N14*, with the pinned release, its checksum and the tagged downstream commit; Matt runs it once on the desk, checks the § *Guarantee* list on yabai, then runs `tess migrate --to native` and checks the binding set again. Second commit, only after the first is exercised: the deletions above. Then a search for `yabai` in `*.go` files finds nothing outside comments that name the SA's source; `go build ./...` on darwin and `GOOS=linux go vet` on portable packages pass; `moon ci` green; Matt runs one full day with yabai uninstalled.
 
