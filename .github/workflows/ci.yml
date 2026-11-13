@@ -42,8 +42,10 @@ jobs:
         shell: bash
         run: |
           # cmd/tess has a Darwin-only backend and is excluded from Linux vet.
-          mapfile -t packages < <(CGO_ENABLED=1 GOOS=linux go list -f '{{if and .GoFiles (not .CgoFiles)}}{{.ImportPath}}{{end}}' ./... | grep -v /cmd/tess)
-          GOOS=linux go vet "${packages[@]}"
+          # xargs instead of mapfile, which macOS bash 3.2 lacks.
+          CGO_ENABLED=1 GOOS=linux go list -f '{{if and .GoFiles (not .CgoFiles)}}{{.ImportPath}}{{end}}' ./... \
+            | grep -v /cmd/tess \
+            | GOOS=linux xargs go vet
 
       - name: Check module tidiness
         run: go mod tidy -diff
