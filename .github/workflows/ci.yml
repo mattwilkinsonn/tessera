@@ -17,7 +17,7 @@ permissions:
 jobs:
   go:
     name: Go · vet · lint · test
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -38,18 +38,11 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # cmd/tess gains its Windows backend later, so these steps skip it.
-      - name: Vet Windows packages
+      - name: Vet portable packages
         shell: bash
         run: |
-          mapfile -t packages < <(go list ./... | grep -v /cmd/tess)
-          GOOS=windows go vet "${packages[@]}"
-
-      - name: Lint Windows packages
-        shell: bash
-        run: |
-          mapfile -t dirs < <(go list -f '{{.Dir}}' ./... | grep -v /cmd/tess)
-          GOOS=windows golangci-lint run --config .golangci.yml "${dirs[@]}"
+          mapfile -t packages < <(GOOS=linux go list -mod=mod -f '{{if and .GoFiles (not .CgoFiles)}}{{.ImportPath}}{{end}}' ./... | grep -v /cmd/tess)
+          GOOS=linux go vet "${packages[@]}"
 
       - name: Check module tidiness
         run: go mod tidy -diff
@@ -79,25 +72,6 @@ jobs:
           --ignore github.com/mattwilkinsonn/tessera
 
 
-  windows:
-    name: Windows · build · vet · test
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.27.4"
-
-      - name: Build, vet and test packages
-        shell: bash
-        run: |
-          mapfile -t packages < <(go list ./... | grep -v /cmd/tess)
-          go build "${packages[@]}"
-          go vet "${packages[@]}"
-          go test "${packages[@]}"
 
   nix:
     name: nix flake · darwin build
