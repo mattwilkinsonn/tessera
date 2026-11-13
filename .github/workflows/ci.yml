@@ -17,7 +17,7 @@ permissions:
 jobs:
   go:
     name: Go · vet · lint · test
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -38,18 +38,14 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # cmd/tess gains its Windows backend later, so these steps skip it.
-      - name: Vet Windows packages
+      - name: Vet portable packages
         shell: bash
         run: |
-          mapfile -t packages < <(go list ./... | grep -v /cmd/tess)
-          GOOS=windows go vet "${packages[@]}"
-
-      - name: Lint Windows packages
-        shell: bash
-        run: |
-          mapfile -t dirs < <(go list -f '{{.Dir}}' ./... | grep -v /cmd/tess)
-          GOOS=windows golangci-lint run --config .golangci.yml "${dirs[@]}"
+          # cmd/tess has a Darwin-only backend and is excluded from Linux vet.
+          # xargs instead of mapfile, which macOS bash 3.2 lacks.
+          CGO_ENABLED=1 GOOS=linux go list -f '{{if and .GoFiles (not .CgoFiles)}}{{.ImportPath}}{{end}}' ./... \
+            | grep -v /cmd/tess \
+            | GOOS=linux xargs go vet
 
       - name: Check module tidiness
         run: go mod tidy -diff
@@ -77,27 +73,6 @@ jobs:
           go-licenses check ./...
           --allowed_licenses=Apache-2.0,Apache-2.0-WITH-LLVM-exception,MIT,BSD-3-Clause,BSD-2-Clause,ISC,Unicode-3.0,Zlib,MPL-2.0,CC0-1.0
           --ignore github.com/mattwilkinsonn/tessera
-
-
-  windows:
-    name: Windows · build · vet · test
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.27.4"
-
-      - name: Build, vet and test packages
-        shell: bash
-        run: |
-          mapfile -t packages < <(go list ./... | grep -v /cmd/tess)
-          go build "${packages[@]}"
-          go vet "${packages[@]}"
-          go test "${packages[@]}"
 
   nix:
     name: nix flake · darwin build
