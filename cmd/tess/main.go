@@ -42,10 +42,7 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 				profile = loaded
 			}
 			// Unset paths resolve lazily, so commands that need none skip getconf.
-			b, err := newBackend()
-			if err != nil {
-				return 1, err
-			}
+			b := newBackend()
 			return commands.Run(ctx, profile, command, b.Driver, commands.Env{Nudge: b.Nudge, Stderr: stderr})
 		},
 		DaemonOptions: func(ctx context.Context, command commands.DaemonCommand) (daemon.Options, error) {
@@ -61,10 +58,7 @@ func run(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 			if err != nil {
 				return daemon.Options{}, err
 			}
-			b, err := newBackend()
-			if err != nil {
-				return daemon.Options{}, err
-			}
+			b := newBackend()
 			driver := b.Driver
 			topology := &commands.TopologyState{}
 			env := commands.Env{Paths: paths, Nudge: b.Nudge, Stderr: stderr, Topology: topology}

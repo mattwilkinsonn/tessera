@@ -144,7 +144,6 @@ All names exist in yabai's `signal_type_str` (`src/event_signal.h`).
 space` fires no yabai signal. The grid shows it at the next event of any
 kind. tess itself never mutates Spaces outside a busy scope.
 
-
 ### Snapshot consistency
 
 `wm.Snapshot` runs three separate queries under errgroup, so a rebuild
@@ -183,7 +182,7 @@ final.
 
 The app runs `tess space-focus <space-id>` for a click, and other `tess`
 subcommands later. It does not import `commands` or a driver. Every action
-then has one code path, shared by skhd, whkd and the app, and the app stays
+then has one code path, shared by skhd and the app, and the app stays
 platform-neutral. A click costs a Go process start, a profile load, one
 Spaces query, the focus call and a verifying query [INFERENCE: tens of ms;
 A4 measures the whole path].
@@ -296,7 +295,6 @@ macOS only. The Linux columns are what the per-OS overlay promises.
 | Above fullscreen apps | `FullScreenAuxiliary` | WM-dependent | layer-shell only |
 | Passive HUD that takes no focus | non-activating `NSPanel` | WM-dependent | no |
 | Fallback when missing | — | normal grid window | normal grid window |
-
 
 ### Module boundary
 
@@ -449,6 +447,7 @@ tested, no release job compiles, and signing stays ad-hoc.
   one the daemon runs (`TESS_PATH`). The `hello` frame's protocol version
   gates the app, so an app newer than the daemon says so instead of
   failing.
+
 ### Alternatives considered
 
 - **App queries yabai directly.** It would duplicate the driver in a cgo

@@ -87,7 +87,6 @@ If the run's artifact has expired by the time of a rerun and the build release a
 
 The pin and tap stages are idempotent. `releasepin pin` exits 3 without writing when the current pin's `rev` already descends from `<sha>`; the job then skips the commit. An unchanged pin file makes no commit. When a push is rejected, the job fetches, resets to `origin/main`, and runs `releasepin pin` again, so the ancestry guard sees the fresh pin. It tries three times. `releasepin cask` exits 3 when the tap's cask already names a higher version, so an out-of-order stable release cannot downgrade the cask. An unchanged cask makes no commit. Tap pushes retry the same way.
 
-
 **Tool: hand-written, not GoReleaser.** GoReleaser OSS builds its own binaries, and importing a binary built elsewhere is Pro-only: "This feature is exclusively available with GoReleaser Pro" ([Import pre-built binaries](https://goreleaser.com/customization/builds/builders/prebuilt)). Using it would rebuild on main and break the reuse rule. Its `nix` publisher writes a standalone derivation into a NUR-style repository ("generate and publish a nix derivation to an existing Nix User Repository", [nix publisher](https://goreleaser.com/customization/publish/nix/)), with default path `pkgs/<name>/default.nix`. That file is not wired to this flake's home-manager module, so we would still need glue. Its `homebrew_casks` publisher ([Homebrew Casks](https://goreleaser.com/customization/publish/homebrew_casks/), "Since v2.10") also needs GoReleaser-built archives. The hand-written path is about 60 workflow lines and one Go tool.
 
 ### Flake output: where the URL and hash live (item 1)
@@ -126,7 +125,7 @@ prebuilt = pkgs.stdenvNoCC.mkDerivation {
 
 **Tap: `mattwilkinsonn/homebrew-tap`.** tessera is a `mattwilkinsonn` repository, and that tap already serves `jj-hooks` and `jj-gt`. It is written by `zireael-release[bot]`. `RigelBuild/homebrew-tap` holds only `Formula/compass-cli.rb`, is written by Rigel's CI app and has CODEOWNERS. It is the Rigel product tap. The cask goes in `Casks/tessera.rb`, which is a new directory in this tap. The token is `tessera` (the project name), and the cask installs `binary "bin/tess"` with `depends_on arch: :arm64`.
 
-**Token.** A cross-repo push cannot use `GITHUB_TOKEN`: "you cannot use the default action token. You must use a separate token with content write privileges for the tap repository" ([Homebrew Casks](https://goreleaser.com/customization/publish/homebrew_casks/)). Reuse the jj-hooks pattern: `actions/create-github-app-token` with `app-id: ${{ vars.RELEASE_BOT_APP_ID }}` and `private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}`, `owner: mattwilkinsonn`, `repositories: homebrew-tap`. The App needs contents:write, and it is already a bypass actor on the tap's main ruleset. tessera has neither the variable nor the release App secret today (`gh variable list` was empty; `gh secret list` showed only a different token). **Nemo** installs the App on tessera and adds both values. The release workflow does not run until that is done.
+**Token.** A cross-repo push cannot use `GITHUB_TOKEN`: "you cannot use the default action token. You must use a separate token with content write privileges for the tap repository" ([Homebrew Casks](https://goreleaser.com/customization/publish/homebrew_casks/)). Reuse the jj-hooks pattern: `actions/create-github-app-token` with `app-id: ${{ vars.RELEASE_BOT_APP_ID }}` and `private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}`, `owner: mattwilkinsonn`, `repositories: homebrew-tap`. The App needs contents:write, and it is already a bypass actor on the tap's main ruleset. tessera has neither the variable nor the secret today (`gh variable list` is empty; `gh secret list` shows only `SCOOP_BUCKET_TOKEN`). **Nemo** installs the App on tessera and adds both values. The release workflow does not run until that is done.
 
 ### Gatekeeper and quarantine (item 4)
 
@@ -220,7 +219,7 @@ Gate: table tests cover pin JSON and SRI for a fixed input, the ancestor and no-
 
 Interfaces:
 
-`ci.yml` job `release`: `needs: [go, nix]`, `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`, `uses: ./.github/workflows/release.yml`, `secrets: inherit`, `permissions: { contents: write, actions: read }`. A called workflow cannot hold more than its caller job grants, so the write permission lives on this job.
+- `ci.yml` job `release`: `needs: [go, nix]`, `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`, `uses: ./.github/workflows/release.yml`, `secrets: inherit`, `permissions: { contents: write, actions: read }`. A called workflow cannot hold more than its caller job grants, so the write permission lives on this job.
 - `release.yml`: `on: workflow_call: { inputs: { tree: { type: string, required: true } } }`. One job with `concurrency: { group: release, cancel-in-progress: false, queue: max }` and `env: { GH_TOKEN: ${{ github.token }} }`.
 - Steps: checkout at `github.sha` with `fetch-depth: 0`; setup-go; build `releasepin`; `actions/download-artifact@v4` with `name: tess-darwin-arm64-${{ inputs.tree }}` and `path: ${{ runner.temp }}/rel` (same run, so no `run-id`; the caller passes `with: { tree: ${{ needs.nix.outputs.tree }} }`); `sha256sum` check against `provenance.json`; `releasepin owes`; `releasepin publish` for `build-${GITHUB_SHA:0:12}` (`-prerelease -notes "Build of $GITHUB_SHA"`).
 - If `stable=true`: `releasepin publish` for `v<VERSION>` (`-generate-notes`).
@@ -246,3 +245,4 @@ Gate: a `--dry-run` build of the MacBook's darwin configuration lists no `go-1.2
 - [ ] Task 1 — PR build artifact keyed by tree, main reuse with fallback rebuild (`ci.yml`)
 - [ ] Task 2 — `tools/releasepin` and the `prebuilt` flake output
 - [ ] Task 3 — release job called from main CI: queued, get-or-create build and stable releases, idempotent pin and cask, README (needs Nemo's App install and secrets on tessera)
+- [ ] Task 4 — orion: point `programs.tessera.package` at `prebuilt`, with measured timings
