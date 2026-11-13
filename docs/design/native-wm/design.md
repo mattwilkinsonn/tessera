@@ -4,18 +4,18 @@ Parent: RIG-8858. This record supersedes draft tessera #76 (`event-driven.md`, R
 
 **yabai sources.** Matt runs the Christian-SC26 fork of yabai (Homebrew `Christian-SC26/formulae/yabai`, v7.3.2; RIG-8327). Citations marked **SC26** are from that fork at `a26707a`, two commits past its v7.3.2 tag; neither commit touches a cited function. Citations marked **both** read the same in SC26 and in upstream at `dd84572`. After stage N, yabai is only a reference source, the origin of tess's scripting addition, and the rollback target. Evidence § *yabai mechanisms* gives the source of every citation.
 
-**Freeze.** Matt has ruled on every open question (Decisions 10 to 12), so none remain. N1 checks the assumptions of the chosen design. If a probe fails, the record reopens; N1 does not choose.
+**Freeze.** Matt has ruled on every open question of the first two rounds (Decisions 10 to 12). His rulings of 2026-11-12 add Decisions 13 to 15 and leave three questions open; the record designs against each recommendation until he answers. N1 checks the assumptions of the chosen design. If a probe fails, the record reopens; N1 does not choose.
 
 <!-- LENGTH §Approach: answers the required capability questions plus the migration, Space-service, scripting-addition and actor contracts -->
 
 ## Decisions
 
-Matt ruled on the nine questions of the first draft on 2026-11-09, and on the three open questions on 2026-11-10.
+Matt ruled on the nine questions of the first draft on 2026-11-09, on the three open questions on 2026-11-10, and added Decisions 13 to 15 on 2026-11-12.
 
 1. **Workspaces: tess owns native Spaces through its own scripting addition (C).** tess forks yabai's scripting addition (SA) from SC26 `a26707a` (MIT) and changes it as it needs; yabai itself is not maintained well enough to depend on. tess must still run on a Mac with SIP fully on, with fewer capabilities (§ *Capabilities and SIP*). Virtual workspaces (A) are preferred if a parking spike passes on Matt's displays (stage V). The other first-draft options are removed, with yabai's restricted configuration, `tess yabai-config apply` and yabai's mouse gestures. yabai stays only as the SA's source, in attribution, and in migration and its reverse.
 2. **SIP.** If virtual workspaces pass V0 and run through V3, Matt re-enables SIP. No date is set.
 3. **Signing identity.** A self-signed certificate now (A). The Developer ID replaces it when it exists (B); that is a one-line identity change in N2.
-4. **Mouse drag: float on drag (C).** tess is a slot manager, not a BSP tiler. Windows go into slots and stacks by themselves, and the keyboard moves them between slots. Dragging a slotted window floats it at once and pins it on top. The same shortcut puts it back in the slot it came from. Two new asks come with this ruling: move mode with a top-right indicator, and temporary slot resize with save and reset (§ *Slot interaction*).
+4. **Mouse drag: float on drag (C).** tess is a slot manager first, not a BSP tiler: slots are the top level of every layout. Windows go into slots and stacks by themselves, and the keyboard moves them between slots. Inside one slot the user may split (Decision 13). Dragging a slotted window floats it at once and pins it on top. The same shortcut puts it back in the slot it came from. Two new asks come with this ruling: move mode with a top-right indicator, and temporary slot resize with save and reset (§ *Slot interaction*).
 5. **Tree verbs go.** `insert`, `warp`, `reset-splits`, `balance`, `columns`, `space bsp` and the `cmd + alt - d` drop toggle have no meaning in the slot model. Keyboard slot moves stay (§ *Slot verbs*).
 6. **Windows: drop the komorebi code now (S0).** Native Windows support comes later. The macOS work sits behind `wm.Driver`, `wm.SpaceService`, `native.Platform` and `internal/hotkey`, so a later platform plugs in at those seams.
 7. **cgo** for every macOS framework call that needs it (A), in darwin-only packages.
@@ -24,14 +24,25 @@ Matt ruled on the nine questions of the first draft on 2026-11-09, and on the th
 10. **Space pool with SIP on (A).** tess binds workspaces to the native Spaces that already exist. `CreateSpace` takes an unbound Space from the pool; if none is free it returns `wm.ErrCapability{Name: "space.create"}` and the job places the window on the active workspace. `tess doctor` prints how many Spaces each topology needs, so the user adds them once in Mission Control. The shortage shows in the top-right indicator area, the same space as the move-mode indicator. Costs: unused Spaces stay in Mission Control; one manual step per new Mac.
 11. **Overrides save into the profile source file.** Matt's own choice ("just have tess update it"). Downstream, home-manager deploys `~/.config/tessera/profile.cue` with `mkOutOfStoreSymlink` to the profile source in Matt's nix repo checkout, so the daemon reads the live source file, not a store copy. `tess layout save` resolves the symlink, checks the file's hash against the hash read at load and refuses on a mismatch, rewrites `weights` with a `cuelang.org/go` AST edit and `format` (which keeps comments), vets the result against `#Profile`, writes a temp file and renames it into place, then reloads the profile. The saved weights become the profile weights, so the override clears at once and no frame moves. A missing symlink target is an error and nothing is saved. `cue vet` still runs at switch, and the edit shows as a diff in Matt's repo for him to commit. Costs: tess writes into Matt's repo checkout, and an uncommitted change is lost if he resets the checkout.
 12. **Root for the scripting addition: sudoers (A).** nix-darwin writes a passwordless sudoers entry for `tess sa load` and `tess sa restore`. The daemon runs `tess sa load` at start and after `NSApplicationDockDidRestartNotification`. The entry names a path, so N2 installs the bundle at a root-owned path.
+13. **Splits within slots.** Matt: "ability to BSP within slots. sometimes you do want to split screen one window in a slot, or 'break' a stack into a BSP." The slot stays the top level. Inside one slot, the user can split the slot into panes (for example, two windows side by side in that slot), turn a stack into one pane per window, and merge the panes back into one stack. The model, verbs and limits are in § *Splits within a slot*.
+14. **Pause and move budget.** Matt asked for `tess stop` and `tess start`: a pause that survives a daemon restart. He also asked for a move budget: if tess moves the same window too often in a short time, or wakes keep failing, the daemon pauses itself and says why. The native driver has both from N8 on; the yabai path gets them in separate work (§ *Pause and move budget*).
+15. **tess works with AI agents through MCP.** Matt: "tess should be very AI integrated. MCP server in particular. Can tell an agent your ideas for a slot setup, it just builds it for you in CUE, can immediately switch you to it to try it out, can have an agent write multiple 'Profiles' to try out, you see them in the app and switch to them." tess gains a profile set (the live profile plus named drafts), `tess profile` verbs to validate, write, preview, switch and go back, and `tess mcp`, a stdio MCP server that exposes those verbs to an agent (§ *Profiles and the MCP server*).
 
 ## Open Questions
 
-None. Matt ruled on all three questions on 2026-11-10; the rulings are Decisions 10 to 12.
+1. **How deep may a split go?** A split pane is a stack today; it cannot be split again. Options: (A) one level: a slot is a stack or a split of two or more panes, each pane a stack, on one axis. It covers both of Matt's examples, and every verb, frame and drag rule stays simple. (B) Any depth: a pane may itself be split on the other axis, which is a BSP tree inside the slot. It allows a 2×2 grid in one slot, but brings back tree verbs (which split to merge, which ratio to resize) that Decision 5 removed. (C) Two levels: one split on each axis. It allows a grid with a fixed shape but needs its own rules for resize and merge.
+   **Prior art:** [i3](https://i3wm.org/docs/userguide.html#_tree) and yabai nest without limit; [niri](https://niri-wm.github.io/niri/Tabs.html) keeps one level inside a column (windows in a column, tabbed or stacked); FancyZones zones do not nest.
+   **Recommendation:** **A, one level.** It meets both of Matt's examples, and B or C can extend it later without a change to the profile.
+2. **Does `layout save` write splits into the profile?** Options: (A) No: a split is runtime state in `native-state.json`, like a float, and survives daemon restarts; `layout save` writes slot weights only, as Decision 11 says. (B) Yes: the profile gains a split form of a track (`axis`, `panes`, pane weights), and `layout save` writes the split slot's axis, its pane weights and, for each pane, the profile window keys that match its windows. A saved split then comes back on `apply`.
+   **Prior art:** Rectangle Pro and Moom save layouts the user names, with every zone; FancyZones saves zone layouts, not window placement. Both save structure, not a live arrangement. Depends on question 1: under B or C of question 1, option B here needs a nested schema.
+   **Recommendation:** **A, runtime only.** Matt's words are "sometimes"; a split is a moment, not a layout. If he later wants a split every day, B adds it to the profile with no change to the model.
+3. **What may an agent do beyond drafts and switching?** The MCP server lets an agent read state, validate, write drafts, preview, switch and go back. Two more verbs exist for the user. Options: (A) neither is an MCP tool: `tess profile promote` (copy a draft into the live profile source in Matt's repo checkout) and `tess start` (resume after a pause) stay with the user, through the CLI, a hotkey or the app. An agent may call `tess stop`. (B) Both are MCP tools, so an agent can finish the loop alone. (C) Promote is a tool, `start` is not.
+   **Prior art:** trivial; this is the same line Decision 11 draws: tess writes into Matt's repo only on his command. Agent tools that write to a user's source tree usually ask first (for example, MCP's [tool annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools) mark a tool `destructiveHint`, and the client asks the user).
+   **Recommendation:** **A.** A draft and a switch are undone in one step; a promote edits Matt's repo, and a `start` after a budget pause overrides the safety stop that just fired. Both stay one keypress for Matt.
 
 ## Direction
 
-**Product fit.** Matt's ruling of 2026-11-09 asks to port everything into tess, move the keybinds into tess, align with the native app, and replace yabai as the backend, "not considering how we implemented it before". RIG-8858 tracks it. The frozen records already put tess's model at the centre: arrangements and topologies (`tess-app.md`, `grid-layouts.md`), named slots (`window-slot-memory.md`, `deskSlots`), the laptop flex model (`laptop-flex-spaces.md`) and arrival placement (`new-window-placement.md`). Today each of these is translated into yabai's split tree by `internal/wm/yabai`, and most of the pain in RIG-8691, #73 and #75 sits in that translation. This record removes the translation. tess becomes a **slot manager**: a layout is a set of slots, each slot holds a stack, and windows fill slots by profile rules. It is not a BSP tiler.
+**Product fit.** Matt's ruling of 2026-11-09 asks to port everything into tess, move the keybinds into tess, align with the native app, and replace yabai as the backend, "not considering how we implemented it before". RIG-8858 tracks it. The frozen records already put tess's model at the centre: arrangements and topologies (`tess-app.md`, `grid-layouts.md`), named slots (`window-slot-memory.md`, `deskSlots`), the laptop flex model (`laptop-flex-spaces.md`) and arrival placement (`new-window-placement.md`). Today each of these is translated into yabai's split tree by `internal/wm/yabai`, and most of the pain in RIG-8691, #73 and #75 sits in that translation. This record removes the translation. tess becomes a **slot manager**: a layout is a set of slots, each slot holds a stack or a one-level split of stacks (Decision 13), and windows fill slots by profile rules. It is not a BSP tiler. Matt's rulings of 2026-11-12 add a pause and a move budget, so a fault stops tess instead of moving windows in a loop (Decision 14), and a way for an AI agent to build and try profiles (Decision 15).
 
 **Scope.** Repo `mattwilkinsonn/tessera` for the code, including tess's own scripting addition under `sa/`. Matt's config (skhd, yabai, sketchybar, launchd agents, sudoers and the profile) changes downstream in his nix repo, named here only as the downstream consumer. The Windows (komorebi) code is deleted (Decision 6); macOS is built behind interfaces that a later platform can implement. No hosted service and no usage-billed resource.
 
@@ -43,6 +54,9 @@ None. Matt ruled on all three questions on 2026-11-10; the rulings are Decisions
 - [niri tabs](https://niri-wm.github.io/niri/Tabs.html): a column shown as tabs with a side indicator. Borrow for stacks: one slot, many windows, one front window, keyboard cycling.
 - [Amethyst](https://github.com/ianyh/Amethyst). Public AX on top of native Spaces. Its "throw window to space" broke on macOS 15 ([#1662](https://github.com/ianyh/Amethyst/issues/1662)); the maintainer states: "The mechanism by which we do it is no longer possible, it seems." Keep the warning: native Space moves need private APIs.
 - [Rectangle](https://github.com/rxhanson/Rectangle) and [skhd](https://github.com/koekeishiya/skhd): Rectangle registers hotkeys with Carbon through MASShortcut and needs no permission prompt; skhd uses a `CGEventTap` (`event_tap_begin` in `src/event_tap.c`), which needs Accessibility. tess follows Rectangle.
+- Splits within a slot (Decision 13). [niri](https://niri-wm.github.io/niri/Tabs.html) puts several windows in one column, one above the other, and nests no further. [i3](https://i3wm.org/docs/userguide.html#_tree) nests containers to any depth. Borrow niri's single level: a slot splits once, on one axis, and each part is a stack.
+- Move budget (Decision 14). systemd stops restarting a unit that starts more than `StartLimitBurst` times in `StartLimitIntervalSec`, and the unit stays failed until a user resets it ([systemd.unit](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html)). Borrow the shape: a count in a time window, a stop that persists, and a manual restart.
+- MCP (Decision 15). The [official Go SDK](https://github.com/modelcontextprotocol/go-sdk) (v1.8.0, maintained with Google) runs a server over stdio with `mcp.AddTool` and `server.Run(ctx, &mcp.StdioTransport{})`; [mcp-go](https://github.com/mark3labs/mcp-go) is the older third-party option. The MCP spec's [tool annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools) let a server mark a tool read-only or destructive, so the client can ask the user first. Rectangle Pro and Moom switch between saved layouts from a menu; borrow the menu and a one-step undo.
 
 **Lifetime.** Years: this is the window manager of Matt's daily machine. The design is sized to that: each stage ships alone, every migration step is recorded and has a defined reverse, and every private call sits behind a capability that can report itself missing.
 
@@ -61,7 +75,7 @@ On macOS, tess owns window tracking, slot placement, focus, hotkeys, native Spac
 | Stage | Tasks | What changes | yabai | skhd | Rollback |
 | --- | --- | --- | --- | --- | --- |
 | S | S0–S4 | The Windows code goes. Every command runs in the daemon. tess registers the hotkeys from the profile, with repeat. Every binding keeps today's behaviour. | tiles | **removed** at S4 | re-enable the skhd agent |
-| N-build | N1–N11 | tess's scripting addition, Space service, slot model, platform layer, native driver and slot interaction; observe mode; actuation gate. Nothing moves on the daily desktop. | tiles | gone | none needed |
+| N-build | N1–N11, M1 | tess's scripting addition, Space service, slot model, platform layer, native driver with pause and move budget, slot interaction with splits, the profile set and `tess mcp`; observe mode; actuation gate. Nothing moves on the daily desktop. | tiles | gone | none needed |
 | N-switch | N12–N13 | The recorded migration stops yabai and starts the native backend; two-week soak. | stopped, installed | gone | `tess migrate --reverse` |
 | N-clean | N14 | The yabai driver, staging, insert arms and tree verbs are deleted. tess has no yabai code path. | **removed** | gone | revert the release, reinstall yabai |
 | V (optional) | V0–V3 | V0 runs the parking spike on Matt's geometry at any time. V1–V3 run only if V0 passes and Matt opts in. | removed | gone | `tess migrate --reverse` to native Spaces until V3 |
@@ -70,20 +84,21 @@ Two WMs never run at once. From N12 on, yabai is stopped before tess's native ba
 
 ### Slots: the window model is tess's state
 
-tess is a slot manager. A **workspace** is one layout on one display. A layout is an ordered list of **slots** along one axis, one weight per slot, as `grid-layouts.md` defines tracks: a slot is one track. A slot holds a **stack** of windows with one front window, as a niri tab column does. New windows go into slots by the profile's arrival rules (`new-window-placement.md`). The keyboard moves windows between slots. There is no split tree.
+tess is a slot manager. A **workspace** is one layout on one display. A layout is an ordered list of **slots** along one axis, one weight per slot, as `grid-layouts.md` defines tracks: a slot is one track. A slot holds one or more **panes**, and a pane holds a **stack** of windows with one front window, as a niri tab column does. Most slots have one pane, so the slot is a stack. The user can split a slot into two to four panes on one axis (Decision 13, § *Splits within a slot*); a pane is never split again. New windows go into slots by the profile's arrival rules (`new-window-placement.md`). The keyboard moves windows between slots and panes. There is no split tree.
 
 A new package, `internal/wm/native`, holds a `Model` with two parts.
 
 - **Lifecycle** is committed state: which windows exist, their pid, native Space, observed frame, apply status, AX attachment and tombstones of closed windows. Only platform events, Space-service notices and operation results change it. Lifecycle is never part of a job's working copy and is never discarded.
-- **Desired** is the layout: workspace membership, slots, weights, temporary weight overrides, front windows, window modes and arrival targets. Jobs edit it on a working copy (§ *Job transactions*). The screen is made to match it.
+- **Desired** is the layout: workspace membership, slots, panes, weights, temporary weight overrides, front windows, window modes and arrival targets. Jobs edit it on a working copy (§ *Job transactions*). The screen is made to match it.
 
 The parts hold these records:
 
 - **Display:** keyed by the UUID from `CGDisplayCreateUUIDFromDisplayID` (`display_uuid` in `src/display.c`, **both**), so profile `deviceId` values and `ResolveDisplay` keep working.
 - **Workspace:** an ID, a label, its display, a kind (`columns`, `rows` or `stack`), an ordered list of slots, one weight per slot from the profile, an optional override weight vector (§ *Temporary slot resize*), and an arrival target. A workspace is bound to one native Space ID. In stage V it is a tess record only. The label is a tess field; macOS has no Space labels, and yabai's labels were yabai state.
-- **Slot:** a name (from `deskSlots` or the layout's track names), an ordered window list and a front window.
-- **Window:** a CGWindowID from `_AXUIElementGetWindow`, which is the number yabai reports, so `window-slots.json` survives the switch. Its mode is `slotted` (in a slot), `floating` (own frame, pinned on top, with a home slot), `excluded` (not managed) or `suspended` (native fullscreen, or on a native Space tess does not manage).
-- **Layout** is a pure function: `Frames(area wm.Frame, ws Workspace) map[int]wm.Frame`. The area is the display frame minus the bar inset, 32 pt at the top, the same as `external_bar all:32:0` in Matt's yabairc today. It uses the override weights when they are set. Every window in a slot gets the slot's frame. The front window is raised.
+- **Slot:** a name (from `deskSlots` or the layout's track names), an ordered list of one to four panes, a split axis (`columns` or `rows`, used only with two or more panes), one weight per pane, and the index of the pane focused last.
+- **Pane:** an ordered window list and a front window. A pane is never empty: when its last window leaves, the pane is removed, and a slot left with one pane is a plain stack again.
+- **Window:** a CGWindowID from `_AXUIElementGetWindow`, which is the number yabai reports, so `window-slots.json` survives the switch. Its mode is `slotted` (in a pane of a slot), `floating` (own frame, pinned on top, with a home slot), `excluded` (not managed) or `suspended` (native fullscreen, or on a native Space tess does not manage).
+- **Layout** is a pure function: `Frames(area wm.Frame, ws Workspace) map[int]wm.Frame`. The area is the display frame minus the bar inset, 32 pt at the top, the same as `external_bar all:32:0` in Matt's yabairc today. It uses the override weights when they are set. It divides each slot's frame along the slot's axis by the pane weights. Every window in a pane gets the pane's frame. Each pane's front window is raised.
 
 The native backend implements `wm.Driver` against this model and a `wm.SpaceService` (§ *The Space service*).
 
@@ -94,7 +109,7 @@ The native backend implements `wm.Driver` against this model and a `wm.SpaceServ
 | `MoveWindowToSpace` | Move desired membership, then a Space-service call and an irreversible checkpoint. |
 | `RealizeSpaceLayout(target)` | Set the workspace's kind, slots and profile weights to `target`. Whether the override survives is decided by the command, not the driver (§ *Temporary slot resize*): the driver takes `clearOverride bool` from the planner. |
 | `ToggleFloat` | Float and pin the window, recording its home slot; or return a floating window to its home slot (§ *Float and pin*). |
-| `StackOnto`, `SwapWindows`, `FocusWindowDir`, `ResizeWindow` | Edit slots or override weights; resolve direction from the computed frames. |
+| `StackOnto`, `SwapWindows`, `FocusWindowDir`, `ResizeWindow` | Edit panes, slots or weights; resolve direction from the computed pane frames (§ *Splits within a slot*). |
 | `FocusWindow` | Checkpoint, then focus per § *Focus*. |
 | `Query*` | Read desired and lifecycle state together. |
 
@@ -273,7 +288,7 @@ Desired membership changes only through: a tess command or hotkey, arrival place
 | SA load fails or a capability is missing | the daemon keeps running with fewer capabilities; `tess sa status` and the state stream name what is missing | n/a |
 | Unplug with inactive workspaces | macOS moves the Spaces; the display cascade re-homes them per the arrangement | the cascade re-homes them; parked windows are re-parked after a ledger write |
 | Lid close, reconnect | display UUID returns; the 3 s `DisplayQuiet` debounce runs the cascade | same, then un-parks the active workspaces |
-| Daemon cold start | Snapshot gives every window on every Space; `native-state.json` gives desired membership and floating windows; windows unknown to it join their Space's workspace at the arrival target; windows gone from Snapshot get tombstones | ledger first, then the same |
+| Daemon cold start | `pause.json` first: when paused, tess moves nothing (§ *Pause and move budget*). Snapshot gives every window on every Space; `native-state.json` gives desired membership, splits and floating windows; windows unknown to it join their Space's workspace at the arrival target; windows gone from Snapshot get tombstones | ledger first, then the same |
 
 **Dock restart.** The payload dies with Dock, and Space IDs may change [INFERENCE: N11 measures it]. On `NSApplicationDockDidRestartNotification` the actor, in order:
 
@@ -284,6 +299,34 @@ Desired membership changes only through: a tess command or hotkey, arrival place
 5. Runs `tess sa load` (backend `native` only) and reads capabilities from the new handshake. A failed load leaves the SA bits false; tess keeps running with SIP-on behaviour and the state stream names the failure.
 6. Re-applies `WINDOW_LAYER` to every pinned window when `PinLayer` is back; otherwise marks them `pinned: false`.
 7. Resumes jobs. A job that was running when the notice came gets `OutcomeUnknown` from its fenced Space call and aborts per § *Job transactions*.
+
+### Pause and move budget
+
+Decision 14 gives tess a way to stop by hand and a way to stop itself. Both rest on one record, `pause.json` in the state directory beside `native-state.json`: `{"by": "user" | "budget", "reason": "<text>", "at": "<RFC 3339 time>"}`. The file exists only while tess is paused. tess writes it, syncs it, and only then replies, so a pause survives a crash and a daemon restart.
+
+**`tess stop [reason]`.** The actor fences every frame write and Space-service call in flight, aborts the running job per § *Job transactions*, and writes `pause.json` with `by: "user"`. Then it shows the top-right indicator (§ *Move mode*, *Indicator*) with `tess paused: <reason> — tess start to resume`.
+
+**While paused**, tess changes nothing on screen:
+
+- no frame write, no focus, no Space-service call, no `WINDOW_LAYER`;
+- a command or hotkey that would do one of those returns `wm.ErrPaused{By, Reason}`, which the CLI prints as `tess is paused (<by>): <reason>; run tess start` with exit code 3;
+- platform events, Space notices and `Snapshot` still update lifecycle state, so tess knows the screen when it resumes;
+- read-only commands still work: `tess query`, `tess sa status`, `tess profile list|show|vet`, and the state stream, which carries `paused: {by, reason, at}`;
+- `tess rescue` still works, because it runs without the daemon;
+- arrivals are recorded at their arrival target in desired state but not placed.
+
+**`tess start`** deletes `pause.json`, resets the move budget, takes a `Snapshot`, reconciles it, and flushes once. The flush counts against the new budget, so a fault that is still there pauses tess again within one budget window, and the reason names it.
+
+**Move budget.** The actor counts every frame write and every `MoveWindowToSpace` it issues, per window, in a sliding window. A read-back, a user drag and an OS relocation are not counted; the one re-assert after an OS relocation is. It also counts failed wakes: a `WakeRoutine` or `DisplayQuiet` cascade that returns an error. The first limits are:
+
+| Limit | Value | Reason |
+| --- | --- | --- |
+| moves of one window | 10 in 30 s | an `apply` writes each window once, a mismatch gets one retry, and arrival plus a cascade add a few more; a fight with an app or a feedback loop writes far more |
+| failed wakes | 3 in a row within 10 min | one failure can be a slow display; three in a row is a fault that a retry will not fix |
+
+[INFERENCE: both values are first guesses; N11 records the highest honest count per window, and N13 tunes them.] On a breach the actor does what `tess stop` does, with `by: "budget"` and a reason that names the window, its app and the count (for example `window 4711 (Zen) moved 11 times in 30 s`), or the last wake error. It also logs the last ten operations for that window. Only `tess start` resumes. A budget pause is never cleared by a daemon restart, a Dock restart or a profile switch.
+
+The limits are `native.Budget{WindowMoves int; Window time.Duration; FailedWakes int; WakeWindow time.Duration}` with the defaults above; they are not in the profile, so an agent's profile cannot raise them (§ *Profiles and the MCP server*). The yabai path gets its own pause and budget in separate work; this record specifies only the native driver's.
 
 ### Migration: recorded and reversible
 
@@ -323,7 +366,7 @@ N14's gate runs the recipe once on Matt's Mac, checks the result against the § 
 The native backend has no tree verbs, and the yabai backend has no move mode. So from N12 one profile holds both sets, and the backend picks one. `#Hotkey` gains `backends?: [...("yabai" | "native")]`; a binding with no `backends` is in both sets. Matt's profile marks:
 
 - yabai only: `insert stack`, `insert east`, `warp east`, `drop-action toggle`, `space bsp`, `reset-splits`, `columns`, `balance`;
-- native only: `stack east`, `move-mode`, `layout reset` on cmd+alt 0, `layout save`;
+- native only: `stack east`, `move-mode`, `layout reset` on cmd+alt 0, `layout save`, `split <dir>`, `split all`, `merge`, `stop`, `start`, `profile pick` and `profile back`;
 - both: every other row of evidence § *Binding migration*.
 
 A combo may appear once per set, so cmd+alt i is `insert stack` on yabai and `move-mode` on native. Profile load validates each set apart: every `run` must parse with `cli.Parse` and name a verb the set's backend supports (`wm.Driver.Supports(argv []string) bool`, new in N12). The switch is the one actor step in § *Migration* step 6; there is never a moment with half of each set registered. Before N12 every binding is in the yabai set, as S4 leaves them. N14 deletes the yabai-only bindings and the `backends` field, because one set remains.
@@ -378,30 +421,49 @@ The slot-manager prior art (evidence § *Slot-manager prior art*) agrees on four
 
 | Verb | Meaning on the native backend |
 | --- | --- |
-| `focus west\|east\|north\|south` | focus the front window of the neighbouring slot |
-| `swap <dir>` | swap the focused window with the front window of the neighbouring slot |
-| `stack <dir>` | move the focused window into the neighbouring slot's stack, as its front |
-| `stack recent` | move the focused window into the stack of the window focused before it |
-| `stack-cycle next\|prev` | change the front window of the focused slot |
-| `focus-slot <n>` | focus slot `n` of the active workspace |
+| `focus west\|east\|north\|south` | focus the front window of the neighbouring pane, found from the computed pane frames: a pane in the same slot first, then the nearest pane of the next slot |
+| `swap <dir>` | swap the focused window with the front window of the neighbouring pane |
+| `stack <dir>` | move the focused window into the neighbouring pane's stack, as its front |
+| `stack recent` | move the focused window into the pane of the window focused before it |
+| `stack-cycle next\|prev` | change the front window of the focused pane |
+| `focus-slot <n>` | focus slot `n` of the active workspace, in the pane focused there last |
+| `split <dir>` | move the focused window out of its pane into a new pane on the `<dir>` side, in the same slot (§ *Splits within a slot*) |
+| `split all [columns\|rows]` | give each window of the focused pane its own pane |
+| `merge` | put every pane of the focused slot back into one stack |
+| `stop`, `start` | § *Pause and move budget* |
+| `profile list\|show\|vet\|write\|delete\|switch\|preview\|keep\|back\|pick\|promote` | § *Profiles and the MCP server* |
 | `move-mode` | § *Move mode* |
 | `toggle-float`, `toggle-float center` | § *Float and pin* |
-| `resize <dir>\|grow\|shrink` | temporary weight change (§ *Temporary slot resize*) |
+| `resize <dir>\|grow\|shrink` | temporary weight change of a slot, or of a pane inside a split slot (§ *Temporary slot resize*) |
 | `layout save\|reset` | § *Temporary slot resize* |
-| `snap 3col\|50-50\|columns`, `space stack`, `apply`, `laptop` | unchanged meaning; set slots and profile weights, clear the override |
+| `snap 3col\|50-50\|columns`, `space stack`, `apply`, `laptop` | unchanged meaning; set slots and profile weights, clear the override, merge every split |
 
 `warp east` was used to pull a window out of a stack; `stack east` replaces it. `insert`, `balance`, `columns`, `reset-splits`, `space bsp` and `drop-action` are deleted (Decision 5); `layout reset` covers what `balance` and `columns` did. Evidence § *Binding migration* maps every key.
+
+#### Splits within a slot
+
+Decision 13 lets the user split one slot. The slot stays where it is, with the same weight; only its inside changes.
+
+- **Shape.** A slot holds one to four panes on one axis, and each pane is a stack. A pane is never split again (Open Question 1). The cap of four keeps every pane at least a quarter of its slot; `split` on a slot with four panes returns `slot has 4 panes` and changes nothing.
+- **Axis.** The first split sets the axis: `split east` or `split west` gives `columns`, `split north` or `split south` gives `rows`. Later splits must use the same axis; `split north` on a `columns` slot returns `slot is split as columns; merge first` and changes nothing. `split all` uses the axis it is given, or else the axis across the slot's longer side, so a tall laptop slot splits into rows and a wide G9 slot into columns.
+- **Split one window.** `split east` moves the focused window out of its pane into a new pane directly east of it. The pane weights become equal. The window keeps focus. A pane with one window cannot be split; tess returns `pane has one window` and changes nothing.
+- **Break a stack.** `split all` gives each window of the focused pane its own pane, in stack order, up to four panes. When the stack has more than four windows, the first three get their own panes and the rest stay in the fourth pane as a stack.
+- **Merge.** `merge` puts every pane of the focused slot back into one stack. The window that had focus becomes the front. The other windows keep pane order, then stack order. The pane weights are dropped.
+- **Moves between panes.** `focus`, `swap` and `stack` with a direction treat a pane as the unit (§ *Slot verbs*). `stack <dir>` into a slot with panes puts the window into the pane focused there last. When `stack` takes the last window out of a pane, that pane is removed and the other panes share its space by their weights.
+- **Arrivals.** An arrival target names a slot, never a pane. A new window goes into the pane of that slot that was focused last, as its front. The profile does not know about panes, so `new-window-placement.md` is unchanged.
+- **Lifetime.** Splits are runtime state in `native-state.json`, with the override weights, so they survive a daemon restart and a Dock restart. The commands in the left column of § *What clears the override* also merge every split, because they choose a layout from the profile, and the profile has no panes (Open Question 2).
+- **Status.** The state stream gives each slot its `axis` and its `panes`, each with its window IDs and front window, so the app can draw them.
 
 #### Move mode
 
 Today a cross-slot move takes three steps: click window A, click window B, press the shortcut. Move mode takes the shortcut first:
 
 1. Matt clicks or focuses window A and presses the `move-mode` shortcut. tess records A as the source.
-2. tess shows the indicator (below) and highlights the slot under the pointer.
-3. Matt clicks a destination: a window, which puts A into that window's slot as its front, or an empty slot area, which puts A into that slot. Keyboard path: while move mode is on, the `focus <dir>` bindings move the highlight between slots instead of focus, and the `move-mode` shortcut commits to the highlighted slot.
+2. tess shows the indicator (below) and highlights the pane under the pointer. A slot with one pane is one pane.
+3. Matt clicks a destination: a window, which puts A into that window's pane as its front, or an empty area of a slot, which puts A into the pane under the point. Keyboard path: while move mode is on, the `focus <dir>` bindings move the highlight between panes instead of focus, by the same neighbour rule as `focus`, and the `move-mode` shortcut commits to the highlighted pane. Move mode never creates or removes a split, except that a pane emptied by the move is removed.
 4. Escape or 10 s with no input cancels. tess registers Escape as a Carbon hotkey only while move mode is on, so Escape reaches apps normally at every other time. The indicator closes on commit or cancel.
 
-tess sees the destination click without a mouse tap. In move mode it opens one transparent, borderless, non-activating `NSPanel` per display, at a window level above normal windows and with `ignoresMouseEvents = false`, and takes the click on that panel. The panel reports the screen point; tess hit-tests it against the computed slot frames. Because the click lands on tess's panel, the app under it never sees it. When move mode ends, the panels close. [INFERENCE: N1 checks that a non-activating panel receives `mouseDown` without activating tess or changing the focused window.]
+tess sees the destination click without a mouse tap. In move mode it opens one transparent, borderless, non-activating `NSPanel` per display, at a window level above normal windows and with `ignoresMouseEvents = false`, and takes the click on that panel. The panel reports the screen point; tess hit-tests it against the computed pane frames. Because the click lands on tess's panel, the app under it never sees it. When move mode ends, the panels close. [INFERENCE: N1 checks that a non-activating panel receives `mouseDown` without activating tess or changing the focused window.]
 
 **Indicator.** A small borderless `NSPanel` with the `nonactivatingPanel` style, in the **top-right** corner of the display with the source window, below the 32 pt bar inset. It shows `Move: <app> — click a slot, Esc to cancel`. It does not take focus and is not a macOS notification: notifications need a permission and macOS places them ([Apple: asking permission](https://developer.apple.com/documentation/usernotifications/asking-permission-to-use-notifications)). Apple documents that a `nonactivatingPanel` "does not activate the owning app" ([style mask](https://developer.apple.com/documentation/appkit/nswindow/stylemask-swift.struct/nonactivatingpanel)). The indicator is part of the platform layer (`native.Platform.ShowIndicator`), so a later platform supplies its own.
 
@@ -409,31 +471,77 @@ tess sees the destination click without a mouse tap. In move mode it opens one t
 
 Dragging a slotted window floats it at once (Decision 4).
 
-- **Drag start.** The first moved or resized event with a mouse button down and no pending write sets the window to `dragging`, mode `floating`, and records its **home slot** (workspace ID, slot name, index in the stack). The slot closes up: the next window in the stack becomes front, or the other slots take the space. tess writes nothing to the dragged window.
+- **Drag start.** The first moved or resized event with a mouse button down and no pending write sets the window to `dragging`, mode `floating`, and records its **home slot** (workspace ID, slot name, pane index, index in the pane's stack). The pane closes up: the next window in its stack becomes front, or, when it was the pane's last window, the pane is removed and the other panes of the slot take its space, or, when it was the slot's last window, the other slots take the space. tess writes nothing to the dragged window.
 - **Drag end.** When every button is up, tess reads the frame and keeps it as the floating frame. It pins the window above slotted windows with the SA's `WINDOW_LAYER` opcode at the floating level. Without that capability, tess raises the window once and marks it `pinned: false` in the state stream (§ *Capabilities and SIP*).
-- **Back to the slot.** `toggle-float` on a floating window with a home slot returns it to that slot at its old stack index, and clears the pin. If the home slot no longer exists (a topology change), it goes to the workspace's arrival target. `toggle-float` on a slotted window floats it in place with its current frame and the same home-slot record; `toggle-float center` floats it at the 4×4 centre cell of a 6×6 grid, as today.
+- **Back to the slot.** `toggle-float` on a floating window with a home slot returns it to that slot, into the recorded pane at its old stack index. If that pane was removed, the window goes into a new pane at the recorded pane index when the slot has fewer than four panes, so a split comes back as it was; otherwise it goes into the pane focused last. A float and return never changes the slot's axis. It clears the pin. If the home slot no longer exists (a topology change), it goes to the workspace's arrival target. `toggle-float` on a slotted window floats it in place with its current frame and the same home-slot record; `toggle-float center` floats it at the 4×4 centre cell of a 6×6 grid, as today.
 - **Across displays.** A drag that ends on another display moves the window's membership to that display's active workspace, still floating, with its home slot unchanged.
 - **Persistence.** Floating windows and their home slots are in `native-state.json`, so they survive a daemon restart.
 
 #### Temporary slot resize
 
-`resize` changes the active workspace's **override** weights, not its profile weights. For example, `resize grow` on the AW's left slot widens it by the step and narrows its neighbour. The override is used by `Frames` until it is cleared. It lives in `native-state.json` and survives a daemon restart.
+`resize` changes the active workspace's **override** weights, not its profile weights. For example, `resize grow` on the AW's left slot widens it by the step and narrows its neighbour. The override is used by `Frames` until it is cleared. It lives in `native-state.json` and survives a daemon restart. In a split slot, `resize` along the slot's axis changes the **pane weights** of the focused pane and its neighbour; `resize` across the axis, or at the slot's outer edge, changes the slot weights as before. Pane weights are runtime state like the split itself.
 
 **What clears the override.** One rule: a command that the user runs to choose a layout clears it; anything tess does by itself keeps it.
 
 | Clears the override | Keeps the override |
 | --- | --- |
 | `apply`, `laptop`, `snap 3col\|50-50\|columns`, `space stack` | arrival placement of a new window |
-| `layout reset`; `layout save` (after the reload) | `focus`, `focus-slot`, `swap`, `stack`, `stack-cycle`, move mode, float and return |
+| `layout reset`; `layout save` (after the reload) | `focus`, `focus-slot`, `swap`, `stack`, `stack-cycle`, `split`, `merge`, move mode, float and return |
 | a change of the workspace's slot count (a slot added or removed by a command) | a Hub cascade or `DisplayQuiet` cascade that re-homes a workspace to the same display kind |
 | a topology change that moves the workspace to another display | daemon restart, Dock restart |
 
 The planner sets `clearOverride` on `RealizeSpaceLayout` from this table. A cascade that keeps the override but changes the slot count clears it, because the weight vector no longer fits.
 
-- `tess layout save` writes the override as the layout's `weights` in the profile source file, through the symlink (Decision 11), then reloads the profile. The saved weights are the profile weights, so the override clears and no frame moves. A hash mismatch, a vet failure or a missing target returns an error and saves nothing.
-- `tess layout reset` clears the override, so the profile weights apply again.
+- `tess layout save` writes the override as the layout's `weights` in the profile source file, through the symlink (Decision 11), then reloads the profile. The saved weights are the profile weights, so the override clears and no frame moves. Splits and pane weights are not written and stay as they are (Open Question 2). A hash mismatch, a vet failure or a missing target returns an error and saves nothing. With a draft active (§ *Profiles and the MCP server*), `layout save` writes into the draft file instead, with the same steps.
+- `tess layout reset` clears the override and sets every split slot's pane weights equal, so the profile weights apply again. It keeps the splits; `merge` removes them.
 
 Both are CLI verbs, so a hotkey can run them. The app (`tess-app.md`) adds "Save layout" and "Reset layout" actions that send the same verbs over the daemon socket. The state stream marks a workspace with an override as `modified: true`, so the app and sketchybar can show it.
+
+### Profiles and the MCP server
+
+Decision 15 lets Matt describe a slot setup to an AI agent, have the agent write it as a CUE profile, try it at once, and keep several to switch between.
+
+**The profile set.** Decision 11 stays: `~/.config/tessera/profile.cue` is the **live** profile, a `mkOutOfStoreSymlink` to the source in Matt's repo checkout. **Drafts** sit beside it in `~/.config/tessera/profiles/<name>.cue`, one complete profile per file. tess writes the drafts; home-manager does not manage that directory, so a nix switch never removes them. A name matches `^[a-z0-9][a-z0-9-]{0,39}$`, and `live` is reserved. A draft must vet against `#Profile` on its own and must keep the live profile's `backend`, because the backend changes only through a migration (§ *Migration*).
+
+**Which profile is in use.** `profile-active.json` in the state directory records `{"active": "<name>", "good": "<name>", "prior": "<name>", "trial": {"name", "until", "by"} | null}`. `active` is what the daemon loads; `good` is the last profile that was kept; `prior` is the kept profile before it. A missing file means `live` for all three. The daemon's profile load (B2 in `tess-app.md`) reads this file first and loads `profile.cue` or the named draft.
+
+**Verbs.** All run in the daemon, as every command does (§ *Daemon and IPC*).
+
+| Verb | Effect |
+| --- | --- |
+| `profile list` | names, `active`, `good`, the trial, and each file's vet status |
+| `profile show <name>` | the CUE source |
+| `profile vet <name>\|-` | vet a draft, or CUE read from the request's stdin; print `cue vet` errors with line and column. Changes nothing |
+| `profile write <name> -` | vet the CUE from stdin, then write the draft (temp file, then rename). A vet failure writes nothing. Writing the active draft reloads it |
+| `profile delete <name>` | delete a draft; refused for `live`, `active` and `good` |
+| `profile switch <name>` | vet; set `active`; reload; realize the layout for the current topology (`apply` on the desk, `laptop` on the laptop); when that ends with no error and no pause, set `prior` to `good` and `good` to `name` |
+| `profile preview <name> [--for 10m]` | the same, but `good` does not change and `trial` is set. At the deadline, or at a daemon start, tess switches back to `good`. Default 10 min, at most 1 h |
+| `profile keep` | end the trial: `good` becomes `prior`, and the trial's name becomes `good` |
+| `profile back` | one step back: to `good` when `active` differs from it (a trial or a failed switch); else to `prior`, and `good` and `prior` trade places, so a second `back` undoes the first |
+| `profile pick` | open the picker panel (below) |
+| `profile promote <name>` | copy a draft over the live profile source through the Decision 11 steps (symlink, hash check, vet, temp file, rename), then switch to `live`. Matt runs it; it is not an MCP tool (Open Question 3) |
+
+**Safety.** A switch is an ordinary job. It passes the same vet as any profile load, runs through the job queue, and every frame write it causes counts against the move budget (§ *Pause and move budget*). While tess is paused, `switch`, `preview` and `back` change only `profile-active.json`, and `tess start` applies the result; so `back` then `start` recovers from a profile that tripped the budget. The budget limits are not in the profile, so no profile can raise them. A switch also clears every override and merges every split, as `apply` does (§ *What clears the override*).
+
+**Hotkeys across a switch.** A draft carries its own `hotkeys`. While a draft is active, tess registers the draft's bindings plus every live-profile binding whose `run` starts with `stop`, `start` or `profile`, so a draft can never take away the way back. A draft binding on one of those combos fails the vet. The switch uses `hotkey.Diff` in one actor step, as § *Bindings across the switch* does.
+
+**Panels.** During a trial the top-right indicator (§ *Move mode*, *Indicator*) shows `Trying <name> — <minutes> left` with two buttons, **Keep** and **Back**, which run `profile keep` and `profile back`. The panel takes clicks as the move-mode panels do and never activates tess. `profile pick` opens a non-activating panel at the centre of the focused display with one row per profile, the active one marked. Arrow keys and Return are registered as Carbon hotkeys only while it is open, as Escape is in move mode; Return or a click runs `profile switch`, Shift-Return runs `profile preview`, and Escape closes it. Move mode and the picker never run at once: opening one closes the other. The state stream gains `profiles` (the list above) and `trial`, so the app (`tess-app.md`) lists profiles in its tray menu and switches with the same verbs.
+
+**`tess mcp`.** A stdio MCP server built on the [official Go SDK](https://github.com/modelcontextprotocol/go-sdk) (`github.com/modelcontextprotocol/go-sdk/mcp`). An agent's MCP client starts it as a child process. It holds no state: each tool call sends one `run 1` request to the daemon socket and returns the `stdout` frames as the tool result, and a non-zero `exit` or a `reject` as a tool error with the `stderr` text. With no daemon it returns `tess daemon not running` on every call except `get_schema` and `validate_profile`, which use `config.Parse` in process. The `run 1` request gains an optional `stdin` string, at most 256 KiB, for `profile vet -` and `profile write <name> -`; the CLI fills it from its own stdin.
+
+| Tool | Runs | Annotation |
+| --- | --- | --- |
+| `get_state` | `tess query`: displays, workspaces, slots, panes, windows, `paused`, `trial`, the capability table | read-only |
+| `get_schema` | the embedded `schema.cue` and Matt's live profile, so the agent writes CUE that fits | read-only |
+| `list_profiles`, `get_profile {name}` | `profile list`, `profile show` | read-only |
+| `validate_profile {source}` | `profile vet -` | read-only |
+| `write_profile {name, source}` | `profile write <name> -` | not read-only, idempotent |
+| `delete_profile {name}` | `profile delete` | destructive |
+| `preview_profile {name, minutes?}` | `profile preview` | not read-only |
+| `switch_profile {name}`, `keep_profile`, `profile_back` | `profile switch`, `profile keep`, `profile back` | not read-only |
+| `stop {reason}` | `tess stop` | not read-only |
+
+Tool inputs and outputs are Go structs, so the SDK derives their JSON schemas. A switch or preview from `tess mcp` records `by: "mcp"` in `trial` and in the log, and the indicator shows `(agent)` after the name. There is no MCP tool for `start`, `promote` or `layout save` (Open Question 3).
 
 ### Library choices
 
@@ -445,6 +553,7 @@ Libraries are chosen on fit and maintenance (Decision 9), and cgo is allowed (De
 | AX, AXObserver | own cgo in `internal/wm/native/darwin` | [go-macos/accessibility](https://github.com/go-macos/accessibility) (purego, active) has no AXObserver support; tess reads it as reference for frame writes, not as a dependency |
 | NSWorkspace, CGDisplay callbacks, run loop, NSPanel | own cgo and Objective-C | no Go wrapper covers them; [go-macos/objc](https://github.com/go-macos/objc) (purego, active) warns that `App()` binds to the first calling thread, which is easy to get wrong |
 | Bundle and signing | the nix activation in N2 | [tmc/macgo](https://github.com/tmc/macgo) builds bundles and signs them, but N2 needs a fixed identifier and a stable path that activation already controls |
+| MCP server over stdio | [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) `mcp` package, latest v1 release (v1.8.0 at writing) | the official SDK, maintained by the MCP project with Google, with a stable v1 API; `mcp.AddTool` derives JSON schemas from Go structs and `mcp.StdioTransport` is the transport tess needs. Its README names [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) as the older third-party option; it works, but tess gains nothing from a second API and the official SDK tracks the spec first. Pure Go, no cgo |
 
 The cgo surface stays narrow: each wrapper exposes Go functions and sends callback values to channels. Pure logic stays in packages with no cgo.
 
@@ -454,9 +563,9 @@ The cgo surface stays narrow: each wrapper exposes Go functions and sends callba
 
 **One writer.** The daemon runs one job at a time; all jobs already pass through `TopologyState.SerializeCascade`. On native, jobs run as § *Job transactions* describes, against the actor in § *Desired and observed state*.
 
-**Fallback.** On the yabai backend a failed dial runs the command in-process, as today. On native the CLI exits 1 with `tess daemon not running`, because only the daemon holds the model. `tess rescue`, `tess sa status|load|uninstall` and `tess migrate --status` are the commands that run without it.
+**Fallback.** On the yabai backend a failed dial runs the command in-process, as today. On native the CLI exits 1 with `tess daemon not running`, because only the daemon holds the model. `tess rescue`, `tess sa status|load|uninstall` and `tess migrate --status` are the commands that run without it; `tess mcp` starts without it and reports it missing per tool (§ *Profiles and the MCP server*).
 
-**State for the app and the bar.** tess-app's A3 state stream (`subscribe 1`, full `state` frames) is the one feed. `daemon.StatePublisher` is specified in `tess-app.md` and is not in the code yet; N8 depends on A3 landing first. On native the actor calls `StatePublisher.Request` after each flush; the frame carries workspace membership, each window's status and mode, the `modified` flag, move mode, and the capability table. A new `tess query` prints one `state` frame as JSON. Matt's sketchybar scripts call `tess query` instead of `yabai -m query` before N12. The daemon keeps triggering the sketchybar event `yabai_spaces_changed` until those scripts rename it.
+**State for the app and the bar.** tess-app's A3 state stream (`subscribe 1`, full `state` frames) is the one feed. `daemon.StatePublisher` is specified in `tess-app.md` and is not in the code yet; N8 depends on A3 landing first. On native the actor calls `StatePublisher.Request` after each flush; the frame carries workspace membership, each slot's axis and panes, each window's status and mode, the `modified` flag, move mode, `paused`, `profiles` and `trial`, and the capability table. A new `tess query` prints one `state` frame as JSON. Matt's sketchybar scripts call `tess query` instead of `yabai -m query` before N12. The daemon keeps triggering the sketchybar event `yabai_spaces_changed` until those scripts rename it.
 
 ### Risks, weighed against keeping yabai
 
@@ -480,7 +589,9 @@ The pain in RIG-8691, #73 and #75 comes from driving yabai's split tree through 
 - **Load yabai's SA unchanged and speak its socket protocol.** Rejected by Matt (Decision 1): tess would track a payload it cannot change.
 - **Virtual workspaces now.** Preferred if it works (Decision 1), but parking on the AW is unproven; stage V runs after V0.
 - **Run AeroSpace as the backend.** It has its own tree, not tess's slots, and no client API for tess's slot and arrangement model. tess would drive a second WM from outside again. Rejected.
-- **BSP or tree tiling in tess.** Rejected (Decision 4): tess is a slot manager.
+- **BSP or tree tiling in tess.** Rejected (Decision 4): slots stay the top level. Decision 13 allows one level of split inside a slot, not a tree; Open Question 1 keeps deeper nesting open.
+- **The MCP server inside the daemon, on a TCP or HTTP port.** The daemon already serves a Unix socket; an HTTP MCP transport adds a listener, auth and a port for no gain, because every MCP client Matt uses can start a stdio child. Rejected for `tess mcp` over stdio.
+- **Drafts as branches of the live profile in Matt's repo.** An agent would write into Matt's checkout for every try. Rejected: drafts live beside the live profile, and only `profile promote`, which Matt runs, writes his repo (Decision 11 and Open Question 3).
 - **CGEventTap hotkeys.** Needs the Accessibility grant and receives every key event. Rejected for Carbon.
 - **purego instead of cgo.** Rejected (Decision 7).
 
@@ -493,6 +604,8 @@ The pain in RIG-8691, #73 and #75 comes from driving yabai's split tree through 
 - After N14, nothing in tess calls, queries or starts yabai. yabai appears only in `sa/` attribution, in evidence, in the migration reverse before N14, and in the rollback recipe after it.
 - Only `backend: "native"` loads tess's payload. Every live SA test starts with `tess sa load --test` and ends with `tess sa restore`; the restore record is written before the first change.
 - The SA fork keeps yabai's MIT copyright and licence text and the loader's Jeremy Legendre attribution. `THIRD_PARTY_NOTICES.md` lists both.
+- Pause and budget: no frame write, focus, Space-service call or `WINDOW_LAYER` runs while `pause.json` exists. The pause is written and synced before tess replies. The budget limits live in code, not in any profile.
+- Profiles: every profile load, switch and draft write is vetted against `#Profile` first; a failed vet changes no file and no state. Only `profile promote` and `layout save` on `live` write the profile source in Matt's repo. A draft keeps the live `backend` and the live `stop`, `start` and `profile` bindings.
 - One writer: only the actor goroutine changes the `Model`. The actor never blocks on a worker or an event. cgo callbacks send values to channels and never call Go code that takes a lock.
 - Lifecycle state is never discarded by an abort. Every worker result carries an operation ID; stale results are dropped. A waiter completes only on its postcondition.
 - Every AX element has a 250 ms messaging timeout. Every frame write is read back; status is reported, never assumed.
@@ -508,7 +621,7 @@ The pain in RIG-8691, #73 and #75 comes from driving yabai's split tree through 
 
 ## Plan
 
-Stage S ships first and alone. Stage N tasks land in order; N1 is a spike whose results can reopen this record. Stage V is optional and starts only after V0 passes.
+Stage S ships first and alone. Stage N tasks land in order; N1 is a spike whose results can reopen this record. M1 lands after N9 and before N12. Stage V is optional and starts only after V0 passes.
 
 ### S0 — Delete the Windows code
 
@@ -669,9 +782,9 @@ Gate: tests on the fake SA socket and a fake SkyLight layer for each operation: 
 
 ### N6 — Slot model, layout and status
 
-Interfaces: `native.Model{Lifecycle Lifecycle; Desired Desired}`. `Lifecycle` holds `map[int]WindowLife` with `WindowLife{ID, PID int; Space uint64; Observed wm.Frame; ReadAt time.Time; Status Status; Attached bool; Op uint64; Gen uint64}`, tombstones `map[int]uint64`, and the focused window. `Desired` holds `[]Workspace` with `Workspace{ID, Label, Display string; Space uint64; Kind wm.LayoutKind; Slots []Slot; Weights []float64; Override []float64; Arrival Arrival}`, `Slot{Name string; Windows []int; Front int}`, and `map[int]WindowWant` with `WindowWant{Workspace string; Mode Mode; Float wm.Frame; Home *HomeSlot}`, `HomeSlot{Workspace, Slot string; Index int}`. `Mode` is `slotted`, `floating`, `excluded` or `suspended`. `Frames(area wm.Frame, ws Workspace) map[int]wm.Frame` uses `Override` when set; `(*Workspace).ClearOverride()`. `SlotAt(area wm.Frame, ws Workspace, p wm.Point) (slot string, ok bool)`. `ParkCorners(displays []wm.Display) map[string]wm.Frame`. `AdoptSlots(windows []wm.NativeWindow, area wm.Frame) ([]Slot, []float64)`. `Desired.Copy() *WorkingCopy`; `(*WorkingCopy).Commit(l *Lifecycle) (dropped []int)`.
+Interfaces: `native.Model{Lifecycle Lifecycle; Desired Desired}`. `Lifecycle` holds `map[int]WindowLife` with `WindowLife{ID, PID int; Space uint64; Observed wm.Frame; ReadAt time.Time; Status Status; Attached bool; Op uint64; Gen uint64}`, tombstones `map[int]uint64`, and the focused window. `Desired` holds `[]Workspace` with `Workspace{ID, Label, Display string; Space uint64; Kind wm.LayoutKind; Slots []Slot; Weights []float64; Override []float64; Arrival Arrival}`, `Slot{Name string; Axis wm.LayoutKind; Panes []Pane; PaneWeights []float64; LastPane int}`, `Pane{Windows []int; Front int}`, and `map[int]WindowWant` with `WindowWant{Workspace string; Mode Mode; Float wm.Frame; Home *HomeSlot}`, `HomeSlot{Workspace, Slot string; Pane, Index int}`. A slot always has at least one pane; `Axis` is `wm.LayoutColumns` or `wm.LayoutRows` and is read only when `len(Panes) > 1`; `const MaxPanes = 4`. `Mode` is `slotted`, `floating`, `excluded` or `suspended`. `Frames(area wm.Frame, ws Workspace) map[int]wm.Frame` uses `Override` when set and divides each slot by `PaneWeights`; `(*Workspace).ClearOverride()`. Pane edits, each pure and returning an error that changes nothing: `(*Workspace).Split(win int, dir wm.Direction) error`, `(*Workspace).SplitAll(slot string, axis wm.LayoutKind) error` (an empty `axis` picks the slot's longer side from the last computed frame), `(*Workspace).Merge(slot string, front int) error`, `(*Workspace).MergeAll()`, `(*Workspace).EqualPanes()`, with `ErrSplitAxis`, `ErrPaneLimit` and `ErrPaneSingle`; a pane emptied by any edit is removed. `PaneAt(area wm.Frame, ws Workspace, p wm.Point) (slot string, pane int, ok bool)` replaces `SlotAt`. `Neighbour(area wm.Frame, ws Workspace, win int, dir wm.Direction) (slot string, pane int, ok bool)` per § *Slot verbs*. `ParkCorners(displays []wm.Display) map[string]wm.Frame`. `AdoptSlots(windows []wm.NativeWindow, area wm.Frame) ([]Slot, []float64)` returns one pane per slot. `Desired.Copy() *WorkingCopy`; `(*WorkingCopy).Commit(l *Lifecycle) (dropped []int)`. `native-state.json` stores panes, pane weights and `LastPane`.
 
-Gate: pure table tests on the three-display fixture: 40 windows in one stack; weights that do not sum to 1; an override replaces profile weights and `ClearOverride` restores them; `SlotAt` on slot edges; a commit that names a tombstoned window drops it; a window that appeared after the copy joins at the arrival target; `AdoptSlots` on columns, stacks and overlapping floats.
+Gate: pure table tests on the three-display fixture: 40 windows in one stack; weights that do not sum to 1; an override replaces profile weights and `ClearOverride` restores them; `PaneAt` on slot and pane edges; a commit that names a tombstoned window drops it; a window that appeared after the copy joins at the arrival target, in the pane focused there last; `AdoptSlots` on columns, stacks and overlapping floats. Splits: `Split` east then west on a columns slot gives three equal panes in order; `Split` north on that slot returns `ErrSplitAxis`; a fifth pane returns `ErrPaneLimit`; a one-window pane returns `ErrPaneSingle`; `SplitAll` on six windows gives three single panes and a three-window fourth pane; `SplitAll` with no axis picks rows on a tall slot and columns on a wide one; `Merge` keeps the named front and pane-then-stack order; removing the last window of a pane removes the pane, and of the second-last pane leaves a plain stack; `Neighbour` crosses from the last pane of a slot into the next slot's nearest pane; a `native-state.json` round trip keeps panes and weights.
 
 ### N7 — Darwin platform layer
 
@@ -688,7 +801,7 @@ Gate: N1's live tests pass against this layer. Worker tests, per § *AX threadin
 
 ### N8 — Native driver, actor and rescue
 
-Interfaces: `native.Driver` implements `wm.Driver`, `wm.Transactional`, `wm.EventStream` and `wm.ProcessSupervisor` over `Model`, `Platform` and `wm.SpaceService`. The actor loop, operation fencing, pending writes and status per § *Desired and observed state*; focus per § *Focus*; checkpoints and compensation per § *Job transactions*; cold start per § *Lifecycle contract*; SA reload on Dock restart; `*wm.ApplyError`; `StatePublisher.Request` after each flush; `tess query`; `tess rescue`.
+Interfaces: `native.Driver` implements `wm.Driver`, `wm.Transactional`, `wm.EventStream` and `wm.ProcessSupervisor` over `Model`, `Platform` and `wm.SpaceService`. The actor loop, operation fencing, pending writes and status per § *Desired and observed state*; focus per § *Focus*; checkpoints and compensation per § *Job transactions*; cold start per § *Lifecycle contract*; SA reload on Dock restart; `*wm.ApplyError`; `StatePublisher.Request` after each flush; `tess query`; `tess rescue`. Pause and budget per § *Pause and move budget*: `type ErrPaused struct{ By, Reason string }` in `wm`; `native.Pause{By, Reason string; At time.Time}` read from and written to `pause.json` (write, `fsync`, rename); `native.Budget{WindowMoves int; Window time.Duration; FailedWakes int; WakeWindow time.Duration}` with `DefaultBudget = Budget{10, 30 * time.Second, 3, 10 * time.Minute}`; `(*Driver).Stop(ctx context.Context, reason string) error` and `(*Driver).Start(ctx context.Context) error`; `commands.StopCommand{Reason string}` and `commands.StartCommand{}`; CLI kinds `stop` and `start`, with exit code 3 for `ErrPaused`; the daemon's wake path reports each `WakeRoutine` and `DisplayQuiet` result to the driver with `(*Driver).WakeResult(err error)`. The state stream gains `paused`.
 
 Gate: `synctest` tests on a fake platform and a fake Space service:
 
@@ -708,15 +821,36 @@ Gate: `synctest` tests on a fake platform and a fake Space service:
 - with `SpaceCaps.Focus` off, `FocusWindow` on a hidden window returns `ErrFocusTimeout` with reason `space-focus-unavailable` and focuses nothing else;
 - a refused write returns `ApplyError` and `fresh: false`;
 - cold start with windows on three hidden Spaces and one window unknown to `native-state.json`;
+- `tess stop` fences a write in flight, writes `pause.json` before it replies, and then every move, focus and Space call returns `ErrPaused` with no platform call; `tess query` still answers;
+- a daemon restart with `pause.json` present takes a `Snapshot`, writes nothing and reports `paused`; `tess start` deletes the file, flushes once and resets the budget;
+- a fake app that undoes every frame write: the 11th write to that window inside 30 s pauses tess with `by: "budget"` and a reason that names the window, its app and the count; the 10th does not; a read-back, a user drag and an OS relocation do not count;
+- three failed wakes in a row pause tess; two failures and a success do not;
+- after a budget pause, `tess start` with the fault still present pauses again within one window;
 - the existing `internal/commands` and `internal/daemon` suites pass on `native.Driver`.
 
 ### N9 — Slot interaction
 
-Interfaces: the verbs in § *Slot verbs* on `native.Driver`: `stack <dir>`; `move-mode` with `commands.MoveModeCommand{}` and actor state `MoveMode{Source int; Highlight string; Deadline time.Time}`; float and pin per § *Float and pin*, using `HomeSlot` and the `PinLayer` capability; `resize` on `Override`; `layout save|reset` with `commands.LayoutCommand{Action string}`; `layout save` runs the symlink, hash, AST-edit, vet, rename and reload steps of Decision 11. New CLI kinds `move-mode`, `stack` and `layout` in `internal/cli`. The state stream gains `moveMode`, per-window `mode` and `pinned`, and per-workspace `modified`.
+Interfaces: the verbs in § *Slot verbs* on `native.Driver`: `stack <dir>`; `split <dir>`, `split all [columns|rows]` and `merge` over the N6 pane edits, with `commands.SplitCommand{Dir wm.Direction; All bool; Axis wm.LayoutKind}` and `commands.MergeCommand{}`; `focus`, `swap` and `stack` resolved with `Neighbour`; `move-mode` with `commands.MoveModeCommand{}` and actor state `MoveMode{Source int; Slot string; Pane int; Deadline time.Time}`, hit-tested with `PaneAt`; float and pin per § *Float and pin*, using `HomeSlot` with its pane index and the `PinLayer` capability; `resize` on `Override` or on `PaneWeights` per § *Temporary slot resize*; `layout save|reset` with `commands.LayoutCommand{Action string}`; `layout save` runs the symlink, hash, AST-edit, vet, rename and reload steps of Decision 11, and `layout reset` also calls `EqualPanes`. Every command in the left column of § *What clears the override* also calls `MergeAll`. New CLI kinds `move-mode`, `stack`, `split`, `merge` and `layout` in `internal/cli`. The state stream gains `moveMode`, per-window `mode` and `pinned`, per-slot `axis` and `panes`, and per-workspace `modified`. Downstream: Matt's profile gains native-only bindings for `split east`, `split south`, `split all` and `merge`.
 
-Gate: `synctest` tests on the fake platform: move mode commits on a click inside a slot, on a click on a window, and on the keyboard path, and cancels on Escape and on the 10 s timeout; the indicator shows and hides once each; Escape is registered only while move mode is on. A drag start floats the window, closes its slot and records the home slot; `toggle-float` returns it to the same slot and index; a home slot that vanished sends it to the arrival target; a drag that ends on another display moves membership. With `PinLayer` off the window is raised and reports `pinned: false`.
+Gate: `synctest` tests on the fake platform: move mode commits on a click inside a pane, on a click on a window, and on the keyboard path, and cancels on Escape and on the 10 s timeout; the highlight moves between panes of one slot before it leaves the slot; the indicator shows and hides once each; Escape is registered only while move mode is on. A drag start floats the window, closes its pane and records the home slot and pane; `toggle-float` returns it to the same pane and index; a drag of the only window of a pane removes the pane, and `toggle-float` rebuilds it at the same pane index; a home slot that vanished sends it to the arrival target; a drag that ends on another display moves membership. With `PinLayer` off the window is raised and reports `pinned: false`. Splits on the fake platform: `split east` on a two-window stack gives two side-by-side frames inside the slot and leaves every other slot's frame unchanged; `split all` then `merge` returns the slot to one stack with the focused window in front; `resize` along the split axis changes only pane frames, across it only slot frames; an arrival into a split slot lands in the pane focused last; `apply` merges every split.
 
 Override tests, one per row of § *Temporary slot resize*, *What clears the override*: each command in the left column clears it, each event in the right column keeps it. Save and reset: `resize` then `layout reset` restores profile frames; `resize` then `layout save` rewrites the source file through the symlink, reloads it, and the override clears with no frame change; a hash mismatch at save refuses and leaves the file and the override unchanged; a vet failure leaves the file unchanged; a missing symlink target errors and saves nothing; `layout reset` after a save keeps the saved weights as the profile weights.
+
+### M1 — Profile set, switching and `tess mcp`
+
+Needs N8 and N9 (the pause, the budget and the indicator) and `tess-app.md` B2 (daemon profile reload). Runs before N12, so Matt can try drafts in the N11 scratch run.
+
+Interfaces, per § *Profiles and the MCP server*:
+
+- `internal/config`: `ProfileSet{Dir, Live string}` with `List() ([]ProfileInfo, error)`, `Read(name string) ([]byte, error)`, `Write(name string, src []byte) error` (vet, temp file, rename), `Delete(name string) error`; `ProfileInfo{Name string; Valid bool; Err string}`; `ValidName(name string) error`; `Active{Active, Good, Prior string; Trial *Trial}` and `Trial{Name string; Until time.Time; By string}`, read and written as `profile-active.json`; `Vet(src []byte, live *Profile) error`, which runs `Parse`, then checks that `backend` matches `live` and that no draft binding takes a combo of a live `stop`, `start` or `profile` binding. `Load` reads `profile-active.json` first.
+- `commands.ProfileCommand{Action, Name string; For time.Duration}` for `list`, `show`, `vet`, `write`, `delete`, `switch`, `preview`, `keep`, `back`, `pick` and `promote`; `promote` reuses the Decision 11 save path from N9. CLI kind `profile` in `internal/cli`.
+- The daemon socket protocol: `run 1 {"argv":[…],"profile":"<path>","stdin":"<text>"}`, where `stdin` is optional and at most 262144 bytes; a larger request is a `reject`. The CLI fills `stdin` for `profile vet -` and `profile write <name> -`.
+- The trial timer lives in the actor; at a daemon start an expired or unfinished trial switches back to `good`.
+- `native.Platform` gains `ShowPicker(display string, rows []string, active int) (<-chan PickerResult, error)` and `HidePicker() error`, with `PickerResult{Row int; Preview bool}`, and `ShowIndicator` gains buttons: `ShowIndicator(display, text string, buttons []string) (<-chan int, error)`.
+- `internal/mcpserver` (portable, no cgo) on `github.com/modelcontextprotocol/go-sdk/mcp`: `func New(dial func(ctx context.Context) (net.Conn, error), version string) *mcp.Server`, one `mcp.AddTool` per row of the tool table with typed input and output structs and the listed annotations. `tess mcp` runs `New(...).Run(ctx, &mcp.StdioTransport{})`. The state stream gains `profiles` and `trial`; the app's tray lists profiles and runs the same verbs.
+- Downstream: Matt's MCP client config gains a `tess` server entry with command `tess mcp`; his profile gains bindings for `profile pick`, `profile back`, `stop` and `start`.
+
+Gate: `ProfileSet` tests on a temp dir: a bad name, a vet failure and a backend change write nothing; a draft that rebinds the `profile back` combo fails vet; `Delete` refuses `live`, `active` and `good`. Switch tests on the native fake: `switch` then `back` returns to the first profile's frames; `back` twice returns to the second; `preview` reverts at the deadline and at a daemon restart; `keep` makes the trial `good`; a switch whose apply trips the budget pauses tess and leaves `good` unchanged, and `back` then `start` restores the old profile; while paused, `switch` changes only `profile-active.json`. MCP tests with the SDK's in-memory transports against a fake daemon socket: the tool list matches the table with its annotations; each tool sends the expected argv and stdin; a non-zero exit is a tool error with the stderr text; `validate_profile` and `get_schema` work with no daemon and every other tool reports `tess daemon not running`; no tool runs `start`, `promote` or `layout save`. Live, on Matt's Mac in the N11 scratch run: an agent writes two drafts through `tess mcp`, previews one, and Matt switches between them with the picker and goes back with one keypress.
 
 ### N10 — Observe mode
 
@@ -728,7 +862,7 @@ Gate: one week of Matt's use. Every difference is fixed. A difference may be acc
 
 Interfaces: N1's live suite, extended, run by Matt on the desk against `native.Driver` on one scratch Space. The run starts with `tess sa load --test`, which writes `sa-restore.json` and boots out yabai's agent, and ends with `tess sa restore`, which brings yabai back with its own SA.
 
-Gate: slot placement, swap, stack, resize, save and reset, focus (Zen across displays and on a hidden Space, 20 trials each, success rate recorded), move mode by click and by keyboard, a drag that floats and pins, `toggle-float` back to the slot, a window that refuses a frame, a terminal, an Electron app, `tess rescue`, a daemon `kill -9` mid-flush, and a cold restart with windows on hidden Spaces and windows created while the daemon was down. Dock restart three ways: plain (record whether Space IDs change, which settles the [INFERENCE] in § *Lifecycle contract*); during a `FocusSpace`; and with the payload bundle removed so the reload fails. Then a `kill -9` of the daemon mid-run followed by `tess sa restore` alone, which must leave yabai tiling with its own SA. No drag misclassified, no write loop.
+Gate: slot placement, swap, stack, split, `split all` and merge, resize inside a split slot, save and reset, focus (Zen across displays and on a hidden Space, 20 trials each, success rate recorded), move mode by click and by keyboard into a pane, a drag that floats and pins and its return to a split slot, `toggle-float` back to the slot, a window that refuses a frame, a terminal, an Electron app, `tess rescue`, a daemon `kill -9` mid-flush, and a cold restart with windows on hidden Spaces and windows created while the daemon was down. `tess stop` then a daemon restart moves nothing; `tess start` resumes. A test helper app that undoes every frame write trips the move budget, and the indicator names it; record the highest move count per window in the honest runs. Dock restart three ways: plain (record whether Space IDs change, which settles the [INFERENCE] in § *Lifecycle contract*); during a `FocusSpace`; and with the payload bundle removed so the reload fails. Then a `kill -9` of the daemon mid-run followed by `tess sa restore` alone, which must leave yabai tiling with its own SA. No drag misclassified, no write loop.
 
 ### N12 — Migration and switch
 
@@ -738,7 +872,7 @@ Gate: fake tests inject a crash after each item, forward and in reverse, and pro
 
 ### N13 — Soak
 
-Gate: two weeks on `native` with no reverse, with Space-service budgets tuned from the recorded timings.
+Gate: two weeks on `native` with no reverse, with Space-service budgets and the move budget tuned from the recorded timings and counts. Every budget pause in the soak is logged with its reason; a pause on honest use raises the limit, and a pause on a fault gets a fix.
 
 ### N14 — Remove yabai and tree code
 
@@ -784,10 +918,11 @@ Gate: two weeks on `virtual` with no reverse.
 - [ ] N3 — `wm.Capabilities` and `wm.Transactional`; planner and staging behind them
 - [ ] N4 — tess's scripting addition: fork, cut to six opcodes with the exact packed arguments (anchor sid for create), install, load only on native, version handshake, crash-safe `tess sa restore`, attribution
 - [ ] N5 — `wm.SpaceService` with capabilities and postconditions; anchor resolution; nested focus budgets; SIP-on degradation
-- [ ] N6 — slot model with override weights, home slots, `Frames`, `SlotAt`, `AdoptSlots`, working copy
+- [ ] N6 — slot model with panes (one level, up to four per slot), override and pane weights, home slots with pane index, `Frames`, `PaneAt`, `Neighbour`, `AdoptSlots`, working copy
 - [ ] N7 — `native.Platform`, per-app AX workers and observers, main-thread AppKit dispatch, indicator and pick panels
-- [ ] N8 — `native.Driver`, actor, fencing, focus postcondition and missing-focus path, Dock-restart recovery, `tess query`, `tess rescue`
-- [ ] N9 — slot interaction: move mode with top-right indicator, float and pin on drag, temporary resize with the override rules, save, reload and reset
+- [ ] N8 — `native.Driver`, actor, fencing, focus postcondition and missing-focus path, Dock-restart recovery, `tess stop` and `tess start` with `pause.json`, per-window move budget and failed-wake budget, `tess query`, `tess rescue`
+- [ ] N9 — slot interaction: `split`, `split all` and `merge`, pane-aware focus, swap and stack, move mode into panes with top-right indicator, float and pin on drag with pane return, temporary resize of slots and panes with the override rules, save, reload and reset
+- [ ] M1 — profile set with drafts beside the live profile, `tess profile` verbs with preview, keep and one-step back, picker and trial panels, `tess mcp` on the official Go SDK
 - [ ] N10 — observe mode for one week, including hidden Spaces
 - [ ] N11 — actuation gate on a scratch Space; Dock restart three ways; crash then `tess sa restore`
 - [ ] N12 — recorded migration from yabai to native with the binding-set switch, reverse, sketchybar on `tess query`
