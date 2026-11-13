@@ -2,7 +2,7 @@ module github.com/mattwilkinsonn/tessera
 
 go 1.27
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	cuelang.org/go v0.17.1

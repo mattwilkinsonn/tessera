@@ -185,7 +185,7 @@ nix build .#default
 nix flake check
 ```
 
-`devenv.nix` provides Go 1.27.3 from go-overlay, the CUE CLI, pinned Go analysis tools built with that toolchain, and documentation/workflow linters. With [direnv](https://direnv.net/) installed, `direnv allow` loads the shell on `cd`. CI builds its Go analysis tools with the same Go version and runs the checks plus the Nix build in `.github/workflows/ci.yml`.
+`devenv.nix` provides Go 1.27.4 from go-overlay, the CUE CLI, pinned Go analysis tools built with that toolchain, and documentation/workflow linters. With [direnv](https://direnv.net/) installed, `direnv allow` loads the shell on `cd`. CI builds its Go analysis tools with the same Go version and runs the checks plus the Nix build in `.github/workflows/ci.yml`.
 
 ## License
 

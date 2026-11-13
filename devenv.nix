@@ -4,7 +4,7 @@
 # CI uses the same Go and static-analysis tool versions.
 
 let
-  goToolchain = inputs.go-overlay.packages.${pkgs.stdenv.system}.go_1_27_3;
+  goToolchain = inputs.go-overlay.packages.${pkgs.stdenv.system}.go_1_27_4;
   buildGoModule = pkgs.buildGoModule.override { go = goToolchain; };
   golangciLint = goToolchain.tools.golangci-lint."2.14.0";
   govulncheck = goToolchain.tools.govulncheck."1.8.0";
