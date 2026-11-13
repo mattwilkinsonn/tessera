@@ -74,7 +74,7 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        goToolchain = go-overlay.packages.${system}.go_1_27_3;
+        goToolchain = go-overlay.packages.${system}.go_1_27_4;
         version = pkgs.lib.fileContents ./VERSION;
         yabaiStub = pkgs.writeShellScript "tessera-yabai-stub" ''
           printf '[]\n'
