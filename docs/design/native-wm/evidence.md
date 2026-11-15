@@ -138,6 +138,8 @@ Read on 2026-11-09. Chosen on fit and maintenance only (design Decision 9).
 | AX | [go-macos/accessibility](https://github.com/go-macos/accessibility) | purego; frame writes and display moves; no AXObserver | commits to 2026-11-07 |
 | Objective-C and run loop | [go-macos/objc](https://github.com/go-macos/objc) | purego; AppKit, blocks, run loops; README warns `App()` binds to the thread of its first call and `LockOSThread` alone does not make it the main thread | commits to 2026-11-05 |
 | Objective-C bindings | [progrium/darwinkit](https://github.com/progrium/darwinkit) | broad generated bindings | last release 2024-06-21 |
+| MCP server (read 2026-11-12) | [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | stdio through `mcp.StdioTransport`; `mcp.AddTool` derives the input and output schema from Go structs; `mcp.NewInMemoryTransports` for tests. README: "The official Go SDK for Model Context Protocol servers and clients. Maintained in collaboration with Google." | v1.8.0, 2026-09-14 (after v1.8.0-pre.1 and pre.2, 2026-09-04) |
+| MCP server (read 2026-11-12) | [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) | stdio through `server.ServeStdio`; README tools declare arguments with `mcp.WithString(...)` builders and read them with `request.RequireString(...)` | v1.5.0, 2026-10-30; v1.4.0, 2026-10-26 |
 | Bundles and signing | [tmc/macgo](https://github.com/tmc/macgo) | bundle, signing and TCC helpers | v0.1.4, 2026-06-04 |
 | Prior art, not dependencies | [dhoard/quadrant](https://github.com/dhoard/quadrant), [ujaandas/yumcha](https://github.com/ujaandas/yumcha) | Go macOS window managers on Carbon and AX | 2026-10-23, 2026-05-01 |
 
