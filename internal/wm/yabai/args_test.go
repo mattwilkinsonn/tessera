@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/mattwilkinsonn/tessera/internal/wm"
@@ -21,11 +20,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	stubName := "stubyabai"
-	if runtime.GOOS == "windows" {
-		stubName += ".exe"
-	}
-	path := filepath.Join(dir, stubName)
+	path := filepath.Join(dir, "stubyabai")
 	command := exec.CommandContext(context.Background(), "go", "build", "-o", path, "./testdata/stubyabai")
 	output, err := command.CombinedOutput()
 	if err != nil {

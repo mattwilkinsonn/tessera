@@ -2,8 +2,7 @@
 
 *Design record for a desktop app that replaces GridLion. It builds on
 [`resident-daemon.md`](resident-daemon.md), [`go-port/design.md`](go-port/design.md),
-[`windows-backend/design.md`](windows-backend/design.md) and the in-flight
-`release-binaries.md` (tessera PR #69). It edits no frozen record.*
+[`release-binaries.md`](release-binaries.md). It edits no frozen record.*
 
 ## Decisions
 
@@ -49,20 +48,16 @@ each question. The plan below states the chosen path.
     a hotkey grid over Spaces. Borrow: the 2D grid, arrow-key moves, and
     its split between a keyboard picker and a passive overlay. Avoid: a
     second, scraped source of Space state.
-  - [glzr-io/zebar](https://github.com/glzr-io/zebar): "a tool for creating
-    customizable and cross-platform taskbars, desktop widgets, and popups"
-    for GlazeWM and komorebi. It is a Tauri 2 app
-    (`packages/desktop/Cargo.toml`: `tauri = { version = "2" …`). Borrow: a
-    web UI that the WM feeds, not a UI that queries the WM; and its widget
-    config, which keeps `focused` separate from `zOrder`
+  - [glzr-io/zebar](https://github.com/glzr-io/zebar): a Tauri 2 app for
+    GlazeWM. Borrow: a web UI that the WM feeds, not a UI that queries the
+    WM; and its widget config, which keeps `focused` separate from `zOrder`
     ([`widget-config.ts`](https://github.com/glzr-io/zebar/blob/main/packages/client-api/src/config/widget-config.ts)).
   - sketchybar in Matt's setup refreshes on `yabai_spaces_changed`
     triggers (`RegisterSignals` in `internal/daemon/wiring.go`). Borrow:
     refresh on WM events, never on a timer.
 - **Lifetime.** Long. The app outlives the yabai backend and must move to
-  komorebi on Windows and a Linux WM later. Effort goes into the daemon
-  protocol and the pure grid logic, which every platform shares. The UI
-  stays thin.
+  a Linux WM later. Effort goes into the daemon protocol and the pure grid
+  logic, which every platform shares. The UI stays thin.
 - **Simpler option.** `tess space-focus north|south|east|west` bound in
   skhd gives grid navigation with no app at all. It is task A2, so it ships
   first and stands alone. The app adds the visual grid and the editor.
@@ -73,8 +68,8 @@ Show a live grid of Spaces per display, with each Space's windows as app
 icons, and switch Space on click or hotkey. Later, edit desk tracks,
 `laptopPinned` and `deskSlots` in the app and write them back to the CUE
 profile. The grid must reflect every change that tess or the WM reports
-(§ *Freshness*), and the grid, switching and editor must run on macOS,
-Windows and Linux (overlay behaviour per platform, § *Platform capabilities*).
+(§ *Freshness*), and the grid, switching and editor must run on macOS
+and Linux (overlay behaviour per platform, § *Platform capabilities*).
 
 ## Approach
 
@@ -149,9 +144,6 @@ All names exist in yabai's `signal_type_str` (`src/event_signal.h`).
 space` fires no yabai signal. The grid shows it at the next event of any
 kind. tess itself never mutates Spaces outside a busy scope.
 
-On komorebi, the driver's `EventStream` sees every state change. The
-daemon maps the events it does not place on to `Request`.
-
 ### Snapshot consistency
 
 `wm.Snapshot` runs three separate queries under errgroup, so a rebuild
@@ -190,7 +182,7 @@ final.
 
 The app runs `tess space-focus <space-id>` for a click, and other `tess`
 subcommands later. It does not import `commands` or a driver. Every action
-then has one code path, shared by skhd, whkd and the app, and the app stays
+then has one code path, shared by skhd and the app, and the app stays
 platform-neutral. A click costs a Go process start, a profile load, one
 Spaces query, the focus call and a verifying query [INFERENCE: tens of ms;
 A4 measures the whole path].
@@ -229,9 +221,8 @@ The already-focused pre-check means tess never depends on yabai's
 "cannot focus an already focused space" error. That message and the
 "display is animating" rejection were read in upstream source, not
 against the installed yabai. `yabai -m space --focus` needs the scripting
-addition, which Matt's yabairc already loads. On komorebi the call is
-`FocusMonitorWorkspaceNumber`. Hotkeys stay in skhd (macOS) and whkd
-(Windows), as `go-port/design.md` keeps keybinds out of the daemon.
+addition, which Matt's yabairc already loads. Hotkeys stay in skhd (macOS),
+as `go-port/design.md` keeps keybinds out of the daemon.
 
 The app has no global hotkey of its own. `tess grid` sends `ui toggle` to
 the daemon, which relays a `ui` frame to subscribers. All keybinds stay in
@@ -265,8 +256,8 @@ Sources: [Wails v3.0.0 release](https://github.com/wailsapp/wails/releases/tag/v
 [Gio `app`](https://pkg.go.dev/gioui.org/app), and the module proxy for
 release dates.
 
-- **Wails v3 (chosen).** The release notes list "multiple windows", "System tray", "global shortcuts" and "Windows … macOS … and
-  Linux". On macOS the window options cover the overlay: `WindowLevel`,
+- **Wails v3 (chosen).** The release notes list "multiple windows", "System tray" and "global shortcuts".
+  On macOS the window options cover the overlay: `WindowLevel`,
   `CollectionBehavior: CanJoinAllSpaces | FullScreenAuxiliary`, and
   `WindowClass: MacWindowClassPanel` with `PanelPreferences.NonActivating`
   ("Showing or focusing the panel then leaves the currently active
@@ -294,23 +285,16 @@ release dates.
 ### Platform capabilities
 
 A portable window API does not make overlay behaviour portable. P1 ships
-macOS only. The Windows and Linux columns are what the per-OS overlay promises.
+macOS only. The Linux columns are what the per-OS overlay promises.
 
-| Capability | macOS (yabai) | Windows (komorebi) | Linux X11 | Linux Wayland |
-| --- | --- | --- | --- | --- |
-| Grid window, click to switch, editor | yes | yes | yes | yes |
-| Window per display, placed on it | `Screens`, window position | `Screens`, window position | yes | no: the compositor places windows |
-| Visible on every WM workspace | `CanJoinAllSpaces` | a topmost window komorebi does not manage [INFERENCE: check on Windows] | WM-dependent (`_NET_WM_STATE_STICKY`) | layer-shell only, not in Wails |
-| Above fullscreen apps | `FullScreenAuxiliary` | `HWND_TOPMOST`, below exclusive fullscreen | WM-dependent | layer-shell only |
-| Passive HUD that takes no focus | non-activating `NSPanel` | `WS_EX_NOACTIVATE`, not a Wails option [INFERENCE] | WM-dependent | no |
-| Fallback when missing | — | normal grid window | normal grid window | normal grid window |
-
-On Windows, tess Spaces are komorebi workspaces, not Windows virtual
-desktops. komorebi hides the windows of an unfocused workspace
-(`windows-backend/design.md` § Normalization: a window is visible when "its
-workspace is its monitor's focused workspace"). The app's window is not
-managed by komorebi, so it is not hidden by a workspace switch. A komorebi
-rule must keep it unmanaged; the Windows backend adds that rule.
+| Capability | macOS (yabai) | Linux X11 | Linux Wayland |
+| --- | --- | --- | --- |
+| Grid window, click to switch, editor | yes | yes | yes |
+| Window per display, placed on it | `Screens`, window position | yes | no: the compositor places windows |
+| Visible on every WM workspace | `CanJoinAllSpaces` | WM-dependent (`_NET_WM_STATE_STICKY`) | layer-shell only, not in Wails |
+| Above fullscreen apps | `FullScreenAuxiliary` | WM-dependent | layer-shell only |
+| Passive HUD that takes no focus | non-activating `NSPanel` | WM-dependent | no |
+| Fallback when missing | — | normal grid window | normal grid window |
 
 ### Module boundary
 
@@ -376,7 +360,7 @@ the editor needs one.
 - **Icons.** `state` frames carry each window's `pid`. The app resolves
   an icon per pid once, through `NSRunningApplication` on macOS
   (`processIdentifier`, then `icon`), cached by app name. A miss draws a
-  letter tile. Windows uses the exe's shell icon later.
+  letter tile.
 - **Disconnected or stale.** When the socket closes, the app greys the
   grid, shows "tess daemon not running", and reconnects with 0.25–5 s
   backoff. A `status` frame with `fresh: false` or `busy: true` dims the
@@ -463,8 +447,6 @@ tested, no release job compiles, and signing stays ad-hoc.
   one the daemon runs (`TESS_PATH`). The `hello` frame's protocol version
   gates the app, so an app newer than the daemon says so instead of
   failing.
-- **Windows.** Later. The W7 GoReleaser step adds `tess-app.exe` once a
-  komorebi `FocusSpace` and the state stream run there.
 
 ### Alternatives considered
 

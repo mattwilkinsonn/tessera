@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -35,11 +34,7 @@ func TestMain(m *testing.M) {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	stubName := "stubyabai"
-	if runtime.GOOS == "windows" {
-		stubName += ".exe"
-	}
-	stub := filepath.Join(dir, stubName)
+	stub := filepath.Join(dir, "stubyabai")
 	// TestMain has no testing context; this is the root for its setup command.
 	build := exec.CommandContext(context.Background(), "go", "build", "-o", stub, "../wm/yabai/testdata/stubyabai")
 	if output, err := build.CombinedOutput(); err != nil {
